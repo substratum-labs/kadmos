@@ -1,6 +1,6 @@
 # Kadmos Bootstrap Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Create a minimal, verifiable TypeScript repository for Kadmos and register it in the Substratum coordination system.
 
@@ -33,10 +33,10 @@
 - Produces: `AssuranceAxis`, `ProjectIdentity`, and `projectIdentity` from `src/index.ts`.
 - `projectIdentity` names `code` and `agent` as separate axes and lists `pi`, `castor`, and `roche` as optional integrations.
 
-- [ ] Write `tests/project-identity.test.ts` before `src/index.ts` and run it to observe the missing-module failure.
-- [ ] Implement the minimal typed identity export.
-- [ ] Run `pnpm verify` and require tests, build, and typecheck to pass.
-- [ ] Configure GitHub Actions to run `pnpm verify` on Node.js 24.
+- [x] Write `tests/project-identity.test.ts` before `src/index.ts` and run it to observe the missing-module failure.
+- [x] Implement the minimal typed identity export.
+- [x] Run `pnpm verify` and require tests, build, and typecheck to pass.
+- [x] Configure GitHub Actions to run `pnpm verify` on Node.js 24.
 
 ### Task 2: Repository documentation and bootstrap links
 
@@ -52,10 +52,10 @@
 **Interfaces:**
 - Produces: public project boundary and agent bootstrap paths.
 
-- [ ] Document the CA/EA split, explicit non-goals, and optional integration profiles.
-- [ ] Reserve schema and conformance directories without inventing premature protocols.
-- [ ] Link project instructions to the Substratum coordination hub.
-- [ ] Verify all links resolve.
+- [x] Document the CA/EA split, explicit non-goals, and optional integration profiles.
+- [x] Reserve schema and conformance directories without inventing premature protocols.
+- [x] Link project instructions to the Substratum coordination hub.
+- [x] Verify all links resolve.
 
 ### Task 3: Internal project registration
 
@@ -70,7 +70,7 @@
 **Interfaces:**
 - Produces: EPIC-37 and T-323 registration plus project-specific task, memory, and role entry points.
 
-- [ ] Register the repository and role without marking Castor or Roche mandatory.
-- [ ] Move T-323 to review only after local and remote verification succeeds.
-- [ ] Run `scripts/check_ledger.sh` and require a clean result.
-- [ ] Commit and push the Kadmos branch and internal registration branch for Yong review.
+- [x] Register the repository and role without marking Castor or Roche mandatory.
+- [x] Move T-323 to review only after local and remote verification succeeds.
+- [x] Run `scripts/check_ledger.sh` and require a clean result.
+- [x] Commit and push the Kadmos branch and internal registration branch for Yong review.
