@@ -41,8 +41,6 @@ pnpm install
 pnpm verify
 ```
 
-The approved bootstrap design is in [docs/superpowers/specs/2026-09-13-kadmos-bootstrap-design.md](docs/superpowers/specs/2026-09-13-kadmos-bootstrap-design.md).
-
 ## License
 
 Apache-2.0
