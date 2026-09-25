@@ -1,0 +1,80 @@
+version: "kadmos.world.v0"
+name: "OrderSettlementWorld"
+description: "Core financial and fulfillment state machine for order settlement"
+
+states:
+  - id: CREATED
+    initial: true
+    description: "Order registered in system, awaiting payment"
+  - id: PAYMENT_PENDING
+    description: "Payment dispatched to external provider"
+  - id: PAID
+    description: "Payment confirmed by provider webhook"
+  - id: FULFILLED
+    description: "Goods dispatched and delivery confirmed"
+    terminal: true
+  - id: CANCELLED
+    description: "Order cancelled before fulfillment, funds returned if paid"
+    terminal: true
+
+context:
+  order_amount:
+    type: integer
+    unit: "cents"
+    min: 1
+    max: 100000000
+  escrow_balance:
+    type: integer
+    unit: "cents"
+    default: 0
+  refunded_amount:
+    type: integer
+    unit: "cents"
+    default: 0
+
+invariants:
+  - id: INV-01-CONSERVATION-OF-VALUE
+    description: "Escrow balance + Refunded amount must equal Order amount once settled"
+    predicate: "paid => (escrow_balance + refunded_amount == order_amount)"
+  - id: INV-02-NO-NEGATIVE-ESCROW
+    description: "Escrow balance can never drop below zero"
+    predicate: "escrow_balance >= 0"
+  - id: INV-03-FULFILL-REQUIRES-ESCROW
+    description: "Cannot enter FULFILLED unless escrow balance equals order amount"
+    predicate: "state == 'FULFILLED' => escrow_balance == order_amount"
+
+transitions:
+  - id: INITIATE_PAYMENT
+    from: CREATED
+    to: PAYMENT_PENDING
+    guard: "order_amount > 0"
+    directive: "DISPATCH_PAYMENT_GATEWAY"
+    effects: []
+  - id: CONFIRM_PAYMENT
+    from: PAYMENT_PENDING
+    to: PAID
+    guard: "event.captured_amount == order_amount"
+    directive: null
+    effects:
+      - "escrow_balance = order_amount"
+  - id: DISPATCH_GOODS
+    from: PAID
+    to: FULFILLED
+    guard: "escrow_balance == order_amount"
+    directive: "INVOKE_LOGISTICS_DISPATCH"
+    effects:
+      - "escrow_balance = 0"
+  - id: CANCEL_AND_REFUND
+    from: PAID
+    to: CANCELLED
+    guard: "escrow_balance == order_amount"
+    directive: "DISPATCH_REFUND"
+    effects:
+      - "refunded_amount = escrow_balance"
+      - "escrow_balance = 0"
+  - id: ABORT_UNPAID
+    from: CREATED
+    to: CANCELLED
+    guard: true
+    directive: null
+    effects: []
