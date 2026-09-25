@@ -144,3 +144,11 @@ test("a valid transition cannot authorize an undeclared directive", () => {
   assert.equal(verdict.directiveAllowed, null);
   assert.equal(gate.getState(), "CREATED");
 });
+
+test("a side-effect transition requires its directive to be proposed", () => {
+  const gate = checker();
+  const verdict = gate.step({ transitionId: "INITIATE_PAYMENT" });
+  assert.equal(verdict.allowed, false);
+  assert.equal(verdict.directiveAllowed, null);
+  assert.equal(gate.getState(), "CREATED");
+});

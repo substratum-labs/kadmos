@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
@@ -59,6 +60,11 @@ test("rejects an inverted numeric range", () => {
   assert.throws(() => parseWorldSpec(source), /(?:INVALID_BOUNDS|maximum|range)/i);
 });
 
+test("rejects a negative maximum when no minimum is specified", () => {
+  const source = fixture.replace("default: 0", "max: -1");
+  assert.throws(() => parseWorldSpec(source), /INVALID_BOUNDS/);
+});
+
 test("rejects a transition into an undeclared state", () => {
   const source = fixture.replace("to: PAYMENT_PENDING", "to: UNKNOWN_STATE");
   assert.throws(() => parseWorldSpec(source), /(?:UNDECLARED_STATE|UNKNOWN_STATE)/i);
@@ -91,6 +97,7 @@ test("projects typecheckable ports.d.ts and world_checker.ts", () => {
     writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
     const tsc = join(process.cwd(), "node_modules", ".bin", "tsc");
     const result = spawnSync(tsc, [
+      "--ignoreConfig",
       "--strict", "--noEmit", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
       join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
@@ -115,4 +122,29 @@ test("compiler projection is independently testable from the YAML parser", () =>
   assert.match(projection.portsDts, /DONE/);
   assert.match(projection.portsDts, /SEND/);
   assert.match(projection.worldCheckerTs, /FINISH/);
+});
+
+test("generated checker enforces the payment guard and applies effects", async () => {
+  const projection = compileWorldSpec(parseWorldSpec(fixture));
+  const directory = mkdtempSync(join(tmpdir(), "kadmos-runtime-"));
+  try {
+    writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
+    writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
+    const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+      "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
+      "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const { WorldChecker } = await import(pathToFileURL(join(directory, "world_checker.js")).href);
+    const gate = new WorldChecker();
+    gate.reset({ order_amount: 5000 });
+    assert.equal(gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY" }).allowed, true);
+    assert.equal(gate.step({ transitionId: "CONFIRM_PAYMENT", eventPayload: { captured_amount: 4999 } }).allowed, false);
+    assert.equal(gate.getContext().escrow_balance, 0);
+    assert.equal(gate.step({ transitionId: "CONFIRM_PAYMENT", eventPayload: { captured_amount: 5000 } }).allowed, true);
+    assert.equal(gate.getContext().escrow_balance, 5000);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
