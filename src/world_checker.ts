@@ -39,9 +39,10 @@ export function sanitizePayload(raw: unknown): Record<string, unknown> | undefin
 
 export function createWorldChecker(
   rawSpec: WorldSpec,
-  initialContext: Partial<WorldContext> = {},
+  rawInitialContext: Partial<WorldContext> = {},
 ): IWorldChecker {
   const spec = deepFreeze(structuredClone(rawSpec));
+  const frozenDefaultContext = Object.freeze(structuredClone(rawInitialContext));
   const initial = spec.states.find((state) => state.initial)?.id;
   if (!initial) throw new Error("INITIAL_STATE: exactly one required");
 
@@ -81,11 +82,21 @@ export function createWorldChecker(
     return undefined;
   };
 
-  const reset = (next: Partial<WorldContext> = initialContext): void => {
+  const reset = (next: Partial<WorldContext> = frozenDefaultContext): void => {
     if (busy) throw new Error("REENTRANCY_DETECTED: reset called during active evaluation");
     busy = true;
+
+    const snapshotState = state;
+    const snapshotContext = { ...context };
+    const snapshotHistory = [...history];
+
+    const rollback = () => {
+      state = snapshotState;
+      context = { ...snapshotContext };
+      history = [...snapshotHistory];
+    };
+
     try {
-      state = initial;
       const candidateContext: Record<string, number> = Object.fromEntries(
         Object.entries(spec.context).map(([name, definition]) => [name, definition.default ?? 0]),
       );
@@ -96,13 +107,22 @@ export function createWorldChecker(
         candidateContext[name] = value;
       }
       const invalidBound = checkBounds(candidateContext);
-      if (invalidBound) throw new Error(`INVALID_BOUNDS: ${invalidBound}`);
+      if (invalidBound) {
+        throw new Error(`INVALID_BOUNDS: ${invalidBound}`);
+      }
 
-      const violatedInvariant = checkInvariants(state, candidateContext);
-      if (violatedInvariant) throw new Error(`INITIAL_INVARIANT_FAILED: ${violatedInvariant}`);
+      const violatedInvariant = checkInvariants(initial, candidateContext);
+      if (violatedInvariant) {
+        throw new Error(`INITIAL_INVARIANT_FAILED: ${violatedInvariant}`);
+      }
 
+      // Publish only after all validations pass atomically
+      state = initial;
       context = candidateContext;
       history = [];
+    } catch (err) {
+      rollback();
+      throw err;
     } finally {
       busy = false;
     }
@@ -192,7 +212,8 @@ export function createWorldChecker(
           if (typeof guardValue !== "boolean" || !guardValue) {
             return reject("GUARD_FAILED", "Guard condition failed");
           }
-        } catch {
+        } catch (e: unknown) {
+          if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e;
           return reject("GUARD_FAILED", "Guard expression evaluation failed");
         }
 
@@ -201,7 +222,7 @@ export function createWorldChecker(
         try {
           for (const effect of transition.effects) {
             const match = /^([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.+)$/.exec(effect);
-            if (!match || !(match[1]! in spec.context)) {
+            if (!match || !Object.hasOwn(spec.context, match[1]!)) {
               return reject("INVALID_EFFECT", "Invalid effect assignment target");
             }
             const value = evaluate(match[2]!, env(transition.to, candidateContext, safePayload));
@@ -210,7 +231,8 @@ export function createWorldChecker(
             }
             candidateContext[match[1]!] = value;
           }
-        } catch {
+        } catch (e: unknown) {
+          if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e;
           return reject("INVALID_EFFECT", "Effect evaluation failed");
         }
 

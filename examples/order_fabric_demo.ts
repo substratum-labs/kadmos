@@ -15,7 +15,6 @@ import { evaluate } from "../src/world_expression.js";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 function findFixturePath(): string {
   const candidates = [
-    join(__dirname, "../../conformance/fixtures/order_settlement.world.yaml"),
     join(__dirname, "../conformance/fixtures/order_settlement.world.yaml"),
     join(process.cwd(), "conformance/fixtures/order_settlement.world.yaml"),
   ];
@@ -38,6 +37,12 @@ function printSubheader(title: string): void {
 
 export function runOrderFabricDemo(): boolean {
   printHeader("Kadmos World-Fabric Integration Walkthrough: Order Settlement");
+
+  console.log("\n[Scope & Assurance Boundary Notice]");
+  console.log("Kadmos at this tier provides a pure deterministic in-process runtime");
+  console.log("gatekeeper (WorldChecker) and compile-time Ports & Directives membrane.");
+  console.log("OS, network, and physical non-bypass exist only when paired with Castor/Roche.");
+  console.log("Simulated physical side effects below are narrated host callbacks.\n");
 
   // Step 1: Parse and Compile the World Specification
   printSubheader("Step 1: World IR Compilation");
@@ -91,11 +96,11 @@ export function runOrderFabricDemo(): boolean {
   }
   console.log("\n[Gatekeeper] Fail-closed verified: State remains 'CREATED', escrow balance remains $0.00.");
 
-  // Step 4: 1-Turn CEGIS Feedback & Repair Loop
-  printSubheader("Step 4: 1-Turn CEGIS Feedback & Plan Repair");
-  console.log(`[CEGIS] Counterexample feedback provided to Fabric Agent:`);
-  console.log(`        Refusal Code: ${unconstitutionalVerdict.violation?.code}`);
-  console.log(`        Refusal Message: ${unconstitutionalVerdict.violation?.message}`);
+  // Step 4: Counterexample-Guided Plan Repair
+  printSubheader("Step 4: Refusal-Guided Plan Repair");
+  console.log(`[Feedback] Counterexample trace provided to Fabric Agent:`);
+  console.log(`           Refusal Code: ${unconstitutionalVerdict.violation?.code}`);
+  console.log(`           Refusal Message: ${unconstitutionalVerdict.violation?.message}`);
   console.log(`[Fabric] Diagnosed failure: Action 'DISPATCH_GOODS' is illegal from state 'CREATED'.`);
   console.log(`[Fabric] Synthesizing repaired 3-step constitutional plan:`);
   console.log(`         1. INITIATE_PAYMENT -> Acquire directive 'DISPATCH_PAYMENT_GATEWAY'`);
@@ -117,7 +122,7 @@ export function runOrderFabricDemo(): boolean {
   }
   console.log(`   Allowed! State: ${step1.previousState} -> ${step1.currentState}`);
   console.log(`   Authorized Directive: '${step1.directiveAllowed}'`);
-  console.log("   [Fabric Physical Action] Calling payment gateway SDK with authorized directive token...");
+  console.log("   [Host Simulation] Calling payment gateway provider with authorized directive...");
 
   // Sub-step 5.2: Confirm Payment Webhook
   console.log("\n-> Executing Sub-step 2: CONFIRM_PAYMENT (Webhook event received: $50.00 captured)");
@@ -146,7 +151,7 @@ export function runOrderFabricDemo(): boolean {
   console.log(`   Authorized Directive: '${step3.directiveAllowed}'`);
   console.log(`   Settled Amount: $${((step3.context.settled_amount ?? 0) / 100).toFixed(2)}`);
   console.log(`   Escrow Balance settled to: $${((step3.context.escrow_balance ?? 0) / 100).toFixed(2)}`);
-  console.log("   [Fabric Physical Action] Calling shipping provider API with authorized dispatch token...");
+  console.log("   [Host Simulation] Calling shipping provider with authorized directive...");
 
   // Step 6: Audit & Verification
   printSubheader("Step 6: Final Constitutional Audit");
@@ -170,7 +175,7 @@ export function runOrderFabricDemo(): boolean {
   console.log(`  - Escrow balance settled cleanly to 0.`);
   console.log(`  - Settled amount equals total order amount ($50.00).`);
   console.log(`  - Goods only dispatched after 100% payment verification.`);
-  console.log(`  - Zero unauthorized directives reached physical providers.`);
+  console.log(`  - Zero unauthorized directives reached simulated providers.`);
 
   printHeader("Walkthrough Verdict: SUCCESS (All World invariants verified!)");
   return true;

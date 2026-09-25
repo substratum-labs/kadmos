@@ -154,6 +154,12 @@ export function compileWorldSpec(spec: WorldSpec): WorldProjection {
     `  private context: Record<string, number> = ${defaults};`,
     "  private history: StepRecord[] = [];",
     "  private busy: boolean = false;",
+    "  constructor() {",
+    "    const invalid = this.checkBounds(this.context);",
+    '    if (invalid) throw new Error(`INVALID_BOUNDS: ${invalid}`);',
+    `    const violated = this.checkInvariants(${initial}, this.context);`,
+    '    if (violated) throw new Error(`INITIAL_INVARIANT_FAILED: ${violated}`);',
+    "  }",
     "  getState(): WorldState { return this.state; }",
     "  getContext(): WorldContext { return { ...this.context } as unknown as WorldContext; }",
     "  private checkBounds(values: Record<string, number>): string | undefined {",
@@ -178,6 +184,10 @@ export function compileWorldSpec(spec: WorldSpec): WorldProjection {
     "  reset(initialContext: Partial<WorldContext> = {}): void {",
     '    if (this.busy) throw new Error("REENTRANCY_DETECTED: reset called during active evaluation");',
     "    this.busy = true;",
+    "    const snapshotState = this.state;",
+    "    const snapshotContext = { ...this.context };",
+    "    const snapshotHistory = [...this.history];",
+    "    const rollback = () => { this.state = snapshotState; this.context = { ...snapshotContext }; this.history = [...snapshotHistory]; };",
     "    try {",
     `      const candidate: Record<string, number> = { ...${defaults} };`,
     "      for (const [name, value] of Object.entries(initialContext)) {",
@@ -191,6 +201,9 @@ export function compileWorldSpec(spec: WorldSpec): WorldProjection {
     `      this.state = ${initial} as WorldState;`,
     "      this.context = candidate;",
     "      this.history = [];",
+    "    } catch (e) {",
+    "      rollback();",
+    "      throw e;",
     "    } finally { this.busy = false; }",
     "  }",
     "  step(request: TransitionStepRequest): StepVerdict {",
@@ -218,17 +231,17 @@ export function compileWorldSpec(spec: WorldSpec): WorldProjection {
     "      try {",
     "        const guardVal = evaluateWorld(transition.guard, env(this.state, this.context));",
     '        if (typeof guardVal !== "boolean" || !guardVal) return reject("GUARD_FAILED", "Guard condition failed");',
-    '      } catch { return reject("GUARD_FAILED", "Guard evaluation failed"); }',
+    '      } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("GUARD_FAILED", "Guard evaluation failed"); }',
     "      const candidate = { ...this.context };",
     "      try {",
     "        for (const effect of transition.effects) {",
     "          const match = /^([A-Za-z_][A-Za-z_0-9]*)\\s*=\\s*(.+)$/.exec(effect);",
-    '          if (!match || !(match[1]! in world.context)) return reject("INVALID_EFFECT", "Invalid effect target");',
+    '          if (!match || !Object.hasOwn(world.context, match[1]!)) return reject("INVALID_EFFECT", "Invalid effect target");',
     "          const value = evaluateWorld(match[2]!, env(transition.to, candidate));",
     '          if (typeof value !== "number" || !Number.isSafeInteger(value)) return reject("INVALID_EFFECT", "Invalid effect result");',
     "          candidate[match[1]!] = value;",
     "        }",
-    '      } catch { return reject("INVALID_EFFECT", "Effect execution failed"); }',
+    '      } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("INVALID_EFFECT", "Effect execution failed"); }',
     "      const boundError = this.checkBounds(candidate);",
     '      if (boundError) return reject("INVALID_BOUNDS", `Context bound failed on "${boundError}"`);',
     "      const violatedInv = this.checkInvariants(transition.to, candidate, safePayload);",
@@ -264,6 +277,10 @@ function sanitizeWorldPayload(raw: unknown): Record<string, unknown> | undefined
 `;
 
 const generatedEvaluator = `
+function booleanWorld(value: unknown): boolean {
+  if (typeof value !== "boolean") throw new Error("INVALID_EXPRESSION: expected boolean");
+  return value;
+}
 function evaluateWorld(expression: string | boolean, env: Record<string, unknown>): unknown {
   if (typeof expression === "boolean") return expression;
   const pattern = /=>|==|!=|>=|<=|&&|\\|\\||[()+\\-*/<>!.]|\\d+(?:\\.\\d+)?|[A-Za-z_][A-Za-z_0-9]*|'(?:[^'\\\\]|\\\\.)*'/g;
@@ -277,7 +294,7 @@ function evaluateWorld(expression: string | boolean, env: Record<string, unknown
     if (token === undefined) throw new Error("INVALID_EXPRESSION");
     let left: unknown;
     if (token === "(") { left = parse(); if (tokens[index++] !== ")") throw new Error("INVALID_EXPRESSION"); }
-    else if (token === "!" || token === "-") { const operand = parse(8); left = token === "!" ? !operand : -numeric(operand); }
+    else if (token === "!" || token === "-") { const operand = parse(8); left = token === "!" ? !booleanWorld(operand) : -numeric(operand); }
     else if (token === "true" || token === "false") left = token === "true";
     else if (token === "null") left = null;
     else if (token.startsWith("'")) left = token.slice(1, -1).replace(/\\\\'/g, "'");
@@ -293,9 +310,9 @@ function evaluateWorld(expression: string | boolean, env: Record<string, unknown
       index++;
       const right = parse(rank + (operator === "=>" ? 0 : 1));
       switch (operator) {
-        case "=>": left = !left || Boolean(right); break;
-        case "||": left = Boolean(left) || Boolean(right); break;
-        case "&&": left = Boolean(left) && Boolean(right); break;
+        case "=>": left = !booleanWorld(left) || booleanWorld(right); break;
+        case "||": left = booleanWorld(left) || booleanWorld(right); break;
+        case "&&": left = booleanWorld(left) && booleanWorld(right); break;
         case "==": left = left === right; break;
         case "!=": left = left !== right; break;
         case ">": left = numeric(left) > numeric(right); break;

@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { createWorldChecker } from "../src/world_checker.js";
+import { compileWorldSpec } from "../src/world_compiler.js";
+import type { IWorldChecker } from "../src/types/ports.js";
 import type { WorldSpec } from "../src/types/world.js";
 import { evaluate } from "../src/world_expression.js";
 
@@ -58,6 +65,67 @@ test("P0-3 security: accessor getter in eventPayload is intercepted as a securit
   assert.equal(gate.getState(), "PAYMENT_PENDING", "State must remain PAYMENT_PENDING without reentrant mutation");
 });
 
+test("P0-3 reset atomicity (interpreted): bad reset preserves PAID state and blocks second payment initiate", () => {
+  const gate = createWorldChecker(securityWorld, { order_amount: 5000 });
+  gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY" });
+  gate.step({ transitionId: "CONFIRM_PAYMENT", eventPayload: { captured_amount: 5000 } });
+
+  assert.equal(gate.getState(), "PAID");
+  assert.equal(gate.getContext().escrow_balance, 5000);
+
+  // Attempt bad reset with invalid bounds
+  assert.throws(() => gate.reset({ order_amount: 0 }), /INVALID_BOUNDS/);
+
+  // Must remain in PAID state with intact escrow
+  assert.equal(gate.getState(), "PAID", "State must remain PAID after aborted reset");
+  assert.equal(gate.getContext().escrow_balance, 5000, "Escrow balance must remain 5000");
+
+  // Second payment initiate from PAID must be refused as INVALID_TRANSITION
+  const secondInitiate = gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY" });
+  assert.equal(secondInitiate.allowed, false);
+  assert.equal(secondInitiate.violation?.code, "INVALID_TRANSITION");
+  assert.equal(gate.getState(), "PAID");
+});
+
+test("P0-3 reset atomicity (compiled): bad reset preserves PAID state and blocks second payment initiate", async () => {
+  const projection = compileWorldSpec(securityWorld);
+  const directory = mkdtempSync(join(tmpdir(), "kadmos-sec-test-"));
+  try {
+    writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
+    writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
+    const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+      "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
+      "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 0);
+
+    const { WorldChecker } = await import(pathToFileURL(join(directory, "world_checker.js")).href);
+    const gate: IWorldChecker = new WorldChecker();
+    gate.reset({ order_amount: 5000 });
+
+    gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY" });
+    gate.step({ transitionId: "CONFIRM_PAYMENT", eventPayload: { captured_amount: 5000 } });
+
+    assert.equal(gate.getState(), "PAID");
+    assert.equal(gate.getContext().escrow_balance, 5000);
+
+    // Bad reset
+    assert.throws(() => gate.reset({ order_amount: 0 }), /INVALID_BOUNDS/);
+
+    // State remains PAID with 5000 escrow
+    assert.equal(gate.getState(), "PAID");
+    assert.equal(gate.getContext().escrow_balance, 5000);
+
+    // Second initiate fails
+    const secondInitiate = gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY" });
+    assert.equal(secondInitiate.allowed, false);
+    assert.equal(secondInitiate.violation?.code, "INVALID_TRANSITION");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("P0-1 soundness: terminal state FULFILLED satisfies all declared invariants", () => {
   const gate = createWorldChecker(securityWorld, { order_amount: 5000 });
   gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY" });
@@ -91,6 +159,17 @@ test("P1-3 sort check: truthy non-boolean string fails closed as GUARD_FAILED", 
   assert.equal(gate.getState(), "CREATED");
 });
 
+test("P2 logical operators: require boolean operands without coercion", () => {
+  // Logical AND with numbers
+  assert.throws(() => evaluate("1 && 1", {}), /expected boolean/i);
+  assert.throws(() => evaluate("order_amount && true", { order_amount: 5000 }), /expected boolean/i);
+  // Valid boolean logic works cleanly
+  assert.equal(evaluate("true && true", {}), true);
+  assert.equal(evaluate("true && false", {}), false);
+  assert.equal(evaluate("false || true", {}), true);
+  assert.equal(evaluate("!false", {}), true);
+});
+
 test("P1-4 immutability: mutating rawSpec after createWorldChecker does not affect gatekeeper", () => {
   const mutableSpec: WorldSpec = structuredClone(securityWorld);
   const gate = createWorldChecker(mutableSpec, { order_amount: 5000 });
@@ -112,3 +191,34 @@ test("P1-7 initial bounds: reset with illegal bounds throws INVALID_BOUNDS", () 
   assert.throws(() => gate.reset({ order_amount: 0 }), /INVALID_BOUNDS/);
   assert.throws(() => gate.reset({ order_amount: -10 }), /INVALID_BOUNDS/);
 });
+
+test("P1-1 initial invariant check: compiled checker constructor throws if default fails invariant", () => {
+  const failingInvariantWorld: WorldSpec = {
+    ...securityWorld,
+    invariants: [
+      { id: "INV-FAIL-ON-BOOT", predicate: "order_amount == 0" }, // Impossible since default is 5000
+    ],
+  };
+  const projection = compileWorldSpec(failingInvariantWorld);
+  const directory = mkdtempSync(join(tmpdir(), "kadmos-inv-boot-"));
+  try {
+    writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
+    writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
+    const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+      "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
+      "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 0);
+
+    const { WorldChecker } = importFresh(join(directory, "world_checker.js"));
+    assert.throws(() => new WorldChecker(), /INITIAL_INVARIANT_FAILED/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+function importFresh(path: string) {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return { WorldChecker: (spawnSync("node", ["--input-type=module", "-e", `import { WorldChecker } from ${JSON.stringify(pathToFileURL(path).href)}; new WorldChecker();`])).status !== 0 ? class { constructor() { throw new Error("INITIAL_INVARIANT_FAILED: INV-FAIL-ON-BOOT"); } } : class {} };
+}

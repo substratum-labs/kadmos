@@ -39,7 +39,7 @@ export function evaluate(expression: string | boolean, environment: Environment)
       if (take() !== ")") throw new Error("INVALID_EXPRESSION: missing )");
     } else if (first === "!" || first === "-") {
       const operand = parse(8);
-      left = first === "!" ? !operand : -number(operand);
+      left = first === "!" ? !boolean(operand) : -number(operand);
     } else if (first === "true" || first === "false") {
       left = first === "true";
     } else if (first === "null") {
@@ -66,9 +66,9 @@ export function evaluate(expression: string | boolean, environment: Environment)
       take();
       const right = parse(priority + (operator === "=>" ? 0 : 1));
       switch (operator) {
-        case "=>": left = !left || Boolean(right); break;
-        case "||": left = Boolean(left) || Boolean(right); break;
-        case "&&": left = Boolean(left) && Boolean(right); break;
+        case "=>": left = !boolean(left) || boolean(right); break;
+        case "||": left = boolean(left) || boolean(right); break;
+        case "&&": left = boolean(left) && boolean(right); break;
         case "==": left = left === right; break;
         case "!=": left = left !== right; break;
         case ">": left = number(left) > number(right); break;
@@ -90,5 +90,10 @@ export function evaluate(expression: string | boolean, environment: Environment)
 
 function number(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) throw new Error("INVALID_EXPRESSION: expected number");
+  return value;
+}
+
+function boolean(value: unknown): boolean {
+  if (typeof value !== "boolean") throw new Error("INVALID_EXPRESSION: expected boolean operand");
   return value;
 }
