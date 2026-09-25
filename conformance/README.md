@@ -1,26 +1,29 @@
 # Conformance Fixtures
 
-This directory is the future language-neutral conformance boundary between the TypeScript implementation and any later Rust verifier.
+This directory is the language-neutral conformance boundary between the TypeScript implementation and any later Rust verifier.
 
 Fixtures record valid inputs, invalid inputs, canonical encodings, admission
 transitions, and expected decisions.
 
-# T-333 World Fabric RED harness
+## Canonical Order Settlement Fixture
 
-`fixtures/order_settlement.world.yaml` mirrors the approved T-332 World IR
-example. The TypeScript test suites exercise parsing, fail-closed validation,
-disposable code projection, runtime directive admission, and ordered CEGIS
-counterexamples. `src/world_compiler.ts` and `src/world_checker.ts` intentionally
-throw until T-334 implements them. A successful T-333 verification has a clean
-build and typecheck, with these conformance tests failing against those stubs.
+`fixtures/order_settlement.world.yaml` provides the canonical World IR
+specification for order settlement with conservation of value across all lifecycle states.
 
-Run `npm run build`, `npm run typecheck`, and
-`node --test dist/tests/**/*.test.js` from the repository root.
+The World model specifies:
+- 5 States: `CREATED` (initial), `PAYMENT_PENDING`, `PAID`, `FULFILLED` (terminal), `CANCELLED` (terminal).
+- 4 Context Variables: `order_amount`, `escrow_balance`, `refunded_amount`, `settled_amount`.
+- Invariants:
+  - `INV-01-CONSERVATION-OF-VALUE`: `escrow_balance + refunded_amount + settled_amount <= order_amount`
+  - `INV-02-NO-NEGATIVE-BALANCES`: `escrow_balance >= 0 && refunded_amount >= 0 && settled_amount >= 0`
+  - `INV-03-FULFILLED-SETTLEMENT`: `state == 'FULFILLED' => (settled_amount == order_amount && escrow_balance == 0)`
+- Transitions:
+  - `INITIATE_PAYMENT`: `CREATED` -> `PAYMENT_PENDING` (directive: `DISPATCH_PAYMENT_GATEWAY`)
+  - `CONFIRM_PAYMENT`: `PAYMENT_PENDING` -> `PAID` (guard: `event.captured_amount == order_amount`, effect: `escrow_balance = order_amount`)
+  - `DISPATCH_GOODS`: `PAID` -> `FULFILLED` (guard: `escrow_balance == order_amount`, directive: `INVOKE_LOGISTICS_DISPATCH`, effects: `settled_amount = escrow_balance`, `escrow_balance = 0`)
+  - `CANCEL_AND_REFUND`: `PAID` -> `CANCELLED` (guard: `escrow_balance == order_amount`, directive: `DISPATCH_REFUND`, effects: `refunded_amount = escrow_balance`, `escrow_balance = 0`)
+  - `ABORT_UNPAID`: `CREATED` -> `CANCELLED` (guard: `true`)
 
-Specification question for T-334 review: `DISPATCH_GOODS` clears
-`escrow_balance`, while `INV-03-FULFILL-REQUIRES-ESCROW` requires the balance to
-equal `order_amount` in `FULFILLED`. `INV-01-CONSERVATION-OF-VALUE` also uses
-`paid`, which the IR does not declare, and would reject the same path if `paid`
-remains true after dispatch. The harness preserves the specified fixture and
-required allowed happy path; implementation needs an explicit predicate and
-invariant evaluation decision.
+All invariants are evaluated uniformly on post-states. In terminal states (`FULFILLED`, `CANCELLED`), all conservation and settlement invariants hold true without requiring ad-hoc bypasses or magic variables.
+
+Run `pnpm run verify` (`pnpm run test && pnpm run typecheck`) to verify conformance.

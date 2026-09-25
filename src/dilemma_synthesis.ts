@@ -53,7 +53,7 @@ export function synthesizeDilemmas(result: BoundaryInferenceResult): Legislative
 export function formatDilemmas(dilemmas: readonly LegislativeDilemma[]): string {
   if (!dilemmas.length) return "No boundary dilemmas inferred from this input.\n";
   return dilemmas.map((dilemma, index) => [
-    "### ⚖️ Kadmos Legislative Dilemma",
+    "### Kadmos Legislative Dilemma",
     `#### Dilemma #${index + 1} (${dilemma.id}): ${dilemma.title}`,
     "#### Worst-Case Trace",
     ...dilemma.worstCaseTrace.map((step, stepIndex) => `${stepIndex + 1}. ${step}`),

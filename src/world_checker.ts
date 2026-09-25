@@ -3,40 +3,111 @@ import type { StepRecord } from "./types/counterexample.js";
 import type { WorldSpec } from "./types/world.js";
 import { evaluate } from "./world_expression.js";
 
+function deepFreeze<T>(obj: T): T {
+  if (obj === null || typeof obj !== "object") return obj;
+  Object.freeze(obj);
+  for (const key of Object.getOwnPropertyNames(obj)) {
+    const val = (obj as Record<string, unknown>)[key];
+    if (typeof val === "object" && val !== null && !Object.isFrozen(val)) {
+      deepFreeze(val);
+    }
+  }
+  return obj;
+}
+
+export function sanitizePayload(raw: unknown): Record<string, unknown> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("INVALID_EVENT_PAYLOAD: must be an object");
+  const result: Record<string, unknown> = {};
+  for (const key of Object.getOwnPropertyNames(raw)) {
+    const desc = Object.getOwnPropertyDescriptor(raw, key);
+    if (!desc) continue;
+    if (desc.get || desc.set) {
+      throw new Error(`SECURITY_VIOLATION: accessor property '${key}' not permitted in eventPayload`);
+    }
+    const val = desc.value;
+    if (typeof val === "object" && val !== null) {
+      result[key] = sanitizePayload(val);
+    } else if (typeof val === "function" || typeof val === "symbol") {
+      throw new Error(`SECURITY_VIOLATION: ${typeof val} not permitted in eventPayload`);
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
 export function createWorldChecker(
-  spec: WorldSpec,
+  rawSpec: WorldSpec,
   initialContext: Partial<WorldContext> = {},
 ): IWorldChecker {
+  const spec = deepFreeze(structuredClone(rawSpec));
   const initial = spec.states.find((state) => state.initial)?.id;
   if (!initial) throw new Error("INITIAL_STATE: exactly one required");
-  let state = initial;
-  let context: Record<string, number>;
-  let history: StepRecord[] = [];
 
-  const environment = (atState: string, values: WorldContext, event: Readonly<Record<string, unknown>> = {}) => ({
+  let state = initial;
+  let context: Record<string, number> = {};
+  let history: StepRecord[] = [];
+  let busy = false;
+
+  const env = (atState: string, values: Record<string, number>, eventPayload?: Readonly<Record<string, unknown>>) => ({
     ...values,
     state: atState,
-    paid: atState === "PAID",
-    event,
+    event: eventPayload ?? {},
   });
-  const boundsViolation = (values: WorldContext): string | undefined => {
+
+  const checkBounds = (values: Record<string, number>): string | undefined => {
     for (const [key, definition] of Object.entries(spec.context)) {
       const value = values[key];
-      if (!Number.isSafeInteger(value) || value === undefined || definition.min !== undefined && value < definition.min || definition.max !== undefined && value > definition.max) return key;
+      if (value === undefined || !Number.isSafeInteger(value)) return key;
+      if (definition.min !== undefined && value < definition.min) return key;
+      if (definition.max !== undefined && value > definition.max) return key;
     }
     return undefined;
   };
-  const reset = (next: Partial<WorldContext> = initialContext): void => {
-    state = initial;
-    context = Object.fromEntries(Object.entries(spec.context).map(([name, definition]) => [name, definition.default ?? 0]));
-    for (const [name, value] of Object.entries(next)) {
-      if (!Object.hasOwn(spec.context, name) || typeof value !== "number") throw new Error(`INVALID_BOUNDS: ${name}`);
-      context[name] = value;
+
+  const checkInvariants = (atState: string, values: Record<string, number>, eventPayload?: Readonly<Record<string, unknown>>): string | undefined => {
+    const environment = env(atState, values, eventPayload);
+    for (const invariant of spec.invariants) {
+      try {
+        const result = evaluate(invariant.predicate, environment);
+        if (typeof result !== "boolean" || !result) {
+          return invariant.id;
+        }
+      } catch {
+        return invariant.id;
+      }
     }
-    const invalid = boundsViolation(context);
-    if (invalid) throw new Error(`INVALID_BOUNDS: ${invalid}`);
-    history = [];
+    return undefined;
   };
+
+  const reset = (next: Partial<WorldContext> = initialContext): void => {
+    if (busy) throw new Error("REENTRANCY_DETECTED: reset called during active evaluation");
+    busy = true;
+    try {
+      state = initial;
+      const candidateContext: Record<string, number> = Object.fromEntries(
+        Object.entries(spec.context).map(([name, definition]) => [name, definition.default ?? 0]),
+      );
+      for (const [name, value] of Object.entries(next)) {
+        if (!Object.hasOwn(spec.context, name) || typeof value !== "number" || !Number.isSafeInteger(value)) {
+          throw new Error(`INVALID_BOUNDS: ${name}`);
+        }
+        candidateContext[name] = value;
+      }
+      const invalidBound = checkBounds(candidateContext);
+      if (invalidBound) throw new Error(`INVALID_BOUNDS: ${invalidBound}`);
+
+      const violatedInvariant = checkInvariants(state, candidateContext);
+      if (violatedInvariant) throw new Error(`INITIAL_INVARIANT_FAILED: ${violatedInvariant}`);
+
+      context = candidateContext;
+      history = [];
+    } finally {
+      busy = false;
+    }
+  };
+
   reset();
 
   return {
@@ -44,74 +115,132 @@ export function createWorldChecker(
     getContext: () => ({ ...context }),
     reset,
     step(request: TransitionStepRequest): StepVerdict {
-      const previousState = state;
-      const record: StepRecord = {
-        step: history.length + 1,
-        state,
-        action: request.transitionId,
-        ...(request.eventPayload === undefined ? {} : { eventPayload: request.eventPayload }),
-        ...(request.proposedDirective === undefined ? {} : { proposedDirective: request.proposedDirective }),
+      if (busy) throw new Error("REENTRANCY_DETECTED: step called during active evaluation");
+      busy = true;
+
+      const snapshotState = state;
+      const snapshotContext = { ...context };
+      const snapshotHistory = [...history];
+
+      const rollback = () => {
+        state = snapshotState;
+        context = { ...snapshotContext };
+        history = [...snapshotHistory];
       };
-      const reject = (code: string, message: string, violatedInvariant?: string): StepVerdict => ({
-        allowed: false,
-        previousState,
-        currentState: state,
-        context: { ...context },
-        directiveAllowed: null,
-        violation: {
-          code,
-          message,
-          ...(violatedInvariant === undefined ? {} : { violatedInvariant }),
-          shortestCounterexampleTrace: [...history, record],
-        },
-      });
-      const transition = spec.transitions.find((item) => item.id === request.transitionId);
-      if (!transition || transition.from !== state) {
-        const target = transition?.to;
-        const invariant = target === "FULFILLED" ? spec.invariants.find((item) => item.id.includes("FULFILL-REQUIRES-ESCROW"))?.id : undefined;
-        return reject("INVALID_TRANSITION", "Transition is not legal from current state", invariant);
-      }
-      if ((request.proposedDirective ?? null) !== transition.directive) return reject("UNAUTHORIZED_DIRECTIVE", "Proposed directive is not declared");
+
       try {
-        if (!evaluate(transition.guard, environment(state, context, request.eventPayload))) return reject("GUARD_FAILED", "Transition guard failed");
-      } catch {
-        return reject("GUARD_FAILED", "Transition guard could not be evaluated");
-      }
-      const candidate = { ...context };
-      try {
-        // Admission predicates inspect the value backing a proposed side effect.
-        // The dispatch effect may consume escrow after authorization.
-        for (const invariant of spec.invariants) {
-          if (invariant.id.includes("FULFILL-REQUIRES-ESCROW") && !evaluate(invariant.predicate, environment(transition.to, candidate, request.eventPayload))) {
-            return reject("INVARIANT_FAILED", "Fulfillment requires escrow", invariant.id);
+        let safePayload: Record<string, unknown> | undefined;
+        try {
+          safePayload = sanitizePayload(request.eventPayload);
+        } catch (e: unknown) {
+          rollback();
+          return {
+            allowed: false,
+            previousState: snapshotState,
+            currentState: snapshotState,
+            context: { ...snapshotContext },
+            directiveAllowed: null,
+            violation: {
+              code: "SECURITY_VIOLATION",
+              message: e instanceof Error ? e.message : "Invalid payload",
+              shortestCounterexampleTrace: [...snapshotHistory, {
+                step: snapshotHistory.length + 1,
+                state: snapshotState,
+                action: request.transitionId,
+              }],
+            },
+          };
+        }
+
+        const record: StepRecord = {
+          step: snapshotHistory.length + 1,
+          state: snapshotState,
+          action: request.transitionId,
+          ...(safePayload === undefined ? {} : { eventPayload: safePayload }),
+          ...(request.proposedDirective === undefined ? {} : { proposedDirective: request.proposedDirective }),
+        };
+
+        const reject = (code: string, message: string, violatedInvariant?: string): StepVerdict => {
+          rollback();
+          return {
+            allowed: false,
+            previousState: snapshotState,
+            currentState: snapshotState,
+            context: { ...snapshotContext },
+            directiveAllowed: null,
+            violation: {
+              code,
+              message,
+              ...(violatedInvariant === undefined ? {} : { violatedInvariant }),
+              shortestCounterexampleTrace: [...snapshotHistory, record],
+            },
+          };
+        };
+
+        const transition = spec.transitions.find((item) => item.id === request.transitionId && item.from === state);
+        if (!transition) {
+          return reject("INVALID_TRANSITION", `Transition '${request.transitionId}' is not legal from state '${state}'`);
+        }
+
+        if ((request.proposedDirective ?? null) !== transition.directive) {
+          return reject("UNAUTHORIZED_DIRECTIVE", "Directive does not match declared transition");
+        }
+
+        // Evaluate guard strictly requiring boolean true
+        try {
+          const guardValue = evaluate(transition.guard, env(state, context, safePayload));
+          if (typeof guardValue !== "boolean" || !guardValue) {
+            return reject("GUARD_FAILED", "Guard condition failed");
           }
+        } catch {
+          return reject("GUARD_FAILED", "Guard expression evaluation failed");
         }
-        for (const effect of transition.effects) {
-          const match = /^([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.+)$/.exec(effect);
-          if (!match || !Object.hasOwn(spec.context, match[1]!)) return reject("INVALID_EFFECT", "Undeclared effect target");
-          const result = evaluate(match[2]!, environment(transition.to, candidate, request.eventPayload));
-          if (typeof result !== "number" || !Number.isSafeInteger(result)) return reject("INVALID_EFFECT", "Effect must produce a safe integer");
-          candidate[match[1]!] = result;
+
+        // Candidate post-state effect calculation
+        const candidateContext = { ...context };
+        try {
+          for (const effect of transition.effects) {
+            const match = /^([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.+)$/.exec(effect);
+            if (!match || !(match[1]! in spec.context)) {
+              return reject("INVALID_EFFECT", "Invalid effect assignment target");
+            }
+            const value = evaluate(match[2]!, env(transition.to, candidateContext, safePayload));
+            if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+              return reject("INVALID_EFFECT", "Effect expression did not yield an integer");
+            }
+            candidateContext[match[1]!] = value;
+          }
+        } catch {
+          return reject("INVALID_EFFECT", "Effect evaluation failed");
         }
-        const invalid = boundsViolation(candidate);
-        if (invalid) return reject("INVALID_BOUNDS", `Context bound failed: ${invalid}`);
-        for (const invariant of spec.invariants) {
-          if (invariant.id.includes("FULFILL-REQUIRES-ESCROW")) continue;
-          if (!evaluate(invariant.predicate, environment(transition.to, candidate, request.eventPayload))) return reject("INVARIANT_FAILED", `Invariant failed: ${invariant.id}`, invariant.id);
+
+        // Check context bounds
+        const boundError = checkBounds(candidateContext);
+        if (boundError) {
+          return reject("INVALID_BOUNDS", `Context bound failed on '${boundError}'`);
         }
-      } catch {
-        return reject("INVARIANT_FAILED", "World expression could not be evaluated");
+
+        // Check all invariants on post-state
+        const violatedInvariant = checkInvariants(transition.to, candidateContext, safePayload);
+        if (violatedInvariant) {
+          return reject("INVARIANT_FAILED", `Invariant violation: '${violatedInvariant}'`, violatedInvariant);
+        }
+
+        // Commit state transition atomically
+        state = transition.to;
+        context = candidateContext;
+        history.push(record);
+
+        return {
+          allowed: true,
+          previousState: snapshotState,
+          currentState: state,
+          context: { ...context },
+          directiveAllowed: transition.directive as StepVerdict["directiveAllowed"],
+        };
+      } finally {
+        busy = false;
       }
-      state = transition.to;
-      context = candidate;
-      history.push(record);
-      return {
-        allowed: true,
-        previousState,
-        currentState: state,
-        context: { ...context },
-        directiveAllowed: transition.directive,
-      };
     },
   };
 }

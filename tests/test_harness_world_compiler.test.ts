@@ -24,12 +24,12 @@ test("parses and validates the complete order settlement World IR", () => {
   ]);
   assert.deepEqual(world.states.filter(({ initial }) => initial).map(({ id }) => id), ["CREATED"]);
   assert.deepEqual(world.states.filter(({ terminal }) => terminal).map(({ id }) => id), ["FULFILLED", "CANCELLED"]);
-  assert.deepEqual(Object.keys(world.context), ["order_amount", "escrow_balance", "refunded_amount"]);
-  assert.deepEqual(world.context.order_amount, { type: "integer", unit: "cents", min: 1, max: 100000000 });
+  assert.deepEqual(Object.keys(world.context), ["order_amount", "escrow_balance", "refunded_amount", "settled_amount"]);
+  assert.deepEqual(world.context.order_amount, { type: "integer", unit: "cents", min: 1, max: 100000000, default: 5000 });
   assert.deepEqual(world.invariants.map(({ id }) => id), [
     "INV-01-CONSERVATION-OF-VALUE",
-    "INV-02-NO-NEGATIVE-ESCROW",
-    "INV-03-FULFILL-REQUIRES-ESCROW",
+    "INV-02-NO-NEGATIVE-BALANCES",
+    "INV-03-FULFILLED-SETTLEMENT",
   ]);
   assert.deepEqual(world.transitions.map(({ id, from, to }) => [id, from, to]), [
     ["INITIATE_PAYMENT", "CREATED", "PAYMENT_PENDING"],
@@ -61,21 +61,29 @@ test("rejects an inverted numeric range", () => {
 });
 
 test("rejects a negative maximum when no minimum is specified", () => {
-  const source = fixture.replace("default: 0", "max: -1");
-  assert.throws(() => parseWorldSpec(source), /INVALID_BOUNDS/);
+  const source = fixture.replace("min: 1\n    max: 100000000", "max: -5");
+  assert.throws(() => parseWorldSpec(source), /(?:INVALID_BOUNDS|maximum|negative)/i);
 });
 
 test("rejects a transition into an undeclared state", () => {
-  const source = fixture.replace("to: PAYMENT_PENDING", "to: UNKNOWN_STATE");
-  assert.throws(() => parseWorldSpec(source), /(?:UNDECLARED_STATE|UNKNOWN_STATE)/i);
+  const source = fixture.replace("to: PAYMENT_PENDING", "to: GHOST_STATE");
+  assert.throws(() => parseWorldSpec(source), /(?:UNDECLARED_STATE|GHOST_STATE)/i);
 });
 
 test("rejects a cycle that exits a terminal state", () => {
   const source = fixture.replace(
-    "  - id: ABORT_UNPAID",
-    "  - id: REOPEN_FULFILLED\n    from: FULFILLED\n    to: CREATED\n    guard: true\n    directive: null\n    effects: []\n  - id: ABORT_UNPAID",
+    "transitions:\n",
+    "transitions:\n  - id: RESURRECT\n    from: FULFILLED\n    to: CREATED\n    guard: true\n    directive: null\n    effects: []\n",
   );
-  assert.throws(() => parseWorldSpec(source), /(?:TERMINAL_STATE|cycle|FULFILLED)/i);
+  assert.throws(() => parseWorldSpec(source), /(?:TERMINAL_STATE|FULFILLED)/i);
+});
+
+test("rejects duplicate transition IDs", () => {
+  const source = fixture.replace(
+    "transitions:\n",
+    "transitions:\n  - id: INITIATE_PAYMENT\n    from: CREATED\n    to: CANCELLED\n    guard: true\n    directive: null\n    effects: []\n",
+  );
+  assert.throws(() => parseWorldSpec(source), /DUPLICATE_TRANSITION_ID/i);
 });
 
 test("rejects an undeclared predicate identifier rather than evaluating it", () => {
@@ -113,7 +121,7 @@ test("compiler projection is independently testable from the YAML parser", () =>
     version: "kadmos.world.v0",
     name: "SmallWorld",
     states: [{ id: "START", initial: true }, { id: "DONE", terminal: true }],
-    context: { amount: { type: "integer", min: 1, max: 10 } },
+    context: { amount: { type: "integer", min: 1, max: 10, default: 5 } },
     invariants: [{ id: "INV-AMOUNT", predicate: "amount > 0" }],
     transitions: [{ id: "FINISH", from: "START", to: "DONE", guard: true, directive: "SEND", effects: [] }],
   };
@@ -124,7 +132,7 @@ test("compiler projection is independently testable from the YAML parser", () =>
   assert.match(projection.worldCheckerTs, /FINISH/);
 });
 
-test("generated checker enforces the payment guard and applies effects", async () => {
+test("generated checker enforces payment guard, applies effects, and validates terminal state and reset bounds", async () => {
   const projection = compileWorldSpec(parseWorldSpec(fixture));
   const directory = mkdtempSync(join(tmpdir(), "kadmos-runtime-"));
   try {
@@ -139,11 +147,28 @@ test("generated checker enforces the payment guard and applies effects", async (
     const { WorldChecker } = await import(pathToFileURL(join(directory, "world_checker.js")).href);
     const gate = new WorldChecker();
     gate.reset({ order_amount: 5000 });
+
+    // Step 1: Initiate
     assert.equal(gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY" }).allowed, true);
+
+    // Step 2: Failed confirm
     assert.equal(gate.step({ transitionId: "CONFIRM_PAYMENT", eventPayload: { captured_amount: 4999 } }).allowed, false);
     assert.equal(gate.getContext().escrow_balance, 0);
+
+    // Step 2: Successful confirm
     assert.equal(gate.step({ transitionId: "CONFIRM_PAYMENT", eventPayload: { captured_amount: 5000 } }).allowed, true);
     assert.equal(gate.getContext().escrow_balance, 5000);
+
+    // Step 3: Fulfill
+    const fulfill = gate.step({ transitionId: "DISPATCH_GOODS", proposedDirective: "INVOKE_LOGISTICS_DISPATCH" });
+    assert.equal(fulfill.allowed, true);
+    assert.equal(gate.getState(), "FULFILLED");
+    assert.equal(gate.getContext().settled_amount, 5000);
+    assert.equal(gate.getContext().escrow_balance, 0);
+
+    // Validate that reset with illegal bounds throws
+    assert.throws(() => gate.reset({ order_amount: 0 }), /INVALID_BOUNDS/);
+    assert.throws(() => gate.reset({ order_amount: -5 }), /INVALID_BOUNDS/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

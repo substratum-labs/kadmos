@@ -9,6 +9,7 @@ import {
   type IWorldChecker,
   type StepVerdict,
 } from "../src/index.js";
+import { evaluate } from "../src/world_expression.js";
 
 // Locate the canonical order settlement World IR fixture
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -70,11 +71,11 @@ export function runOrderFabricDemo(): boolean {
   });
 
   if (!unconstitutionalVerdict.allowed) {
-    console.log("\n🛑 [Gatekeeper] REFUSED UNCONSTITUTIONAL ACTION!");
+    console.log("\n[Gatekeeper] REFUSED UNCONSTITUTIONAL ACTION!");
     console.log(`   Violation Code: ${unconstitutionalVerdict.violation?.code}`);
     console.log(`   Message: ${unconstitutionalVerdict.violation?.message}`);
-    console.log(`   Violated Invariant: ${unconstitutionalVerdict.violation?.violatedInvariant ?? "N/A"}`);
-    console.log(`   Shortest CEGIS Counterexample Trace:`);
+    console.log(`   Violated Invariant: ${unconstitutionalVerdict.violation?.violatedInvariant ?? "None (structural state transition violation)"}`);
+    console.log(`   Shortest Counterexample Trace:`);
     for (const step of unconstitutionalVerdict.violation?.shortestCounterexampleTrace ?? []) {
       console.log(`     Step ${step.step}: State=${step.state}, Action=${step.action}, Directive=${step.proposedDirective ?? "none"}`);
     }
@@ -92,12 +93,14 @@ export function runOrderFabricDemo(): boolean {
 
   // Step 4: 1-Turn CEGIS Feedback & Repair Loop
   printSubheader("Step 4: 1-Turn CEGIS Feedback & Plan Repair");
-  console.log("[CEGIS] Counterexample feedback provided to Fabric Agent:");
-  console.log("        'Cannot transition to FULFILLED directly from CREATED. Must satisfy INV-03-FULFILL-REQUIRES-ESCROW.'");
-  console.log("[Fabric] Synthesizing repaired 3-step constitutional plan:");
-  console.log("         1. INITIATE_PAYMENT -> Acquire directive 'DISPATCH_PAYMENT_GATEWAY'");
-  console.log("         2. CONFIRM_PAYMENT -> Receive webhook payload { captured_amount: 5000 }");
-  console.log("         3. DISPATCH_GOODS -> Acquire directive 'INVOKE_LOGISTICS_DISPATCH' and fulfill");
+  console.log(`[CEGIS] Counterexample feedback provided to Fabric Agent:`);
+  console.log(`        Refusal Code: ${unconstitutionalVerdict.violation?.code}`);
+  console.log(`        Refusal Message: ${unconstitutionalVerdict.violation?.message}`);
+  console.log(`[Fabric] Diagnosed failure: Action 'DISPATCH_GOODS' is illegal from state 'CREATED'.`);
+  console.log(`[Fabric] Synthesizing repaired 3-step constitutional plan:`);
+  console.log(`         1. INITIATE_PAYMENT -> Acquire directive 'DISPATCH_PAYMENT_GATEWAY'`);
+  console.log(`         2. CONFIRM_PAYMENT -> Receive webhook payload { captured_amount: 5000 }`);
+  console.log(`         3. DISPATCH_GOODS -> Acquire directive 'INVOKE_LOGISTICS_DISPATCH' and fulfill`);
 
   // Step 5: Execute Repaired Plan
   printSubheader("Step 5: Executing Repaired Constitutional Plan");
@@ -141,15 +144,31 @@ export function runOrderFabricDemo(): boolean {
   }
   console.log(`   Allowed! State: ${step3.previousState} -> ${step3.currentState}`);
   console.log(`   Authorized Directive: '${step3.directiveAllowed}'`);
+  console.log(`   Settled Amount: $${((step3.context.settled_amount ?? 0) / 100).toFixed(2)}`);
   console.log(`   Escrow Balance settled to: $${((step3.context.escrow_balance ?? 0) / 100).toFixed(2)}`);
   console.log("   [Fabric Physical Action] Calling shipping provider API with authorized dispatch token...");
 
   // Step 6: Audit & Verification
   printSubheader("Step 6: Final Constitutional Audit");
-  console.log(`Final State: ${gatekeeper.getState()} (Terminal: true)`);
-  console.log(`Final Context:`, gatekeeper.getContext());
+  const finalState = gatekeeper.getState();
+  const finalContext = gatekeeper.getContext();
+  console.log(`Final State: ${finalState} (Terminal: true)`);
+  console.log(`Final Context:`, finalContext);
+
+  // Directly evaluate all declared invariants on the final post-state
+  const finalEnv = { ...finalContext, state: finalState, event: {} };
+  for (const invariant of worldSpec.invariants) {
+    const passed = evaluate(invariant.predicate, finalEnv);
+    if (typeof passed !== "boolean" || !passed) {
+      console.error(`FATAL: Invariant '${invariant.id}' evaluated to FALSE in final state: ${invariant.predicate}`);
+      return false;
+    }
+    console.log(`  [Verified] ${invariant.id}: ${invariant.predicate} => TRUE`);
+  }
+
   console.log(`All conservation invariants preserved:`);
   console.log(`  - Escrow balance settled cleanly to 0.`);
+  console.log(`  - Settled amount equals total order amount ($50.00).`);
   console.log(`  - Goods only dispatched after 100% payment verification.`);
   console.log(`  - Zero unauthorized directives reached physical providers.`);
 
