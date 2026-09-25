@@ -17,6 +17,7 @@ function parseYaml(source: string): unknown {
   let cursor = 0;
   const scalar = (value: string): unknown => {
     if (value === "[]") return [];
+    if (value === "{}") return {};
     if (value.startsWith("[")) throw new Error("YAML syntax: malformed sequence");
     if (value === "true") return true;
     if (value === "false") return false;
