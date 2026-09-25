@@ -159,15 +159,50 @@ test("P1-3 sort check: truthy non-boolean string fails closed as GUARD_FAILED", 
   assert.equal(gate.getState(), "CREATED");
 });
 
-test("P2 logical operators: require boolean operands without coercion", () => {
-  // Logical AND with numbers
+test("P2 logical operators: require boolean operands without coercion on both branches", async () => {
+  // Interpreter tests
   assert.throws(() => evaluate("1 && 1", {}), /expected boolean/i);
+  assert.throws(() => evaluate("false && 1", {}), /expected boolean/i);
+  assert.throws(() => evaluate("true || 1", {}), /expected boolean/i);
+  assert.throws(() => evaluate("false => 1", {}), /expected boolean/i);
+  assert.throws(() => evaluate("!1", {}), /expected boolean/i);
   assert.throws(() => evaluate("order_amount && true", { order_amount: 5000 }), /expected boolean/i);
-  // Valid boolean logic works cleanly
+
+  // Valid booleans work
   assert.equal(evaluate("true && true", {}), true);
-  assert.equal(evaluate("true && false", {}), false);
+  assert.equal(evaluate("false && true", {}), false);
   assert.equal(evaluate("false || true", {}), true);
+  assert.equal(evaluate("false => true", {}), true);
   assert.equal(evaluate("!false", {}), true);
+
+  // Test on compiled checker via transition guard
+  const booleanGuardWorld: WorldSpec = {
+    ...securityWorld,
+    transitions: [
+      { id: "TEST_OR", from: "CREATED", to: "PAYMENT_PENDING", guard: "true || 1", directive: null, effects: [] },
+      { id: "TEST_IMPL", from: "CREATED", to: "PAYMENT_PENDING", guard: "false => 1", directive: null, effects: [] },
+    ],
+  };
+  const projection = compileWorldSpec(booleanGuardWorld);
+  const directory = mkdtempSync(join(tmpdir(), "kadmos-bool-test-"));
+  try {
+    writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
+    writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
+    const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+      "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
+      "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 0);
+
+    const { WorldChecker } = await import(pathToFileURL(join(directory, "world_checker.js")).href);
+    const gate: IWorldChecker = new WorldChecker();
+    assert.equal(gate.step({ transitionId: "TEST_OR" }).allowed, false);
+    assert.equal(gate.step({ transitionId: "TEST_IMPL" }).allowed, false);
+    assert.equal(gate.getState(), "CREATED");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("P1-4 immutability: mutating rawSpec after createWorldChecker does not affect gatekeeper", () => {
@@ -192,7 +227,7 @@ test("P1-7 initial bounds: reset with illegal bounds throws INVALID_BOUNDS", () 
   assert.throws(() => gate.reset({ order_amount: -10 }), /INVALID_BOUNDS/);
 });
 
-test("P1-1 initial invariant check: compiled checker constructor throws if default fails invariant", () => {
+test("P1-1 initial invariant check: compiled checker constructor throws if default fails invariant", async () => {
   const failingInvariantWorld: WorldSpec = {
     ...securityWorld,
     invariants: [
@@ -211,14 +246,9 @@ test("P1-1 initial invariant check: compiled checker constructor throws if defau
     ], { encoding: "utf8" });
     assert.equal(result.status, 0);
 
-    const { WorldChecker } = importFresh(join(directory, "world_checker.js"));
-    assert.throws(() => new WorldChecker(), /INITIAL_INVARIANT_FAILED/);
+    const { WorldChecker } = await import(pathToFileURL(join(directory, "world_checker.js")).href);
+    assert.throws(() => new WorldChecker(), /INITIAL_INVARIANT_FAILED: INV-FAIL-ON-BOOT/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
-
-function importFresh(path: string) {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return { WorldChecker: (spawnSync("node", ["--input-type=module", "-e", `import { WorldChecker } from ${JSON.stringify(pathToFileURL(path).href)}; new WorldChecker();`])).status !== 0 ? class { constructor() { throw new Error("INITIAL_INVARIANT_FAILED: INV-FAIL-ON-BOOT"); } } : class {} };
-}

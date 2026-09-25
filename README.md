@@ -17,16 +17,18 @@ Kadmos keeps two axes separate:
 
 A strong result on one axis never substitutes for the other.
 
-## Architecture Boundary
+## Architecture Boundary & Scope
 
 Kadmos is an evidence-native coding application, not an OS security kernel.
 
 - **World (Closed Law):** Finite state machines, bounded integer context, safety invariants, transition guards, and authorized directives.
 - **Fabric (Open Execution):** Physical LLM-generated code, network calls, retries, and UI/glue logic.
-- **The Seam:** Disposable TypeScript interfaces (`ports.d.ts`) and pure runtime gatekeeper (`WorldChecker`).
-- **Pi:** Planned replaceable Agent Host.
-- **Castor:** Optional Guided execution backend for kernel-level semantic non-bypass.
-- **Roche:** Optional Hardened container isolation backend for physical network/filesystem non-bypass.
+- **The Seam:** Disposable TypeScript interfaces (`ports.d.ts`) and pure in-process runtime gatekeeper (`WorldChecker`).
+- **External Backends (Optional / Out-of-Tree):**
+  - Pi is a planned replaceable Agent Host.
+  - Castor is an out-of-tree microkernel runtime providing kernel-level semantic non-bypass.
+  - Roche is an out-of-tree container backend providing physical network/filesystem non-bypass.
+  - *Note:* Pi, Castor, and Roche are external systems and are NOT implemented in or required by this standalone repository.
 
 ## Development
 

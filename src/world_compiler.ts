@@ -310,9 +310,9 @@ function evaluateWorld(expression: string | boolean, env: Record<string, unknown
       index++;
       const right = parse(rank + (operator === "=>" ? 0 : 1));
       switch (operator) {
-        case "=>": left = !booleanWorld(left) || booleanWorld(right); break;
-        case "||": left = booleanWorld(left) || booleanWorld(right); break;
-        case "&&": left = booleanWorld(left) && booleanWorld(right); break;
+        case "=>": { const l = booleanWorld(left); const r = booleanWorld(right); left = !l || r; break; }
+        case "||": { const l = booleanWorld(left); const r = booleanWorld(right); left = l || r; break; }
+        case "&&": { const l = booleanWorld(left); const r = booleanWorld(right); left = l && r; break; }
         case "==": left = left === right; break;
         case "!=": left = left !== right; break;
         case ">": left = numeric(left) > numeric(right); break;

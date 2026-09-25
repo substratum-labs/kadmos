@@ -66,9 +66,9 @@ export function evaluate(expression: string | boolean, environment: Environment)
       take();
       const right = parse(priority + (operator === "=>" ? 0 : 1));
       switch (operator) {
-        case "=>": left = !boolean(left) || boolean(right); break;
-        case "||": left = boolean(left) || boolean(right); break;
-        case "&&": left = boolean(left) && boolean(right); break;
+        case "=>": { const l = boolean(left); const r = boolean(right); left = !l || r; break; }
+        case "||": { const l = boolean(left); const r = boolean(right); left = l || r; break; }
+        case "&&": { const l = boolean(left); const r = boolean(right); left = l && r; break; }
         case "==": left = left === right; break;
         case "!=": left = left !== right; break;
         case ">": left = number(left) > number(right); break;
