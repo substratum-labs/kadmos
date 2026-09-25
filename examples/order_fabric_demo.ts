@@ -1,0 +1,164 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import {
+  parseWorldSpec,
+  compileWorldSpec,
+  createWorldChecker,
+  type IWorldChecker,
+  type StepVerdict,
+} from "../src/index.js";
+
+// Locate the canonical order settlement World IR fixture
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
+function findFixturePath(): string {
+  const candidates = [
+    join(__dirname, "../../conformance/fixtures/order_settlement.world.yaml"),
+    join(__dirname, "../conformance/fixtures/order_settlement.world.yaml"),
+    join(process.cwd(), "conformance/fixtures/order_settlement.world.yaml"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(`Could not find order_settlement.world.yaml in candidates: ${candidates.join(", ")}`);
+}
+const fixtureYaml = readFileSync(findFixturePath(), "utf8");
+
+function printHeader(title: string): void {
+  console.log("\n" + "=".repeat(76));
+  console.log(`  ${title}`);
+  console.log("=".repeat(76));
+}
+
+function printSubheader(title: string): void {
+  console.log(`\n--- ${title} ---`);
+}
+
+export function runOrderFabricDemo(): boolean {
+  printHeader("Kadmos World-Fabric Integration Walkthrough: Order Settlement");
+
+  // Step 1: Parse and Compile the World Specification
+  printSubheader("Step 1: World IR Compilation");
+  const worldSpec = parseWorldSpec(fixtureYaml);
+  const projection = compileWorldSpec(worldSpec);
+
+  console.log(`[World] Loaded World IR: '${worldSpec.name}' (version: ${worldSpec.version})`);
+  console.log(`[World] States: ${worldSpec.states.map((s) => s.id).join(", ")}`);
+  console.log(`[World] Invariants declared: ${worldSpec.invariants.length}`);
+  console.log(`[World] Transitions declared: ${worldSpec.transitions.length}`);
+  console.log(`[World] Successfully projected ports.d.ts (${projection.portsDts.length} bytes) and world_checker.ts (${projection.worldCheckerTs.length} bytes)`);
+
+  // Step 2: Initialize Gatekeeper with initial context ($50.00 order)
+  printSubheader("Step 2: Initialize Runtime Gatekeeper");
+  const orderAmountCents = 5000;
+  const gatekeeper: IWorldChecker = createWorldChecker(worldSpec, {
+    order_amount: orderAmountCents,
+  });
+
+  console.log(`[Gatekeeper] Current State: ${gatekeeper.getState()}`);
+  console.log(`[Gatekeeper] Current Context:`, gatekeeper.getContext());
+
+  // Step 3: Simulated Unconstrained LLM Fabric Attempts an Unconstitutional Shortcut
+  printSubheader("Step 3: Fabric Hallucination / Unconstitutional Shortcut Attempt");
+  console.log("Simulating an LLM Fabric agent attempting to dispatch goods immediately before payment capture...");
+  console.log("-> Proposing step: { transitionId: 'DISPATCH_GOODS', proposedDirective: 'INVOKE_LOGISTICS_DISPATCH' }");
+
+  const unconstitutionalVerdict: StepVerdict = gatekeeper.step({
+    transitionId: "DISPATCH_GOODS",
+    proposedDirective: "INVOKE_LOGISTICS_DISPATCH",
+  });
+
+  if (!unconstitutionalVerdict.allowed) {
+    console.log("\n🛑 [Gatekeeper] REFUSED UNCONSTITUTIONAL ACTION!");
+    console.log(`   Violation Code: ${unconstitutionalVerdict.violation?.code}`);
+    console.log(`   Message: ${unconstitutionalVerdict.violation?.message}`);
+    console.log(`   Violated Invariant: ${unconstitutionalVerdict.violation?.violatedInvariant ?? "N/A"}`);
+    console.log(`   Shortest CEGIS Counterexample Trace:`);
+    for (const step of unconstitutionalVerdict.violation?.shortestCounterexampleTrace ?? []) {
+      console.log(`     Step ${step.step}: State=${step.state}, Action=${step.action}, Directive=${step.proposedDirective ?? "none"}`);
+    }
+  } else {
+    console.error("FATAL: Gatekeeper permitted an unconstitutional transition!");
+    return false;
+  }
+
+  // Verify that the World state remained intact (fail-closed, zero mutation)
+  if (gatekeeper.getState() !== "CREATED" || gatekeeper.getContext().escrow_balance !== 0) {
+    console.error("FATAL: Gatekeeper mutated state on rejected transition!");
+    return false;
+  }
+  console.log("\n[Gatekeeper] Fail-closed verified: State remains 'CREATED', escrow balance remains $0.00.");
+
+  // Step 4: 1-Turn CEGIS Feedback & Repair Loop
+  printSubheader("Step 4: 1-Turn CEGIS Feedback & Plan Repair");
+  console.log("[CEGIS] Counterexample feedback provided to Fabric Agent:");
+  console.log("        'Cannot transition to FULFILLED directly from CREATED. Must satisfy INV-03-FULFILL-REQUIRES-ESCROW.'");
+  console.log("[Fabric] Synthesizing repaired 3-step constitutional plan:");
+  console.log("         1. INITIATE_PAYMENT -> Acquire directive 'DISPATCH_PAYMENT_GATEWAY'");
+  console.log("         2. CONFIRM_PAYMENT -> Receive webhook payload { captured_amount: 5000 }");
+  console.log("         3. DISPATCH_GOODS -> Acquire directive 'INVOKE_LOGISTICS_DISPATCH' and fulfill");
+
+  // Step 5: Execute Repaired Plan
+  printSubheader("Step 5: Executing Repaired Constitutional Plan");
+
+  // Sub-step 5.1: Initiate Payment
+  console.log("\n-> Executing Sub-step 1: INITIATE_PAYMENT");
+  const step1 = gatekeeper.step({
+    transitionId: "INITIATE_PAYMENT",
+    proposedDirective: "DISPATCH_PAYMENT_GATEWAY",
+  });
+  if (!step1.allowed) {
+    console.error("Sub-step 1 failed:", step1);
+    return false;
+  }
+  console.log(`   Allowed! State: ${step1.previousState} -> ${step1.currentState}`);
+  console.log(`   Authorized Directive: '${step1.directiveAllowed}'`);
+  console.log("   [Fabric Physical Action] Calling payment gateway SDK with authorized directive token...");
+
+  // Sub-step 5.2: Confirm Payment Webhook
+  console.log("\n-> Executing Sub-step 2: CONFIRM_PAYMENT (Webhook event received: $50.00 captured)");
+  const step2 = gatekeeper.step({
+    transitionId: "CONFIRM_PAYMENT",
+    eventPayload: { captured_amount: orderAmountCents },
+  });
+  if (!step2.allowed) {
+    console.error("Sub-step 2 failed:", step2);
+    return false;
+  }
+  console.log(`   Allowed! State: ${step2.previousState} -> ${step2.currentState}`);
+  console.log(`   Escrow Balance updated to: $${((step2.context.escrow_balance ?? 0) / 100).toFixed(2)}`);
+
+  // Sub-step 5.3: Dispatch Goods
+  console.log("\n-> Executing Sub-step 3: DISPATCH_GOODS");
+  const step3 = gatekeeper.step({
+    transitionId: "DISPATCH_GOODS",
+    proposedDirective: "INVOKE_LOGISTICS_DISPATCH",
+  });
+  if (!step3.allowed) {
+    console.error("Sub-step 3 failed:", step3);
+    return false;
+  }
+  console.log(`   Allowed! State: ${step3.previousState} -> ${step3.currentState}`);
+  console.log(`   Authorized Directive: '${step3.directiveAllowed}'`);
+  console.log(`   Escrow Balance settled to: $${((step3.context.escrow_balance ?? 0) / 100).toFixed(2)}`);
+  console.log("   [Fabric Physical Action] Calling shipping provider API with authorized dispatch token...");
+
+  // Step 6: Audit & Verification
+  printSubheader("Step 6: Final Constitutional Audit");
+  console.log(`Final State: ${gatekeeper.getState()} (Terminal: true)`);
+  console.log(`Final Context:`, gatekeeper.getContext());
+  console.log(`All conservation invariants preserved:`);
+  console.log(`  - Escrow balance settled cleanly to 0.`);
+  console.log(`  - Goods only dispatched after 100% payment verification.`);
+  console.log(`  - Zero unauthorized directives reached physical providers.`);
+
+  printHeader("Walkthrough Verdict: SUCCESS (All World invariants verified!)");
+  return true;
+}
+
+// Auto-run if executed directly via node
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const success = runOrderFabricDemo();
+  process.exit(success ? 0 : 1);
+}

@@ -19,6 +19,7 @@
     "clean": "node --eval \"import('node:fs').then(({ rmSync }) => rmSync('dist', { recursive: true, force: true }))\"",
     "build": "pnpm run clean && tsc -p tsconfig.json",
     "test": "pnpm run build && node --test dist/tests/**/*.test.js",
+    "demo": "pnpm run build && node dist/examples/order_fabric_demo.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify": "pnpm run test && pnpm run typecheck"
   },

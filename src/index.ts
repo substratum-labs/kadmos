@@ -28,3 +28,11 @@ export const projectIdentity = {
   ],
   optionalIntegrations: ["pi", "castor", "roche"],
 } as const satisfies ProjectIdentity;
+
+export type * from "./types/world.js";
+export type * from "./types/ports.js";
+export type * from "./types/counterexample.js";
+export { createWorldChecker } from "./world_checker.js";
+export { parseWorldSpec, compileWorldSpec, type WorldProjection } from "./world_compiler.js";
+export { inferBoundary, type BoundaryCategory, type BoundaryCandidate, type BoundaryInferenceResult } from "./boundary_inference.js";
+export { synthesizeDilemmas, formatDilemmas, type LegislativeDilemma } from "./dilemma_synthesis.js";
