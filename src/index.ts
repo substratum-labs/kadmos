@@ -36,3 +36,6 @@ export { createWorldChecker } from "./world_checker.js";
 export { parseWorldSpec, compileWorldSpec, type WorldProjection } from "./world_compiler.js";
 export { inferBoundary, type BoundaryCategory, type BoundaryCandidate, type BoundaryInferenceResult } from "./boundary_inference.js";
 export { synthesizeDilemmas, formatDilemmas, type LegislativeDilemma } from "./dilemma_synthesis.js";
+export type * from "./agent/provider.js";
+export { MockDeterministicProvider } from "./agent/provider.js";
+export { synthesizeCegisPrompt } from "./agent/cegis_prompt.js";
