@@ -30,7 +30,7 @@ export function runCli(args: readonly string[]): string | Promise<string> {
     if (dryRun) return buildInitialPrompt(prdContent, worldSpec, compileWorldSpec(worldSpec).portsDts);
     const model = values.get("--model") ?? process.env.KADMOS_MODEL;
     const provider = createLlmProvider(values.get("--provider") ?? "openai", model ? { model } : {});
-    return runKadmosAgent({ prdPath, worldSpecPath, outDir: values.get("--out") ?? "./src/fabric", provider, maxRepairTurns })
+    return runKadmosAgent({ prdPath, worldSpecPath, outDir: values.get("--out") ?? "./dist/fabric", provider, maxRepairTurns })
       .then((result) => `${JSON.stringify(result, null, 2)}\n`);
   }
   const [command, file] = args;

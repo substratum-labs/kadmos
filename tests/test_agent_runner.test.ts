@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { runCli } from "../src/cli.js";
-import { AnthropicProvider, MockDeterministicProvider, OllamaProvider, OpenAiCompatibleProvider, createLlmProvider, runKadmosAgent } from "../src/index.js";
+import { AnthropicProvider, MockDeterministicProvider, OllamaProvider, OpenAiCompatibleProvider, createLlmProvider, createWorldChecker, parseWorldSpec, runKadmosAgent } from "../src/index.js";
 import type { LlmCompletionRequest, LlmCompletionResponse } from "../src/index.js";
 
 const worldPath = join(process.cwd(), "conformance/fixtures/order_settlement.world.yaml");
@@ -14,7 +14,8 @@ const goodSteps = [
   { transitionId: "DISPATCH_GOODS", proposedDirective: "INVOKE_LOGISTICS_DISPATCH" },
 ];
 const badSteps = [{ transitionId: "DISPATCH_GOODS", proposedDirective: "INVOKE_LOGISTICS_DISPATCH" }];
-const candidate = (steps: unknown, code = "export class OrderService {}") => `\`\`\`json\n${JSON.stringify({ steps })}\n\`\`\`\n\`\`\`typescript\n${code}\n\`\`\``;
+const serviceCode = (steps: unknown) => `import type { IWorldChecker } from "./ports.js"; export class OrderService { constructor(private readonly checker: IWorldChecker) {} run() { ${(steps as object[]).map((step) => `this.checker.step(${JSON.stringify(step)});`).join(" ")} } }`;
+const candidate = (steps: unknown, code = serviceCode(steps)) => `\`\`\`json\n${JSON.stringify({ steps })}\n\`\`\`\n\`\`\`typescript\n${code}\n\`\`\``;
 
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "kadmos-run-"));
@@ -40,6 +41,49 @@ test("runner accepts compliant first turn and writes code", async () => {
     assert.equal(result.turnsExecuted, 1);
     assert.equal(result.success, true);
     assert.match(readFileSync(result.generatedCodePath!, "utf8"), /class OrderService/);
+    assert.deepEqual(JSON.parse(readFileSync(join(f.outDir, "journey.json"), "utf8")), goodSteps);
+    assert.match(readFileSync(join(f.outDir, "ports.d.ts"), "utf8"), /IWorldChecker/);
+    const evidence = JSON.parse(readFileSync(join(f.outDir, "evidence.json"), "utf8"));
+    assert.equal(evidence.worldSpec.name, "OrderSettlementWorld");
+    assert.equal(evidence.finalState, "FULFILLED");
+    assert.equal(evidence.turnsExecuted, 1);
+    assert.ok(Date.parse(evidence.verificationTimestamp));
+    assert.equal(evidence.totalTokensUsed, 0);
+    assert.deepEqual(evidence.executionTrace, result.executionTrace);
+    const checker = createWorldChecker(parseWorldSpec(readFileSync(worldPath, "utf8")));
+    for (const step of JSON.parse(readFileSync(join(f.outDir, "journey.json"), "utf8"))) assert.equal(checker.step(step).allowed, true);
+    assert.equal(checker.getState(), evidence.finalState);
+    assert.deepEqual(checker.getContext(), evidence.context);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
+test("runner rejects source whose checker calls disagree with its plan", async () => {
+  const f = fixture();
+  try {
+    const result = await runKadmosAgent({ prdPath: f.prdPath, worldSpecPath: worldPath, outDir: f.outDir, provider: new MockDeterministicProvider([candidate(goodSteps, serviceCode(badSteps))]), maxRepairTurns: 1 });
+    assert.equal(result.success, false);
+    assert.equal(existsSync(f.outDir), false);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
+test("runner rejects a class that never calls checker.step", async () => {
+  const f = fixture();
+  try {
+    const source = "export class OrderService { run() {} }";
+    const result = await runKadmosAgent({ prdPath: f.prdPath, worldSpecPath: worldPath, outDir: f.outDir, provider: new MockDeterministicProvider([candidate(goodSteps, source)]), maxRepairTurns: 1 });
+    assert.equal(result.finalVerdict, "COMPILATION_FAILED");
+    assert.match(result.executionTrace[0]!, /checker.step calls must match/);
+    assert.equal(existsSync(f.outDir), false);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
+test("candidate process exit cannot terminate the runner or admit code", async () => {
+  const f = fixture();
+  try {
+    const source = "import type { IWorldChecker } from './ports.js'; export class OrderService { constructor(private checker: IWorldChecker) {} run() { (this.checker as any).constructor.constructor('return process')().exit(0); } }";
+    const result = await runKadmosAgent({ prdPath: f.prdPath, worldSpecPath: worldPath, outDir: f.outDir, provider: new MockDeterministicProvider([candidate(goodSteps, source)]), maxRepairTurns: 1 });
+    assert.equal(result.success, false);
+    assert.equal(existsSync(f.outDir), false);
   } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });
 
@@ -105,6 +149,24 @@ test("HTTP providers send native requests and normalize responses", async () => 
     assert.equal(seen[0]!.headers.authorization, "Bearer key");
     assert.equal(seen[1]!.headers["x-api-key"], "key");
     assert.equal(seen[2]!.body.stream, false);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+});
+
+test("HTTP providers report non-JSON errors and respect request timeout", async () => {
+  const { createServer } = await import("node:http");
+  const server = createServer((request, response) => {
+    if (request.url === "/v1/chat/completions") { response.statusCode = 503; response.end("temporarily unavailable"); return; }
+    response.setHeader("content-type", "text/plain");
+    response.end("not json");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("No test port");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const request = { systemPrompt: "system", messages: [{ role: "user" as const, content: "question" }] };
+    await assert.rejects(new OpenAiCompatibleProvider({ baseUrl, apiKey: "key", timeoutMs: 1000 }).complete(request), /LLM_HTTP_503: temporarily unavailable/);
+    await assert.rejects(new OllamaProvider({ baseUrl, timeoutMs: 1000 }).complete(request), /LLM_RESPONSE_INVALID: non-JSON response/);
   } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
 });
 

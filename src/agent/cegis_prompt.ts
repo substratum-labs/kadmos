@@ -8,7 +8,7 @@ function routeTo(world: WorldSpec, start: string, target: string): TransitionDef
   const queue: { state: string; route: TransitionDef[] }[] = [{ state: start, route: [] }];
   for (let cursor = 0; cursor < queue.length; cursor++) {
     const { state, route } = queue[cursor]!;
-    for (const transition of world.transitions.filter((item) => item.from === state)) {
+    for (const transition of world.transitions.filter((item) => item.from === state && item.guard !== false && item.guard !== "false")) {
       if (visited.has(transition.to)) continue;
       const next = [...route, transition];
       if (transition.to === target) return next;
@@ -44,6 +44,10 @@ export function synthesizeCegisPrompt(verdict: StepVerdict, worldSpec: WorldSpec
     INVARIANT_VIOLATED: "INVARIANT_VIOLATED",
     REENTRANCY_DENIED: "REENTRANCY_DENIED",
     REENTRANCY_DETECTED: "REENTRANCY_DENIED",
+    UNAUTHORIZED_DIRECTIVE: "UNAUTHORIZED_DIRECTIVE",
+    SECURITY_VIOLATION: "SECURITY_VIOLATION",
+    INVALID_EFFECT: "INVALID_EFFECT",
+    INVALID_BOUNDS: "INVALID_BOUNDS",
   };
   const code = classification[violation.code] ?? violation.code;
   const trace = violation.shortestCounterexampleTrace;
@@ -67,7 +71,7 @@ export function synthesizeCegisPrompt(verdict: StepVerdict, worldSpec: WorldSpec
   ];
 
   if (code === "ILLEGAL_TRANSITION" && rejected) {
-    const candidates = worldSpec.transitions.filter((item) => item.id === rejected.action);
+    const candidates = worldSpec.transitions.filter((item) => item.id === rejected.action && item.guard !== false && item.guard !== "false");
     const routes = candidates.map((candidate) => ({ candidate, route: routeTo(worldSpec, verdict.previousState, candidate.from) }))
       .filter((item): item is { candidate: TransitionDef; route: TransitionDef[] } => item.route !== undefined)
       .sort((a, b) => a.route.length - b.route.length);
@@ -89,6 +93,14 @@ export function synthesizeCegisPrompt(verdict: StepVerdict, worldSpec: WorldSpec
       "Revise the transition inputs or preceding legal sequence so the post-state algebra satisfies the invariant. Do not apply the rejected effects or trigger its directive.");
   } else if (code === "REENTRANCY_DENIED") {
     lines.push("A nested gatekeeper call occurred during atomic evaluation. Move the nested action after the current step returns; never mutate gatekeeper state during a guard or effect.");
+  } else if (code === "UNAUTHORIZED_DIRECTIVE") {
+    lines.push("Use only the directive declared for this transition, or omit proposedDirective when the transition declares none. Never perform a side effect after a directive refusal.");
+  } else if (code === "SECURITY_VIOLATION") {
+    lines.push("Remove the prohibited operation. Route all state changes through checker.step and perform side effects only after an allowed verdict.");
+  } else if (code === "INVALID_EFFECT") {
+    lines.push("The declared effect is invalid. Do not invent or execute a replacement effect; request a corrected WorldSpec before retrying.");
+  } else if (code === "INVALID_BOUNDS") {
+    lines.push("The requested value exceeds the declared context bounds. Supply a value within the WorldSpec minimum and maximum; do not clamp or bypass the checker silently.");
   } else {
     lines.push("The gatekeeper refused this step. Do not execute its side effect. Follow the declared WorldSpec and address the refusal reason before retrying.");
   }

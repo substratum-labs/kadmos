@@ -60,6 +60,7 @@ export interface ProviderOptions {
   readonly model?: string;
   readonly apiKey?: string;
   readonly baseUrl?: string;
+  readonly timeoutMs?: number;
   readonly responses?: readonly (string | LlmCompletionResponse)[];
 }
 
@@ -68,11 +69,12 @@ function requireKey(value: string | undefined, name: string): string {
   return value;
 }
 
-async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<unknown> {
-  const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
-  const payload: unknown = await response.json();
-  if (!response.ok) throw new Error(`LLM_HTTP_${response.status}: ${JSON.stringify(payload)}`);
-  return payload;
+async function postJson(url: string, headers: Record<string, string>, body: unknown, timeoutMs: number): Promise<unknown> {
+  const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`LLM_HTTP_${response.status}: ${raw.slice(0, 1000)}`);
+  try { return JSON.parse(raw) as unknown; }
+  catch { throw new Error("LLM_RESPONSE_INVALID: non-JSON response"); }
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -94,12 +96,14 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
   readonly defaultModel: string;
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
+  private readonly timeoutMs: number;
 
   constructor(options: ProviderOptions = {}) {
     this.defaultModel = options.model ?? process.env.KADMOS_MODEL ?? "gpt-6-sol";
     const base = (options.baseUrl ?? process.env.KADMOS_OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
     this.baseUrl = base.endsWith("/v1") ? base : `${base}/v1`;
     this.apiKey = options.apiKey ?? process.env.KADMOS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY;
+    this.timeoutMs = options.timeoutMs ?? 30000;
   }
 
   async complete(request: LlmCompletionRequest): Promise<LlmCompletionResponse> {
@@ -113,7 +117,7 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
       ...(request.maxTokens === undefined ? {} : { max_tokens: request.maxTokens }),
       ...(request.seed === undefined ? {} : { seed: request.seed }),
       ...(request.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
-    }));
+    }, this.timeoutMs));
     const choice = record((raw.choices as unknown[])?.[0]);
     const content = record(choice.message).content;
     if (typeof content !== "string") throw new Error("LLM_RESPONSE_INVALID: content");
@@ -127,11 +131,13 @@ export class AnthropicProvider implements ILlmProvider {
   readonly defaultModel: string;
   private readonly apiKey: string | undefined;
   private readonly baseUrl: string;
+  private readonly timeoutMs: number;
 
   constructor(options: ProviderOptions = {}) {
     this.defaultModel = options.model ?? process.env.KADMOS_MODEL ?? "claude-sonnet-4-5";
     this.apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
     this.baseUrl = (options.baseUrl ?? "https://api.anthropic.com/v1").replace(/\/$/, "");
+    this.timeoutMs = options.timeoutMs ?? 30000;
   }
 
   async complete(request: LlmCompletionRequest): Promise<LlmCompletionResponse> {
@@ -145,7 +151,7 @@ export class AnthropicProvider implements ILlmProvider {
       messages: request.messages.filter((message) => message.role !== "system"),
       max_tokens: request.maxTokens ?? 4096,
       ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
-    }));
+    }, this.timeoutMs));
     const blocks = raw.content;
     if (!Array.isArray(blocks)) throw new Error("LLM_RESPONSE_INVALID: content");
     const content = blocks.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("\n");
@@ -159,10 +165,12 @@ export class OllamaProvider implements ILlmProvider {
   readonly providerName = "ollama";
   readonly defaultModel: string;
   private readonly host: string;
+  private readonly timeoutMs: number;
 
   constructor(options: ProviderOptions = {}) {
     this.defaultModel = options.model ?? process.env.KADMOS_MODEL ?? "qwen2.5-coder:32b";
     this.host = (options.baseUrl ?? process.env.OLLAMA_HOST ?? "http://localhost:11434").replace(/\/$/, "");
+    this.timeoutMs = options.timeoutMs ?? 30000;
   }
 
   async complete(request: LlmCompletionRequest): Promise<LlmCompletionResponse> {
@@ -177,7 +185,7 @@ export class OllamaProvider implements ILlmProvider {
         ...(request.seed === undefined ? {} : { seed: request.seed }),
       },
       ...(request.responseFormat === "json_object" ? { format: "json" } : {}),
-    }));
+    }, this.timeoutMs));
     const content = record(raw.message).content;
     if (typeof content !== "string") throw new Error("LLM_RESPONSE_INVALID: content");
     const metrics = usage(raw, "prompt_eval_count", "eval_count");

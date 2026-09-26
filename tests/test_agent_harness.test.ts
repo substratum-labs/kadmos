@@ -29,6 +29,21 @@ test("invalid transition prompt includes actual shortest trace and legal prerequ
   assert.equal(gate.getState(), "CREATED");
 });
 
+test("route synthesis excludes statically false guard shortcuts", () => {
+  const guarded = { ...world, transitions: [{ id: "IMPOSSIBLE", from: "CREATED", to: "PAID", guard: false, directive: null, effects: [] }, ...world.transitions] };
+  const verdict = createWorldChecker(guarded).step({ transitionId: "DISPATCH_GOODS", proposedDirective: "INVOKE_LOGISTICS_DISPATCH" });
+  const prompt = synthesizeCegisPrompt(verdict, guarded);
+  assert.doesNotMatch(prompt, /Transition `IMPOSSIBLE`/);
+  assert.match(prompt, /INITIATE_PAYMENT[\s\S]*CONFIRM_PAYMENT[\s\S]*DISPATCH_GOODS/);
+});
+
+test("security and bounds refusal codes provide specific repair directions", () => {
+  for (const [code, phrase] of [["UNAUTHORIZED_DIRECTIVE", "directive declared"], ["SECURITY_VIOLATION", "Remove the prohibited operation"], ["INVALID_EFFECT", "request a corrected WorldSpec"], ["INVALID_BOUNDS", "minimum and maximum"]] as const) {
+    const prompt = synthesizeCegisPrompt({ allowed: false, previousState: "CREATED", currentState: "CREATED", context: {}, directiveAllowed: null, violation: { code, message: "refused", shortestCounterexampleTrace: [] } }, world);
+    assert.match(prompt, new RegExp(phrase));
+  }
+});
+
 test("invariant failure prompt names the exact predicate and violating effect", () => {
   const broken = {
     ...world,

@@ -10,8 +10,8 @@ const worldSpecPath = join(process.cwd(), "conformance/fixtures/order_settlement
 const payment = { transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY" };
 const confirm = { transitionId: "CONFIRM_PAYMENT", eventPayload: { captured_amount: 5000 } };
 const dispatch = { transitionId: "DISPATCH_GOODS", proposedDirective: "INVOKE_LOGISTICS_DISPATCH" };
-const code = "export class OrderService { constructor(checker: unknown) { if (!checker) throw new Error('checker required'); } }";
-const candidate = (steps: unknown, source = code) => `\`\`\`json\n${JSON.stringify({ steps })}\n\`\`\`\n\`\`\`typescript\n${source}\n\`\`\``;
+const serviceCode = (steps: unknown) => `import type { IWorldChecker } from "./ports.js"; export class OrderService { constructor(private readonly checker: IWorldChecker) {} run() { ${(steps as object[]).map((step) => `this.checker.step(${JSON.stringify(step)});`).join(" ")} } }`;
+const candidate = (steps: unknown, source = serviceCode(steps)) => `\`\`\`json\n${JSON.stringify({ steps })}\n\`\`\`\n\`\`\`typescript\n${source}\n\`\`\``;
 
 async function run(responses: string[], maxRepairTurns = 3) {
   const directory = mkdtempSync(join(tmpdir(), "kadmos-cegis-"));
@@ -40,6 +40,7 @@ test("typecheck error receives compilation feedback and repairs on turn two", as
   assert.equal(result.finalVerdict, "CONSTITUTIONAL_ACCEPTED");
   assert.equal(result.turnsExecuted, 2);
   assert.match(requests[1]!.messages.at(-1)!.content, /Kadmos TypeScript Compilation Error[\s\S]*MissingType[\s\S]*Please fix the TypeScript errors/);
+  assert.match(requests[1]!.messages.at(-1)!.content, /```json[\s\S]*```typescript/);
 });
 
 test("non-terminal plan receives state feedback and reaches terminal on turn two", async () => {
@@ -47,6 +48,7 @@ test("non-terminal plan receives state feedback and reaches terminal on turn two
   assert.equal(result.finalVerdict, "CONSTITUTIONAL_ACCEPTED");
   assert.equal(result.turnsExecuted, 2);
   assert.match(requests[1]!.messages.at(-1)!.content, /Kadmos Non-Terminal Plan[\s\S]*`PAID`[\s\S]*FULFILLED[\s\S]*CANCELLED/);
+  assert.match(requests[1]!.messages.at(-1)!.content, /```json[\s\S]*```typescript/);
 });
 
 test("illegal transition refusal guides the second turn to acceptance", async () => {
@@ -80,6 +82,20 @@ test("malformed candidate blocks receive repair feedback instead of aborting", a
   assert.match(requests[1]!.messages.at(-1)!.content, /Candidate requires TypeScript and JSON plan blocks/);
 });
 
+test("malformed output exhausts with its own verdict and both required fences", async () => {
+  const { result, requests } = await run(["```json\n{}\n```"], 1);
+  assert.equal(result.finalVerdict, "MALFORMED_OUTPUT");
+  assert.match(result.executionTrace[0]!, /malformed output/);
+  assert.equal(requests.length, 1);
+});
+
+test("provider failure consumes a turn and enters execution trace", async () => {
+  const { result } = await run([], 1);
+  assert.equal(result.turnsExecuted, 1);
+  assert.equal(result.success, false);
+  assert.match(result.executionTrace[0]!, /MockDeterministicProvider script exhausted/);
+});
+
 test("non-terminal exhaustion reports max turns rather than compilation failure", async () => {
   const partial = candidate([payment, confirm]);
   const { result, requests } = await run([partial, partial, partial]);
@@ -88,12 +104,12 @@ test("non-terminal exhaustion reports max turns rather than compilation failure"
   assert.equal(requests.length, 3);
 });
 
-test("a service constructor that rejects the checker is repaired on the next turn", async () => {
-  const broken = "export class OrderService { constructor(_checker: unknown) { throw new Error('cannot instantiate'); } }";
-  const { result, requests } = await run([candidate([payment, confirm, dispatch], broken), candidate([payment, confirm, dispatch])]);
-  assert.equal(result.finalVerdict, "CONSTITUTIONAL_ACCEPTED");
-  assert.equal(result.turnsExecuted, 2);
-  assert.match(requests[1]!.messages.at(-1)!.content, /cannot instantiate/);
+test("service constructor failure is contained in candidate process", async () => {
+  const broken = serviceCode([payment, confirm, dispatch]).replace("constructor(private readonly checker: IWorldChecker) {}", "constructor(private readonly checker: IWorldChecker) { throw new Error('cannot instantiate'); }");
+  const { result } = await run([candidate([payment, confirm, dispatch], broken)], 1);
+  assert.equal(result.finalVerdict, "COMPILATION_FAILED");
+  assert.equal(result.turnsExecuted, 1);
+  assert.match(result.executionTrace[0]!, /cannot instantiate/);
 });
 
 test("gatekeeper refusal requests both updated plan and service blocks", async () => {
