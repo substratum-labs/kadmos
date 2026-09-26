@@ -113,7 +113,8 @@ function mergeWorldSpec(local: WorldSpec, extracted: SemanticWorldExtraction): W
   const context = { ...local.context };
   for (const [name, field] of Object.entries(extracted.context)) {
     const existing = context[name];
-    if (existing && (existing.min !== undefined && (field.min === undefined || field.min < existing.min)
+    if (field.default !== undefined && field.default !== 0
+      || existing && (existing.min !== undefined && (field.min === undefined || field.min < existing.min)
       || existing.max !== undefined && (field.max === undefined || field.max > existing.max)
       || existing.unit !== undefined && field.unit !== undefined && existing.unit !== field.unit
       || field.default !== undefined && field.default !== existing.default
@@ -129,10 +130,16 @@ function mergeWorldSpec(local: WorldSpec, extracted: SemanticWorldExtraction): W
   const transitions = [...local.transitions];
   for (const item of extracted.transitions) {
     const candidate = { ...item, directive: item.directive ?? null, effects: item.effects ?? [] };
-    if (transitions.some((other) => other.from === candidate.from && other.to === candidate.to && JSON.stringify(other.effects) !== JSON.stringify(candidate.effects))) throw new Error(`CONFLICTING_TRANSITION: ${item.id}`);
-    const existing = transitions.find((other) => other.id === item.id || other.from === item.from && other.to === item.to && (other.directive ?? null) === (item.directive ?? null));
+    for (const effect of candidate.effects) {
+      const assignment = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(effect);
+      if (!assignment || Object.hasOwn(local.context, assignment[1]!)
+        || /^(?:escrow_balance|order_amount|refunded_amount|settled_amount)$/.test(assignment[1]!)
+        || !Object.hasOwn(extracted.context, assignment[1]!)
+        || !Object.hasOwn(context, assignment[2]!)) throw new Error(`CONFLICTING_TRANSITION: ${item.id}`);
+    }
+    const existing = transitions.find((other) => other.id === item.id || other.from === item.from && other.to === item.to);
     if (existing) {
-      if (existing.from !== candidate.from || existing.to !== candidate.to || existing.guard !== candidate.guard || existing.directive !== candidate.directive || JSON.stringify(existing.effects) !== JSON.stringify(candidate.effects)) throw new Error(`CONFLICTING_TRANSITION: ${item.id}`);
+      if (existing.id !== candidate.id || existing.from !== candidate.from || existing.to !== candidate.to || existing.guard !== candidate.guard || existing.directive !== candidate.directive || JSON.stringify(existing.effects) !== JSON.stringify(candidate.effects)) throw new Error(`CONFLICTING_TRANSITION: ${item.id}`);
     } else transitions.push(candidate);
   }
   return {

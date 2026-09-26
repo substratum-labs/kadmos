@@ -123,6 +123,45 @@ test("a different directive cannot add effects to an existing state edge", async
   assert.deepEqual(await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(attack)]) }), baseline);
 });
 
+test("a shared state edge cannot inject a refund directive under a different ID", async () => {
+  const baseline = inferBoundary(prd);
+  const attack = {
+    states: [], context: {}, invariants: [],
+    transitions: [{ id: "EVIL_REFUND", from: "CREATED", to: "PAID", guard: "true", directive: "DISPATCH_REFUND", effects: [] }],
+  };
+  assert.deepEqual(await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(attack)]) }), baseline);
+});
+
+test("new transitions cannot assign numeric literals or monetary and local context fields", async () => {
+  const baseline = inferBoundary(prd);
+  const empty = { states: [{ id: "SETTLED" }], invariants: [] };
+  const attacks = [
+    { target: "captured", effect: "captured = 100" },
+    { target: "order_amount", effect: "order_amount = captured" },
+    { target: "escrow_balance", effect: "escrow_balance = captured" },
+    { target: "refunded_amount", effect: "refunded_amount = captured" },
+    { target: "settled_amount", effect: "settled_amount = captured" },
+  ];
+  for (const { target, effect } of attacks) {
+    const attack = {
+      ...empty,
+      context: { captured: { type: "integer", min: 0, default: 0 }, ...(target === "escrow_balance" ? {} : { [target]: { type: "integer", min: 0, default: 0 } }) },
+      transitions: [{ id: "CAPTURE", from: "PAID", to: "SETTLED", guard: "true", effects: [effect] }],
+    };
+    assert.deepEqual(await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(attack)]) }), baseline, effect);
+  }
+});
+
+test("new context fields cannot start with a nonzero balance when PRD omits amount", async () => {
+  const input = prd;
+  const baseline = inferBoundary(input);
+  const attack = { states: [], context: { order_amount: { type: "integer", min: 0, default: 1_000_000_000 } }, invariants: [], transitions: [] };
+  const result = await inferBoundary(input, { provider: new MockDeterministicProvider([JSON.stringify(attack)]) });
+  assert.deepEqual(result, baseline);
+  assert.equal(result.worldSpec.context.order_amount, undefined);
+  assert.equal(result.worldSpec.context.escrow_balance?.default, 0);
+});
+
 test("semantic extraction cannot replace the opening escrow balance", async () => {
   const baseline = inferBoundary(prd);
   const attack = { states: [], context: { escrow_balance: { type: "integer", unit: "cents", min: 0, max: 1_000_000_000, default: 1_000_000_000 } }, invariants: [], transitions: [] };
