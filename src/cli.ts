@@ -7,12 +7,18 @@ import { runLegislationWizard } from "./tui/wizard.js";
 import { compileWorldSpec, compileWorldSpecPython, parseWorldSpec } from "./world_compiler.js";
 import { buildInitialPrompt, runKadmosAgent } from "./agent/runner.js";
 import { createLlmProvider } from "./agent/provider.js";
+import { runMcpServer } from "./mcp/server.js";
 
 function usage(): never {
-  throw new Error("Usage: kadmos infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
+  throw new Error("Usage: kadmos mcp | infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
 }
 
 export function runCli(args: readonly string[]): string | Promise<string> {
+  if (args[0] === "mcp") {
+    if (args.length !== 1) usage();
+    runMcpServer();
+    return "";
+  }
   if (args[0] === "run") {
     const values = new Map<string, string>();
     const booleanFlags = new Set<string>();
