@@ -45,12 +45,15 @@ function yamlScalar(value: string | number | boolean | null): string {
   return value === null ? "null" : typeof value === "string" ? JSON.stringify(value) : String(value);
 }
 
-function toYaml(spec: WorldSpec): string {
-  const lines = [`version: ${yamlScalar(spec.version)}`, `name: ${yamlScalar(spec.name)}`, `description: ${yamlScalar(spec.description ?? "Candidate draft; review before adoption")}`, "states:"];
+export function serializeWorldSpec(spec: WorldSpec): string {
+  const lines = [`version: ${yamlScalar(spec.version)}`, `name: ${yamlScalar(spec.name)}`];
+  if (spec.description !== undefined) lines.push(`description: ${yamlScalar(spec.description)}`);
+  lines.push("states:");
   for (const state of spec.states) {
     lines.push(`  - id: ${yamlScalar(state.id)}`);
     if (state.initial) lines.push("    initial: true");
     if (state.terminal) lines.push("    terminal: true");
+    if (state.description !== undefined) lines.push(`    description: ${yamlScalar(state.description)}`);
   }
   lines.push("context:");
   for (const [name, value] of Object.entries(spec.context)) {
@@ -62,7 +65,11 @@ function toYaml(spec: WorldSpec): string {
   }
   if (!Object.keys(spec.context).length) lines[lines.length - 1] = "context: {}";
   lines.push(spec.invariants.length ? "invariants:" : "invariants: []");
-  for (const invariant of spec.invariants) lines.push(`  - id: ${yamlScalar(invariant.id)}`, `    description: ${yamlScalar(invariant.description ?? "Candidate invariant")}`, `    predicate: ${yamlScalar(invariant.predicate)}`);
+  for (const invariant of spec.invariants) {
+    lines.push(`  - id: ${yamlScalar(invariant.id)}`);
+    if (invariant.description !== undefined) lines.push(`    description: ${yamlScalar(invariant.description)}`);
+    lines.push(`    predicate: ${yamlScalar(invariant.predicate)}`);
+  }
   lines.push(spec.transitions.length ? "transitions:" : "transitions: []");
   for (const transition of spec.transitions) {
     lines.push(`  - id: ${yamlScalar(transition.id)}`, `    from: ${yamlScalar(transition.from)}`, `    to: ${yamlScalar(transition.to)}`, `    guard: ${yamlScalar(transition.guard)}`, `    directive: ${yamlScalar(transition.directive)}`);
@@ -112,7 +119,7 @@ function mergeWorldSpec(local: WorldSpec, extracted: SemanticWorldExtraction): W
 }
 
 function resultFor(inputContent: string, worldCandidates: BoundaryCandidate[], fabricCandidates: BoundaryCandidate[], worldSpec: WorldSpec): BoundaryInferenceResult {
-  const worldYaml = toYaml(worldSpec);
+  const worldYaml = serializeWorldSpec(worldSpec);
   const validated = parseWorldSpec(worldYaml);
   return { inputContent, worldCandidates, fabricCandidates, worldSpec: validated, worldYaml, portsDts: compileWorldSpec(validated).portsDts };
 }

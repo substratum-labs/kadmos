@@ -33,8 +33,8 @@ test("dilemmas expose ordered hazardous traces and explicit legislative alternat
   for (const dilemma of dilemmas) {
     assert.match(dilemma.id, /^DIL-\d{3}$/);
     assert.ok(dilemma.worstCaseTrace.length >= 3);
-    assert.match(dilemma.optionA, /World|guard/i);
-    assert.match(dilemma.optionB, /Fabric|retry/i);
+    assert.match(dilemma.optionA.description, /World|guard/i);
+    assert.match(dilemma.optionB.description, /Fabric|retry/i);
   }
   assert.ok(dilemmas.some((item) => /cancel/i.test(item.title)));
   assert.ok(dilemmas.some((item) => /timeout/i.test(item.title)));
