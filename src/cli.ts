@@ -1,5 +1,5 @@
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { cpSync, existsSync, mkdtempSync, readFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { atomicWrite } from "./atomic_write.js";
 import { inferBoundary, serializeWorldSpec } from "./boundary_inference.js";
 import { formatDilemmas, synthesizeDilemmas } from "./dilemma_synthesis.js";
@@ -11,6 +11,29 @@ import { runMcpServer } from "./mcp/server.js";
 
 function usage(): never {
   throw new Error("Usage: kadmos mcp | infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
+}
+
+function publishProjectionDirectory(outDir: string, files: Record<string, string>): void {
+  outDir = resolve(outDir);
+  const parent = dirname(outDir);
+  mkdirSync(parent, { recursive: true });
+  const temporary = mkdtempSync(join(parent, `.${basename(outDir)}.compile-`));
+  const staged = join(temporary, "staged");
+  const previous = join(temporary, "previous");
+  let movedPrevious = false;
+  try {
+    if (existsSync(outDir)) cpSync(outDir, staged, { recursive: true });
+    else mkdirSync(staged);
+    for (const [name, content] of Object.entries(files)) writeFileSync(join(staged, name), content);
+    if (existsSync(outDir)) { renameSync(outDir, previous); movedPrevious = true; }
+    try { renameSync(staged, outDir); }
+    catch (error) {
+      if (movedPrevious) renameSync(previous, outDir);
+      throw error;
+    }
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 }
 
 export function runCli(args: readonly string[]): string | Promise<string> {
@@ -110,16 +133,18 @@ export function runCli(args: readonly string[]): string | Promise<string> {
     const lang = args.length === 6 ? args[5] : "ts";
     if (lang !== "ts" && lang !== "python" && lang !== "all") usage();
     const spec = parseWorldSpec(source);
+    const files: Record<string, string> = {};
     if (lang === "ts" || lang === "all") {
       const projection = compileWorldSpec(spec);
-      atomicWrite(join(args[3], "ports.d.ts"), projection.portsDts);
-      atomicWrite(join(args[3], "world_checker.ts"), projection.worldCheckerTs);
+      files["ports.d.ts"] = projection.portsDts;
+      files["world_checker.ts"] = projection.worldCheckerTs;
     }
     if (lang === "python" || lang === "all") {
       const projection = compileWorldSpecPython(spec);
-      atomicWrite(join(args[3], "ports.py"), projection.portsPy);
-      atomicWrite(join(args[3], "world_checker.py"), projection.worldCheckerPy);
+      files["ports.py"] = projection.portsPy;
+      files["world_checker.py"] = projection.worldCheckerPy;
     }
+    publishProjectionDirectory(args[3], files);
     return `Compiled ${spec.name} to ${args[3]}\n`;
   }
   usage();

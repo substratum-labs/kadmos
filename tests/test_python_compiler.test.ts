@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { compileWorldSpecPython, parseWorldSpec } from "../src/world_compiler.js";
 import { createWorldChecker } from "../src/world_checker.js";
+import { evaluate } from "../src/world_expression.js";
 
 const yaml = readFileSync(new URL("../../conformance/fixtures/order_settlement.world.yaml", import.meta.url), "utf8");
 const world = parseWorldSpec(yaml);
@@ -107,6 +108,39 @@ test("CLI --lang all emits all four projections", () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("CLI compile publishes a complete projection directory and preserves unrelated files", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-publish-"));
+  try {
+    const input = join(dir, "world.yaml");
+    const out = join(dir, "projection");
+    writeFileSync(input, yaml);
+    const first = spawnSync(process.execPath, [join(process.cwd(), "bin/kadmos.js"), "compile", input, "--out", out, "--lang", "python"], { encoding: "utf8" });
+    assert.equal(first.status, 0, first.stderr);
+    writeFileSync(join(out, "notes.txt"), "keep");
+    const second = spawnSync(process.execPath, [join(process.cwd(), "bin/kadmos.js"), "compile", input, "--out", out, "--lang", "all"], { encoding: "utf8" });
+    assert.equal(second.status, 0, second.stderr);
+    assert.equal(readFileSync(join(out, "notes.txt"), "utf8"), "keep");
+    assert.deepEqual(readdirSync(out).sort(), ["notes.txt", "ports.d.ts", "ports.py", "world_checker.py", "world_checker.ts"]);
+    assert.deepEqual(readdirSync(dir).sort(), ["projection", "world.yaml"]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI compile leaves the published directory unchanged if staging fails", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-stage-fail-"));
+  try {
+    const input = join(dir, "world.yaml");
+    const out = join(dir, "projection");
+    writeFileSync(input, yaml);
+    mkdirSync(out);
+    writeFileSync(join(out, "ports.py"), "old ports");
+    mkdirSync(join(out, "world_checker.py"));
+    const result = spawnSync(process.execPath, [join(process.cwd(), "bin/kadmos.js"), "compile", input, "--out", out, "--lang", "python"], { encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.equal(readFileSync(join(out, "ports.py"), "utf8"), "old ports");
+    assert.deepEqual(readdirSync(dir).sort(), ["projection", "world.yaml"]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("Python gatekeeper rejects bound and invariant failures without committing effects", () => {
   const dir = mkdtempSync(join(tmpdir(), "kadmos-py-fail-"));
   try {
@@ -144,5 +178,48 @@ test("CLI language selection writes only requested projections", () => {
       const excluded = language === "python" ? "ports.d.ts" : "ports.py";
       assert.throws(() => readFileSync(join(out, excluded), "utf8"));
     }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("Python expression and payload handling matches TypeScript fail-closed behavior", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-py-parity-"));
+  try {
+    const spec = { ...world, transitions: [
+      { id: "OR", from: "CREATED", to: "PAYMENT_PENDING", guard: "true || 1", directive: null, effects: [] },
+      { id: "IMPLIES", from: "CREATED", to: "PAYMENT_PENDING", guard: "state == 'NOPE' => 1", directive: null, effects: [] },
+      { id: "MISSING", from: "CREATED", to: "PAYMENT_PENDING", guard: "event.override == null", directive: null, effects: [] },
+    ] } as typeof world;
+    const projection = compileWorldSpecPython(spec);
+    writeFileSync(join(dir, "ports.py"), projection.portsPy);
+    writeFileSync(join(dir, "world_checker.py"), projection.worldCheckerPy);
+    writeFileSync(join(dir, "check.py"), `import json\nfrom world_checker import WorldChecker, evaluate_world\nerrors = []\nfor expression in ['true || 1', "state == 'NOPE' => 1"]:\n    try:\n        evaluate_world(expression, {'state': 'CREATED'})\n        errors.append('NO_ERROR')\n    except ValueError as error:\n        errors.append(str(error))\nc = WorldChecker({'order_amount': 9999})\nverdicts = [c.step({'transitionId': action}) for action in ['OR', 'IMPLIES', 'MISSING']]\nverdicts.append(c.step({'transitionId': 'MISSING', 'eventPayload': {'tags': [1]}}))\nc.reset()\nprint(json.dumps({'errors': errors, 'missing': evaluate_world('event.override == null', {'event': {}}), 'objects': evaluate_world('event.a != event.b', {'event': {'a': {'x': 1}, 'b': {'x': 1}}}), 'verdicts': verdicts, 'context': c.get_context()}))`);
+    const py = run(["check.py"], dir);
+    assert.equal(py.status, 0, py.stderr);
+    const actual = JSON.parse(py.stdout);
+    for (const expression of ["true || 1", "state == 'NOPE' => 1"]) assert.throws(() => evaluate(expression, { state: "CREATED" }), /INVALID_EXPRESSION/);
+    assert.deepEqual(actual.errors, ["INVALID_EXPRESSION: expected boolean operand", "INVALID_EXPRESSION: expected boolean operand"]);
+    assert.equal(actual.missing, evaluate("event.override == null", { event: {} }));
+    assert.equal(actual.objects, evaluate("event.a != event.b", { event: { a: { x: 1 }, b: { x: 1 } } }));
+    const ts = createWorldChecker(spec, { order_amount: 9999 });
+    const requests = ["OR", "IMPLIES", "MISSING"].map(transitionId => ({ transitionId }));
+    const expected = [...requests.map(request => ts.step(request)), ts.step({ transitionId: "MISSING", eventPayload: { tags: [1] } })];
+    for (let i = 0; i < expected.length; i++) {
+      assert.equal(actual.verdicts[i].violation.code, expected[i]!.violation?.code);
+      assert.equal(actual.verdicts[i].allowed, false);
+    }
+    assert.deepEqual(actual.verdicts.map((verdict: any) => verdict.violation.code), ["GUARD_FAILED", "GUARD_FAILED", "GUARD_FAILED", "SECURITY_VIOLATION"]);
+    assert.equal(actual.context.order_amount, 9999);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("Python checker propagates reentrancy from guard, effect, and invariant evaluation", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-py-reentrant-"));
+  try {
+    const projection = compileWorldSpecPython(world);
+    writeFileSync(join(dir, "ports.py"), projection.portsPy);
+    writeFileSync(join(dir, "world_checker.py"), projection.worldCheckerPy);
+    writeFileSync(join(dir, "check.py"), `import world_checker as module\nc = module.WorldChecker()\noriginal = module.evaluate_world\ndef reenter(expression, environment):\n    raise RuntimeError('REENTRANCY_DETECTED: nested call')\nmodule.evaluate_world = reenter\nfor action in [lambda: c.step({'transitionId':'INITIATE_PAYMENT','proposedDirective':'DISPATCH_PAYMENT_GATEWAY'}), lambda: c.reset()]:\n    try:\n        action()\n        assert False\n    except RuntimeError as error:\n        assert 'REENTRANCY_DETECTED' in str(error)\nassert c.get_state() == 'CREATED'\nmodule.evaluate_world = original\nassert c.step({'transitionId':'INITIATE_PAYMENT','proposedDirective':'DISPATCH_PAYMENT_GATEWAY'})['allowed']\ndef reenter_effect(expression, environment):\n    if expression == 'order_amount':\n        raise RuntimeError('REENTRANCY_DETECTED: nested effect')\n    return original(expression, environment)\nmodule.evaluate_world = reenter_effect\ntry:\n    c.step({'transitionId':'CONFIRM_PAYMENT','eventPayload':{'captured_amount':5000}})\n    assert False\nexcept RuntimeError as error:\n    assert 'REENTRANCY_DETECTED' in str(error)\nassert c.get_state() == 'PAYMENT_PENDING'\n`);
+    const result = run(["check.py"], dir);
+    assert.equal(result.status, 0, result.stderr);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

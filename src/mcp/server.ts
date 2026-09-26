@@ -1,5 +1,4 @@
-import { createInterface } from "node:readline";
-import type { Readable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import { inferBoundary, serializeWorldSpec } from "../boundary_inference.js";
 import { applyLegislationPatch, synthesizeDilemmas } from "../dilemma_synthesis.js";
 import { compileWorldSpec, compileWorldSpecPython, parseWorldSpec } from "../world_compiler.js";
@@ -19,7 +18,7 @@ const tools = [
     type: "object", properties: { world: { type: "object", description: "The WorldSpec JSON object." }, lang: { type: "string", enum: ["ts", "python", "all"], default: "all" } }, required: ["world"],
   } },
   { name: "kadmos_step", description: "Validates a state transition and proposed directive against a World IR specification.", inputSchema: {
-    type: "object", properties: { world: { type: "object", description: "The WorldSpec JSON object." }, currentState: { type: "string", description: "The current state ID." }, context: { type: "object", description: "Current numerical context key-value pairs." }, transitionId: { type: "string", description: "The transition ID being requested." }, eventPayload: { type: "object", description: "Optional payload accompanying the event." }, proposedDirective: { type: ["string", "null"], description: "Optional proposed side-effect directive." } }, required: ["world", "currentState", "context", "transitionId"],
+    type: "object", properties: { sessionId: { type: "string", description: "Session identifier for a persistent checker." }, world: { type: "object", description: "Required for a new session or stateless step." }, currentState: { type: "string", description: "Optional asserted current state." }, context: { type: "object", description: "Initial context for a new checker or asserted context for an existing session." }, transitionId: { type: "string", description: "The transition ID being requested." }, eventPayload: { type: "object", description: "Optional payload accompanying the event." }, proposedDirective: { type: ["string", "null"], description: "Optional proposed side-effect directive." } }, required: ["transitionId"],
   } },
 ] as const;
 
@@ -35,10 +34,14 @@ function string(value: unknown, name: string): string {
 }
 function world(value: unknown): WorldSpec {
   if (!record(value)) throw new InvalidParams("Expected object world");
-  return parseWorldSpec(serializeWorldSpec(value as unknown as WorldSpec));
+  try { return parseWorldSpec(serializeWorldSpec(value as unknown as WorldSpec)); }
+  catch (error) { throw new InvalidParams(`Invalid world spec: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
-function executeTool(name: string, args: Record<string, unknown>): unknown {
+type Checker = ReturnType<typeof createWorldChecker>;
+type Session = { checker: Checker; world: WorldSpec };
+
+function executeTool(name: string, args: Record<string, unknown>, sessions: Map<string, Session>): unknown {
   if (name === "kadmos_infer") {
     const prd = string(args.prd, "prd");
     const modelName = args.name === undefined ? undefined : string(args.name, "name");
@@ -82,27 +85,39 @@ function executeTool(name: string, args: Record<string, unknown>): unknown {
     return { files };
   }
   if (name === "kadmos_step") {
-    const spec = world(args.world);
-    const currentState = string(args.currentState, "currentState");
     const transitionId = string(args.transitionId, "transitionId");
-    if (!spec.states.some((state) => state.id === currentState)) throw new InvalidParams("Unknown currentState");
-    if (!record(args.context) || Object.values(args.context).some((value) => !Number.isSafeInteger(value))) throw new InvalidParams("Expected integer context");
+    const sessionId = args.sessionId === undefined ? undefined : string(args.sessionId, "sessionId");
+    if (sessionId === "") throw new InvalidParams("Expected nonempty sessionId");
+    if (args.context !== undefined && (!record(args.context) || Object.values(args.context).some((value) => !Number.isSafeInteger(value)))) throw new InvalidParams("Expected integer context");
+    const currentState = args.currentState === undefined ? undefined : string(args.currentState, "currentState");
     if (args.eventPayload !== undefined && !record(args.eventPayload)) throw new InvalidParams("Expected object eventPayload");
     if (args.proposedDirective !== undefined && args.proposedDirective !== null && typeof args.proposedDirective !== "string") throw new InvalidParams("Expected string or null proposedDirective");
-    const atState: WorldSpec = { ...spec, states: spec.states.map((state) => ({ ...state, initial: state.id === currentState })) };
-    const checker = createWorldChecker(atState, args.context as Record<string, number>);
-    return checker.step({ transitionId, ...(args.eventPayload !== undefined ? { eventPayload: args.eventPayload as Record<string, unknown> } : {}), ...(args.proposedDirective !== undefined ? { proposedDirective: args.proposedDirective as string | null } : {}) });
+    const existing = sessionId === undefined ? undefined : sessions.get(sessionId);
+    let checker: Checker;
+    if (existing) {
+      if (args.world !== undefined && JSON.stringify(world(args.world)) !== JSON.stringify(existing.world)) throw new InvalidParams("Session world mismatch");
+      checker = existing.checker;
+      if (args.context !== undefined && JSON.stringify(args.context) !== JSON.stringify(checker.getContext())) throw new InvalidParams("Session context mismatch");
+    } else {
+      const spec = world(args.world);
+      checker = createWorldChecker(spec, (args.context ?? {}) as Record<string, number>);
+      if (currentState !== undefined && currentState !== checker.getState()) throw new InvalidParams("currentState does not match initial state");
+      if (sessionId !== undefined) sessions.set(sessionId, { checker, world: spec });
+    }
+    if (currentState !== undefined && currentState !== checker.getState()) throw new InvalidParams("Session currentState mismatch");
+    const verdict = checker.step({ transitionId, ...(args.eventPayload !== undefined ? { eventPayload: args.eventPayload as Record<string, unknown> } : {}), ...(args.proposedDirective !== undefined ? { proposedDirective: args.proposedDirective as string | null } : {}) });
+    return sessionId === undefined ? verdict : { ...verdict, sessionId };
   }
   throw new InvalidParams(`Unknown tool: ${name}`);
 }
 
-function toolCall(value: unknown): unknown {
+function toolCall(value: unknown, sessions: Map<string, Session>): unknown {
   const call = params(value);
   const name = string(call.name, "name");
   if (!tools.some((tool) => tool.name === name)) throw new InvalidParams(`Unknown tool: ${name}`);
   const args = call.arguments === undefined ? {} : params(call.arguments);
   try {
-    const result = executeTool(name, args);
+    const result = executeTool(name, args, sessions);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], isError: false };
   } catch (error) {
     if (error instanceof InvalidParams) throw error;
@@ -111,11 +126,13 @@ function toolCall(value: unknown): unknown {
 }
 
 export function runMcpServer(options: { in?: NodeJS.ReadableStream; out?: NodeJS.WritableStream } = {}): void {
-  const input = options.in ?? process.stdin;
-  const output = options.out ?? process.stdout;
-  const lines = createInterface({ input: input as Readable, crlfDelay: Infinity });
-  const send = (message: unknown) => { output.write(`${JSON.stringify(message)}\n`); };
-  lines.on("line", (line) => {
+  const input: NodeJS.ReadableStream = options.in ?? process.stdin;
+  const output: NodeJS.WritableStream = options.out ?? process.stdout;
+  const sessions = new Map<string, Session>();
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  const send = (message: unknown) => { const payload = JSON.stringify(message).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029"); output.write(`${payload}\n`); };
+  const handleLine = (line: string) => {
     let value: unknown;
     try { value = JSON.parse(line); }
     catch { send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }); return; }
@@ -136,12 +153,25 @@ export function runMcpServer(options: { in?: NodeJS.ReadableStream; out?: NodeJS
         case "initialize": params(value.params); result = { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "kadmos", version: "0.0.0" } }; break;
         case "ping": result = {}; break;
         case "tools/list": result = { tools }; break;
-        case "tools/call": result = toolCall(value.params); break;
+        case "tools/call": result = toolCall(value.params, sessions); break;
         default: send({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } }); return;
       }
       send({ jsonrpc: "2.0", id, result });
     } catch (error) {
       send({ jsonrpc: "2.0", id, error: { code: error instanceof InvalidParams ? -32602 : -32603, message: error instanceof Error ? error.message : String(error) } });
     }
+  };
+  input.on("data", (chunk: Buffer | string) => {
+    pending += typeof chunk === "string" ? chunk : decoder.write(chunk);
+    let newline: number;
+    while ((newline = pending.indexOf("\n")) !== -1) {
+      const line = pending.slice(0, newline).replace(/\r$/, "");
+      pending = pending.slice(newline + 1);
+      handleLine(line);
+    }
+  });
+  input.on("end", () => {
+    pending += decoder.end();
+    if (pending.length) handleLine(pending);
   });
 }

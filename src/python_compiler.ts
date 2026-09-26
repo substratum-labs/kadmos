@@ -67,6 +67,7 @@ _TOKEN = re.compile(r"\\s+|=>|==|!=|>=|<=|&&|\\|\\||[()+\\-*/<>!.]|\\d+(?:\\.\\d
 _NAME = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\\Z")
 _EFFECT = re.compile(r"([A-Za-z_][A-Za-z_0-9]*)\\s*=\\s*(.+)\\Z", re.S)
 _MAX_INTEGER = 9007199254740991
+_UNDEFINED = object()
 
 
 def _boolean(value: Any) -> bool:
@@ -124,14 +125,14 @@ def evaluate_world(expression: str | bool, environment: dict[str, Any]) -> Any:
         elif token[0].isdigit():
             left = float(token) if "." in token else int(token)
         elif _NAME.fullmatch(token):
-            left = environment.get(token)
+            left = environment.get(token, _UNDEFINED)
             while position < len(tokens) and tokens[position] == ".":
                 position += 1
                 if position >= len(tokens) or not _NAME.fullmatch(tokens[position]):
                     raise ValueError("INVALID_EXPRESSION: property")
                 property_name = tokens[position]
                 position += 1
-                left = left.get(property_name) if type(left) is dict else None
+                left = left.get(property_name, _UNDEFINED) if type(left) is dict else _UNDEFINED
         else:
             raise ValueError("INVALID_EXPRESSION: invalid operand")
         while position < len(tokens):
@@ -141,14 +142,20 @@ def evaluate_world(expression: str | bool, environment: dict[str, Any]) -> Any:
                 break
             position += 1
             right = parse(rank + (0 if operator == "=>" else 1))
-            if operator == "=>":
-                left = not _boolean(left) or _boolean(right)
-            elif operator == "||":
-                left = _boolean(left) or _boolean(right)
-            elif operator == "&&":
-                left = _boolean(left) and _boolean(right)
+            if operator in ("=>", "||", "&&"):
+                l = _boolean(left)
+                r = _boolean(right)
+                if operator == "=>":
+                    left = not l or r
+                elif operator == "||":
+                    left = l or r
+                else:
+                    left = l and r
             elif operator in ("==", "!="):
-                equal = (type(left) is type(right) and left == right) or (type(left) in (int, float) and type(right) in (int, float) and left == right)
+                if type(left) is dict and type(right) is dict:
+                    equal = left is right
+                else:
+                    equal = (type(left) is type(right) or (type(left) in (int, float) and type(right) in (int, float))) and left == right
                 left = equal if operator == "==" else not equal
             elif operator == ">":
                 left = _number(left) > _number(right)
@@ -180,19 +187,19 @@ def sanitize_world_payload(raw: Any) -> dict[str, Any] | None:
     seen: set[int] = set()
 
     def copy(value: Any) -> Any:
+        if isinstance(value, (list, tuple, set)):
+            raise ValueError("INVALID_EVENT_PAYLOAD: must be an object")
         if value is None or type(value) in (str, bool, int):
             return value
         if type(value) is float and math.isfinite(value):
             return value
-        if type(value) not in (dict, list):
+        if type(value) is not dict:
             raise ValueError("SECURITY_VIOLATION: invalid payload type")
         identity = id(value)
         if identity in seen:
             raise ValueError("SECURITY_VIOLATION: cyclic payload")
         seen.add(identity)
         try:
-            if type(value) is list:
-                return [copy(item) for item in value]
             result = {}
             for key, item in value.items():
                 if type(key) is not str or key in ("__proto__", "constructor", "prototype"):
@@ -209,6 +216,7 @@ def sanitize_world_payload(raw: Any) -> dict[str, Any] | None:
 
 class WorldChecker(IWorldChecker):
     def __init__(self, initial_context: dict[str, int] | None = None):
+        self._initial_context = dict(initial_context) if initial_context is not None else None
         self.state = _INITIAL
         self.context: dict[str, int] = {}
         self.history: list[dict[str, Any]] = []
@@ -242,7 +250,9 @@ class WorldChecker(IWorldChecker):
             try:
                 if evaluate_world(invariant["predicate"], environment) is not True:
                     return invariant["id"]
-            except Exception:
+            except Exception as e:
+                if isinstance(e, RuntimeError) and "REENTRANCY_DETECTED" in str(e):
+                    raise
                 return invariant["id"]
         return None
 
@@ -252,6 +262,8 @@ class WorldChecker(IWorldChecker):
         self._busy = True
         try:
             candidate = dict(_DEFAULTS)
+            if initial_context is None:
+                initial_context = self._initial_context
             if initial_context is not None:
                 if type(initial_context) is not dict:
                     raise ValueError("INVALID_BOUNDS: initial context")
@@ -307,7 +319,9 @@ class WorldChecker(IWorldChecker):
                 guard = evaluate_world(transition["guard"], environment(previous, original_context))
                 if guard is not True:
                     return reject("GUARD_FAILED", "Guard condition failed")
-            except Exception:
+            except Exception as e:
+                if isinstance(e, RuntimeError) and "REENTRANCY_DETECTED" in str(e):
+                    raise
                 return reject("GUARD_FAILED", "Guard expression evaluation failed")
             candidate = dict(original_context)
             try:
@@ -319,7 +333,9 @@ class WorldChecker(IWorldChecker):
                     if not _safe_integer(value):
                         return reject("INVALID_EFFECT", "Effect expression did not yield an integer")
                     candidate[match.group(1)] = int(value)
-            except Exception:
+            except Exception as e:
+                if isinstance(e, RuntimeError) and "REENTRANCY_DETECTED" in str(e):
+                    raise
                 return reject("INVALID_EFFECT", "Effect evaluation failed")
             invalid = self._bounds(candidate)
             if invalid:

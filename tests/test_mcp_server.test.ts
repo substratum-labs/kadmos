@@ -51,7 +51,7 @@ test("tools/list exposes four complete schemas", async () => {
     assert.ok(tool.inputSchema.properties);
     assert.ok(Array.isArray(tool.inputSchema.required));
   }
-  assert.deepEqual(tools[3].inputSchema.required, ["world", "currentState", "context", "transitionId"]);
+  assert.deepEqual(tools[3].inputSchema.required, ["transitionId"]);
 });
 
 test("infer, legislate and compile use existing World APIs", async () => {
@@ -98,4 +98,28 @@ test("both CLI entry points exchange JSON frames without stdout diagnostics", ()
     assert.equal(child.stderr, "");
     assert.deepEqual(JSON.parse(child.stdout.trim()), { jsonrpc: "2.0", id: 1, result: {} });
   }
+});
+
+test("step sessions preserve history and reject forged state or context", async () => {
+  const responses: any[] = await session([
+    call(1, "kadmos_step", { sessionId: "journey", world, transitionId: "PAY", proposedDirective: "DISPATCH_PAYMENT" }),
+    call(2, "kadmos_step", { sessionId: "journey", transitionId: "MISSING" }),
+    call(3, "kadmos_step", { sessionId: "journey", currentState: "CREATED", transitionId: "MISSING" }),
+    call(4, "kadmos_step", { sessionId: "journey", context: { amount: 99 }, transitionId: "MISSING" }),
+    call(5, "kadmos_step", { world, currentState: "PAID", transitionId: "MISSING" }),
+  ]) as any[];
+  assert.equal(result(responses[0]).sessionId, "journey");
+  assert.equal(result(responses[1]).violation.shortestCounterexampleTrace.length, 2);
+  assert.deepEqual(responses.slice(2).map(item => item.error.code), [-32602, -32602, -32602]);
+});
+
+test("invalid World documents produce invalid params and Unicode separators stay within one frame", async () => {
+  const invalid = { ...world, states: [] };
+  const unicode = request(2, "tools/call", { name: "kadmos_infer", arguments: { prd: `alpha\u2028beta\u2029gamma` } });
+  const responses: any[] = await session([call(1, "kadmos_compile", { world: invalid }), unicode]) as any[];
+  assert.equal(responses[0].error.code, -32602);
+  assert.match(responses[0].error.message, /Invalid world spec/);
+  assert.equal(responses[1].id, 2);
+  assert.equal(responses[1].result.isError, false);
+  assert.equal(responses.length, 2);
 });
