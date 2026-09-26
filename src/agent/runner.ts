@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
+import { Script } from "node:vm";
 import type { TransitionStepRequest } from "../types/ports.js";
 import type { WorldSpec } from "../types/world.js";
 import { createWorldChecker } from "../world_checker.js";
@@ -61,19 +62,41 @@ function parseCandidate(content: string): { code: string; steps: TransitionStepR
   return { code, steps: steps as TransitionStepRequest[] };
 }
 
-function compileCandidate(code: string, portsDts: string): string[] {
+function compileCandidate(code: string, portsDts: string): { diagnostics: string[]; javascript?: string } {
   const directory = mkdtempSync(join(tmpdir(), "kadmos-typecheck-"));
   try {
     const codePath = join(directory, "fabric.ts");
     writeFileSync(codePath, code);
-    writeFileSync(join(directory, "ports.d.ts"), portsDts);
+    const portsPath = join(directory, "ports.d.ts");
+    writeFileSync(portsPath, portsDts);
     const require = createRequire(import.meta.url);
     const tscPath = join(dirname(require.resolve("typescript/package.json")), "bin", "tsc");
-    const check = spawnSync(process.execPath, [tscPath, "--ignoreConfig", "--noEmit", "--strict", "--skipLibCheck", "--module", "nodenext", "--moduleResolution", "nodenext", "--target", "ES2022", codePath], { encoding: "utf8" });
-    return check.status === 0 ? [] : [(check.stdout + check.stderr).trim() || "TypeScript compiler failed"];
+    const check = spawnSync(process.execPath, [tscPath, "--ignoreConfig", "--strict", "--skipLibCheck", "--module", "nodenext", "--moduleResolution", "nodenext", "--target", "ES2022", "--outDir", directory, codePath, portsPath], { encoding: "utf8" });
+    return check.status === 0
+      ? { diagnostics: [], javascript: readFileSync(join(directory, "fabric.js"), "utf8") }
+      : { diagnostics: [(check.stdout + check.stderr).trim() || "TypeScript compiler failed"] };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+}
+
+function validateServiceClass(javascript: string, worldSpec: WorldSpec): void {
+  const exports: Record<string, unknown> = {};
+  const context = { exports, checker: createWorldChecker(worldSpec) };
+  // The VM limits synchronous evaluation time; it is not an OS security boundary.
+  new Script(javascript).runInNewContext(context, { timeout: 1000 });
+  const service = Object.values(exports).find((value) => typeof value === "function" && /^class\s/.test(Function.prototype.toString.call(value)));
+  if (!service) throw new Error("Candidate must export a service class");
+  new Script("new Service(checker)").runInNewContext({ Service: service, checker: context.checker }, { timeout: 1000 });
+}
+
+function compilationRepairPrompt(diagnostics: string): string {
+  return `### 🛑 [Kadmos TypeScript Compilation Error]\n\nThe generated code failed typecheck against ports.d.ts:\n${diagnostics}\n\nPlease fix the TypeScript errors and provide the updated json blocks.`;
+}
+
+function nonTerminalRepairPrompt(state: string, worldSpec: WorldSpec): string {
+  const terminals = worldSpec.states.filter((item) => item.terminal).map((item) => item.id).join(", ");
+  return `### 🛑 [Kadmos Non-Terminal Plan]\n\nThe plan reached state \`${state}\`, which is not a terminal state.\nTerminal states: ${terminals}\n\nPlease extend the plan so the journey reaches a terminal state.`;
 }
 
 export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRunResult> {
@@ -88,6 +111,7 @@ export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRun
   let totalTokensUsed = 0;
   let totalCostUsd = 0;
   let hasCost = false;
+  let lastFailure: "compilation" | "plan" = "plan";
 
   for (let turn = 1; turn <= maxTurns; turn++) {
     const reply = await options.provider.complete({ systemPrompt: "You are the Kadmos Fabric Builder. Obey the World constitution and output only the requested blocks.", messages });
@@ -97,11 +121,15 @@ export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRun
     let candidate: { code: string; steps: TransitionStepRequest[] };
     try {
       candidate = parseCandidate(reply.content);
-      const diagnostics = compileCandidate(candidate.code, portsDts);
-      if (diagnostics.length) throw new Error(diagnostics.join("; "));
+      const compilation = compileCandidate(candidate.code, portsDts);
+      if (compilation.diagnostics.length) throw new Error(compilation.diagnostics.join("; "));
+      validateServiceClass(compilation.javascript!, worldSpec);
     } catch (error) {
-      executionTrace.push(`Turn ${turn}: compilation failed: ${error instanceof Error ? error.message : String(error)}`);
-      return { success: false, turnsExecuted: turn, totalTokensUsed, ...(hasCost ? { totalCostUsd } : {}), finalVerdict: "COMPILATION_FAILED", executionTrace };
+      const diagnostics = error instanceof Error ? error.message : String(error);
+      executionTrace.push(`Turn ${turn}: compilation failed: ${diagnostics}`);
+      messages.push({ role: "user", content: compilationRepairPrompt(diagnostics) });
+      lastFailure = "compilation";
+      continue;
     }
 
     const checker = createWorldChecker(worldSpec);
@@ -111,6 +139,7 @@ export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRun
       executionTrace.push(`Turn ${turn}: ${step.transitionId}: ${verdict.allowed ? "ACCEPTED" : `DENIED ${verdict.violation?.code ?? "UNKNOWN"}`}`);
       if (!verdict.allowed) {
         messages.push({ role: "user", content: synthesizeCegisPrompt(verdict, worldSpec) });
+        lastFailure = "plan";
         refused = true;
         break;
       }
@@ -118,12 +147,14 @@ export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRun
     if (refused) continue;
     if (!worldSpec.states.some((state) => state.id === checker.getState() && state.terminal)) {
       executionTrace.push(`Turn ${turn}: non-terminal state ${checker.getState()}`);
-      return { success: false, turnsExecuted: turn, totalTokensUsed, ...(hasCost ? { totalCostUsd } : {}), finalVerdict: "COMPILATION_FAILED", executionTrace };
+      messages.push({ role: "user", content: nonTerminalRepairPrompt(checker.getState(), worldSpec) });
+      lastFailure = "plan";
+      continue;
     }
     mkdirSync(options.outDir, { recursive: true });
     const generatedCodePath = join(options.outDir, "fabric.ts");
     writeFileSync(generatedCodePath, candidate.code);
     return { success: true, turnsExecuted: turn, totalTokensUsed, ...(hasCost ? { totalCostUsd } : {}), generatedCodePath, finalVerdict: "CONSTITUTIONAL_ACCEPTED", executionTrace };
   }
-  return { success: false, turnsExecuted: maxTurns, totalTokensUsed, ...(hasCost ? { totalCostUsd } : {}), finalVerdict: "MAX_TURNS_EXCEEDED", executionTrace };
+  return { success: false, turnsExecuted: maxTurns, totalTokensUsed, ...(hasCost ? { totalCostUsd } : {}), finalVerdict: lastFailure === "compilation" ? "COMPILATION_FAILED" : "MAX_TURNS_EXCEEDED", executionTrace };
 }

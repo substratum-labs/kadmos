@@ -95,6 +95,6 @@ export function synthesizeCegisPrompt(verdict: StepVerdict, worldSpec: WorldSpec
 
   lines.push("", "#### Instructions for Code Repair:",
     "Revise the service code so every physical side effect follows an allowed checker.step() verdict and all declared invariants remain true.",
-    "Output the complete updated TypeScript code in a ```typescript code fence.");
+    "Output the complete updated JSON plan in a ```json code fence and the complete updated TypeScript code in a ```typescript code fence.");
   return lines.join("\n");
 }
