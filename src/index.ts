@@ -39,3 +39,7 @@ export { synthesizeDilemmas, formatDilemmas, type LegislativeDilemma } from "./d
 export type * from "./agent/provider.js";
 export { MockDeterministicProvider } from "./agent/provider.js";
 export { synthesizeCegisPrompt } from "./agent/cegis_prompt.js";
+export { OpenAiCompatibleProvider, AnthropicProvider, OllamaProvider, createLlmProvider } from "./agent/provider.js";
+export type { ProviderOptions } from "./agent/provider.js";
+export { buildInitialPrompt, runKadmosAgent } from "./agent/runner.js";
+export type { AgentRunOptions, AgentRunResult } from "./agent/runner.js";
