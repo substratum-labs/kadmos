@@ -97,6 +97,11 @@ async function validateServiceClass(javascript: string, worldSpec: WorldSpec, st
     const secretAuthToken = randomBytes(32).toString("hex");
     const script = `
       import { readSync, writeSync } from "node:fs";
+      const safeStringify = JSON.stringify;
+      const safeParse = JSON.parse;
+      const safeWriteSync = writeSync;
+      const safeReadSync = readSync;
+      const safeCreate = Object.create;
       let buffered = Buffer.alloc(0);
       const readLine = () => {
         for (;;) {
@@ -107,24 +112,29 @@ async function validateServiceClass(javascript: string, worldSpec: WorldSpec, st
             return line;
           }
           const chunk = Buffer.allocUnsafe(4096);
-          const count = readSync(4, chunk, 0, chunk.length, null);
+          const count = safeReadSync(4, chunk, 0, chunk.length, null);
           if (count === 0) throw new Error("Parent step channel closed");
           buffered = Buffer.concat([buffered, chunk.subarray(0, count)]);
           if (buffered.length > 1048576) throw new Error("Step channel message too large");
         }
       };
-      const { auth: secretAuthToken } = JSON.parse(readLine());
+      const { auth: secretAuthToken } = safeParse(readLine());
       const module = await import(${JSON.stringify(pathToFileURL(fabricPath).href)});
       const Service = Object.values(module).find(value => typeof value === "function" && /^class\\s/.test(Function.prototype.toString.call(value)));
       if (!Service) throw new Error("Candidate must export a service class");
       let state = ${JSON.stringify(checker.getState())};
       let context = ${JSON.stringify(checker.getContext())};
+      let nextSequence = 0;
       const port = {
         getState: () => state,
         getContext: () => context,
         step: request => {
-          writeSync(3, JSON.stringify({ auth: secretAuthToken, request }) + "\\n");
-          const verdict = JSON.parse(readLine());
+          const frame = safeCreate(null);
+          frame.auth = secretAuthToken;
+          frame.sequence = nextSequence++;
+          frame.request = request;
+          safeWriteSync(3, safeStringify(frame) + "\\n");
+          const verdict = safeParse(readLine());
           state = verdict.currentState;
           context = verdict.context;
           return verdict;
@@ -142,6 +152,7 @@ async function validateServiceClass(javascript: string, worldSpec: WorldSpec, st
     child.stderr!.setEncoding("utf8");
     child.stderr!.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-8192); });
     let rpcError: Error | undefined;
+    let nextSequence = 0;
     let pending = "";
     const requestPipe = child.stdio[3] as Readable;
     const responsePipe = child.stdio[4] as Writable;
@@ -164,10 +175,12 @@ async function validateServiceClass(javascript: string, worldSpec: WorldSpec, st
         const line = pending.slice(0, end);
         pending = pending.slice(end + 1);
         try {
-          const message = JSON.parse(line) as { auth?: unknown; request?: TransitionStepRequest };
+          const message = JSON.parse(line) as { auth?: unknown; sequence?: unknown; request?: TransitionStepRequest };
           if (message?.auth !== secretAuthToken) throw new Error("Unauthenticated step request");
+          if (message.sequence !== nextSequence) throw new Error("Out-of-order step request");
           const request = message.request;
           if (!request || typeof request !== "object") throw new Error("Invalid step request");
+          nextSequence++;
           observedSteps.push(request);
           const verdict = checker.step(request);
           executionTrace.push(`Turn ${turn}: ${request.transitionId}: ${verdict.allowed ? "ACCEPTED" : `DENIED ${verdict.violation?.code ?? "UNKNOWN"}`}`);

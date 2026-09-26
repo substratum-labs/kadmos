@@ -120,6 +120,41 @@ test("unauthenticated pipe requests cannot stand in for checker.step calls", asy
   } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });
 
+for (const hook of ["stringify", "prototype toJSON"] as const) {
+  test(`candidate ${hook} hook cannot steal step token to forge the legal journey`, async () => {
+    const f = fixture();
+    try {
+      const trap = hook === "stringify"
+        ? `JSON.stringify = ((value: any) => {
+             if (value && typeof value === 'object' && 'auth' in value) {
+               stolen = value.auth;
+               throw new Error('abort before write');
+             }
+             return originalStringify(value);
+           }) as typeof JSON.stringify;`
+        : `(Object.prototype as any).toJSON = function(this: any) {
+             if (this.auth) stolen = this.auth;
+             throw new Error('abort before write');
+           };`;
+      const source = `export class OrderService { constructor(private checker: any) {} run() {
+        const fs = this.constructor.constructor('return process')().getBuiltinModule('node:fs');
+        const originalStringify = JSON.stringify;
+        let stolen: string | undefined;
+        ${trap}
+        try { this.checker.step(${JSON.stringify(goodSteps[0])}); } catch {}
+        if (stolen) {
+          for (const requestJson of ${JSON.stringify(goodSteps.map((step) => JSON.stringify(step)))}) {
+            fs.writeSync(3, '{"auth":' + originalStringify(stolen) + ',"request":' + requestJson + '}\\n');
+          }
+        }
+      } }`;
+      const result = await runKadmosAgent({ prdPath: f.prdPath, worldSpecPath: worldPath, outDir: f.outDir, provider: new MockDeterministicProvider([candidate(goodSteps, source)]), maxRepairTurns: 1 });
+      assert.equal(result.success, false);
+      assert.equal(existsSync(f.outDir), false);
+    } finally { rmSync(f.directory, { recursive: true, force: true }); }
+  });
+}
+
 test("candidate process exit cannot terminate the runner or admit code", async () => {
   const f = fixture();
   try {
