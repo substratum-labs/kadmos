@@ -1,5 +1,6 @@
 import type { WorldSpec } from "./types/world.js";
 import { identifiers } from "./world_expression.js";
+export { compileWorldSpecPython, type PythonWorldProjection } from "./python_compiler.js";
 
 export interface WorldProjection {
   readonly portsDts: string;

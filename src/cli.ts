@@ -4,12 +4,12 @@ import { atomicWrite } from "./atomic_write.js";
 import { inferBoundary, serializeWorldSpec } from "./boundary_inference.js";
 import { formatDilemmas, synthesizeDilemmas } from "./dilemma_synthesis.js";
 import { runLegislationWizard } from "./tui/wizard.js";
-import { compileWorldSpec, parseWorldSpec } from "./world_compiler.js";
+import { compileWorldSpec, compileWorldSpecPython, parseWorldSpec } from "./world_compiler.js";
 import { buildInitialPrompt, runKadmosAgent } from "./agent/runner.js";
 import { createLlmProvider } from "./agent/provider.js";
 
 function usage(): never {
-  throw new Error("Usage: kadmos infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
+  throw new Error("Usage: kadmos infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
 }
 
 export function runCli(args: readonly string[]): string | Promise<string> {
@@ -100,12 +100,20 @@ export function runCli(args: readonly string[]): string | Promise<string> {
     return `${rows.join("\n")}\n\n# Candidate world.spec.yaml\n${inference.worldYaml}`;
   }
   if (command === "compile") {
-    if (args.length !== 4 || args[2] !== "--out" || !args[3]) usage();
+    if ((args.length !== 4 && args.length !== 6) || args[2] !== "--out" || !args[3] || (args.length === 6 && args[4] !== "--lang")) usage();
+    const lang = args.length === 6 ? args[5] : "ts";
+    if (lang !== "ts" && lang !== "python" && lang !== "all") usage();
     const spec = parseWorldSpec(source);
-    const projection = compileWorldSpec(spec);
-    mkdirSync(args[3], { recursive: true });
-    writeFileSync(join(args[3], "ports.d.ts"), projection.portsDts);
-    writeFileSync(join(args[3], "world_checker.ts"), projection.worldCheckerTs);
+    if (lang === "ts" || lang === "all") {
+      const projection = compileWorldSpec(spec);
+      atomicWrite(join(args[3], "ports.d.ts"), projection.portsDts);
+      atomicWrite(join(args[3], "world_checker.ts"), projection.worldCheckerTs);
+    }
+    if (lang === "python" || lang === "all") {
+      const projection = compileWorldSpecPython(spec);
+      atomicWrite(join(args[3], "ports.py"), projection.portsPy);
+      atomicWrite(join(args[3], "world_checker.py"), projection.worldCheckerPy);
+    }
     return `Compiled ${spec.name} to ${args[3]}\n`;
   }
   usage();
