@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -122,6 +122,62 @@ test("CLI compile publishes a complete projection directory and preserves unrela
     assert.equal(readFileSync(join(out, "notes.txt"), "utf8"), "keep");
     assert.deepEqual(readdirSync(out).sort(), ["notes.txt", "ports.d.ts", "ports.py", "world_checker.py", "world_checker.ts"]);
     assert.deepEqual(readdirSync(dir).sort(), ["projection", "world.yaml"]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI compile replaces projection symlinks and removes projections from the other language", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-publish-clean-"));
+  try {
+    const input = join(dir, "world.yaml");
+    const out = join(dir, "projection");
+    const outside = join(dir, "outside.txt");
+    writeFileSync(input, yaml);
+    writeFileSync(outside, "untouched");
+    const compile = (lang: string) => spawnSync(process.execPath, [join(process.cwd(), "bin/kadmos.js"), "compile", input, "--out", out, "--lang", lang], { encoding: "utf8" });
+    assert.equal(compile("all").status, 0);
+    writeFileSync(join(out, "notes.txt"), "keep");
+    rmSync(join(out, "ports.py"));
+    symlinkSync(outside, join(out, "ports.py"));
+    rmSync(join(out, "ports.d.ts"));
+    symlinkSync(outside, join(out, "ports.d.ts"));
+    const python = compile("python");
+    assert.equal(python.status, 0, python.stderr);
+    assert.deepEqual(readdirSync(out).sort(), ["notes.txt", "ports.py", "world_checker.py"]);
+    assert.equal(lstatSync(join(out, "ports.py")).isSymbolicLink(), false);
+    assert.equal(readFileSync(outside, "utf8"), "untouched");
+    assert.equal(readFileSync(join(out, "notes.txt"), "utf8"), "keep");
+    rmSync(join(out, "world_checker.py"));
+    symlinkSync(outside, join(out, "world_checker.py"));
+    symlinkSync(outside, join(out, "ports.d.ts"));
+    const ts = compile("ts");
+    assert.equal(ts.status, 0, ts.stderr);
+    assert.deepEqual(readdirSync(out).sort(), ["notes.txt", "ports.d.ts", "world_checker.ts"]);
+    assert.equal(lstatSync(join(out, "ports.d.ts")).isSymbolicLink(), false);
+    assert.equal(readFileSync(outside, "utf8"), "untouched");
+    assert.ok(existsSync(join(out, "ports.d.ts")));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("Python expression evaluator uses JavaScript double precision for numeric operations", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-py-numbers-"));
+  try {
+    const projection = compileWorldSpecPython(world);
+    writeFileSync(join(dir, "ports.py"), projection.portsPy);
+    writeFileSync(join(dir, "world_checker.py"), projection.worldCheckerPy);
+    const cases = [
+      { expression: "9007199254740993 == 9007199254740992", environment: {}, expected: true },
+      { expression: "1/0 == 1/0", environment: {}, expected: true },
+      { expression: "amount * amount > 9223372030926249000", environment: { amount: 3037000499 }, expected: false },
+      { expression: "0/0 != 0/0", environment: {}, expected: true },
+    ];
+    writeFileSync(join(dir, "check.py"), `import json\nfrom world_checker import evaluate_world\ncases = json.loads(${JSON.stringify(JSON.stringify(cases))})\nprint(json.dumps([evaluate_world(case['expression'], case['environment']) for case in cases]))\n`);
+    const py = run(["check.py"], dir);
+    assert.equal(py.status, 0, py.stderr);
+    const actual = JSON.parse(py.stdout);
+    for (const [index, item] of cases.entries()) {
+      assert.equal(evaluate(item.expression, item.environment), item.expected);
+      assert.equal(actual[index], item.expected);
+    }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

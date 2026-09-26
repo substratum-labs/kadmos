@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdtempSync, readFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdtempSync, readFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { atomicWrite } from "./atomic_write.js";
 import { inferBoundary, serializeWorldSpec } from "./boundary_inference.js";
@@ -24,7 +24,18 @@ function publishProjectionDirectory(outDir: string, files: Record<string, string
   try {
     if (existsSync(outDir)) cpSync(outDir, staged, { recursive: true });
     else mkdirSync(staged);
-    for (const [name, content] of Object.entries(files)) writeFileSync(join(staged, name), content);
+    const tsFiles = ["ports.d.ts", "world_checker.ts"];
+    const pythonFiles = ["ports.py", "world_checker.py"];
+    const obsolete = Object.keys(files).length === 4 ? [] : tsFiles.every((name) => name in files) ? pythonFiles : tsFiles;
+    for (const name of obsolete) {
+      const path = join(staged, name);
+      if (lstatSync(path, { throwIfNoEntry: false })) rmSync(path);
+    }
+    for (const [name, content] of Object.entries(files)) {
+      const path = join(staged, name);
+      if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) rmSync(path);
+      writeFileSync(path, content);
+    }
     if (existsSync(outDir)) { renameSync(outDir, previous); movedPrevious = true; }
     try { renameSync(staged, outDir); }
     catch (error) {

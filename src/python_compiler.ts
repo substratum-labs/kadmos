@@ -76,14 +76,22 @@ def _boolean(value: Any) -> bool:
     return value
 
 
-def _number(value: Any) -> int | float:
+def _number(value: Any) -> float:
     if type(value) not in (int, float) or not math.isfinite(value):
         raise ValueError("INVALID_EXPRESSION: expected number")
-    return value
+    return float(value)
+
+
+def _div(left: float, right: float) -> float:
+    if right == 0.0:
+        if left == 0.0:
+            return float("nan")
+        return math.copysign(float("inf"), left) * math.copysign(1.0, right)
+    return left / right
 
 
 def _safe_integer(value: Any) -> bool:
-    return type(value) in (int, float) and math.isfinite(value) and value == int(value) and abs(value) <= _MAX_INTEGER
+    return type(value) in (int, float) and math.isfinite(value) and float(value).is_integer() and abs(float(value)) <= _MAX_INTEGER
 
 
 def evaluate_world(expression: str | bool, environment: dict[str, Any]) -> Any:
@@ -123,7 +131,7 @@ def evaluate_world(expression: str | bool, environment: dict[str, Any]) -> Any:
         elif token.startswith("'"):
             left = token[1:-1].replace("\\\\'", "'")
         elif token[0].isdigit():
-            left = float(token) if "." in token else int(token)
+            left = float(token)
         elif _NAME.fullmatch(token):
             left = environment.get(token, _UNDEFINED)
             while position < len(tokens) and tokens[position] == ".":
@@ -154,8 +162,10 @@ def evaluate_world(expression: str | bool, environment: dict[str, Any]) -> Any:
             elif operator in ("==", "!="):
                 if type(left) is dict and type(right) is dict:
                     equal = left is right
+                elif type(left) in (int, float) and type(right) in (int, float):
+                    equal = float(left) == float(right)
                 else:
-                    equal = (type(left) is type(right) or (type(left) in (int, float) and type(right) in (int, float))) and left == right
+                    equal = type(left) is type(right) and left == right
                 left = equal if operator == "==" else not equal
             elif operator == ">":
                 left = _number(left) > _number(right)
@@ -172,7 +182,7 @@ def evaluate_world(expression: str | bool, environment: dict[str, Any]) -> Any:
             elif operator == "*":
                 left = _number(left) * _number(right)
             else:
-                left = _number(left) / _number(right)
+                left = _div(_number(left), _number(right))
         return left
 
     result = parse()

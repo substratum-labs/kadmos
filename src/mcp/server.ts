@@ -1,4 +1,5 @@
 import { StringDecoder } from "node:string_decoder";
+import { isDeepStrictEqual } from "node:util";
 import { inferBoundary, serializeWorldSpec } from "../boundary_inference.js";
 import { applyLegislationPatch, synthesizeDilemmas } from "../dilemma_synthesis.js";
 import { compileWorldSpec, compileWorldSpecPython, parseWorldSpec } from "../world_compiler.js";
@@ -40,6 +41,12 @@ function world(value: unknown): WorldSpec {
 
 type Checker = ReturnType<typeof createWorldChecker>;
 type Session = { checker: Checker; world: WorldSpec };
+
+function contextMatches(actual: Record<string, number>, expected: Record<string, number>): boolean {
+  const actualKeys = Object.keys(actual);
+  const expectedKeys = Object.keys(expected);
+  return actualKeys.length === expectedKeys.length && actualKeys.every((key) => Object.hasOwn(expected, key) && expected[key] === actual[key]);
+}
 
 function executeTool(name: string, args: Record<string, unknown>, sessions: Map<string, Session>): unknown {
   if (name === "kadmos_infer") {
@@ -95,9 +102,9 @@ function executeTool(name: string, args: Record<string, unknown>, sessions: Map<
     const existing = sessionId === undefined ? undefined : sessions.get(sessionId);
     let checker: Checker;
     if (existing) {
-      if (args.world !== undefined && JSON.stringify(world(args.world)) !== JSON.stringify(existing.world)) throw new InvalidParams("Session world mismatch");
+      if (args.world !== undefined && !isDeepStrictEqual(world(args.world), existing.world)) throw new InvalidParams("Session world mismatch");
       checker = existing.checker;
-      if (args.context !== undefined && JSON.stringify(args.context) !== JSON.stringify(checker.getContext())) throw new InvalidParams("Session context mismatch");
+      if (args.context !== undefined && !contextMatches(args.context as Record<string, number>, checker.getContext())) throw new InvalidParams("Session context mismatch");
     } else {
       const spec = world(args.world);
       checker = createWorldChecker(spec, (args.context ?? {}) as Record<string, number>);

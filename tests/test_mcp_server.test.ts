@@ -113,6 +113,23 @@ test("step sessions preserve history and reject forged state or context", async 
   assert.deepEqual(responses.slice(2).map(item => item.error.code), [-32602, -32602, -32602]);
 });
 
+test("step sessions accept reordered context and World object keys", async () => {
+  const firstWorld = { ...world, context: { amount: world.context.amount, fee: { type: "integer", min: 0, default: 2 } } };
+  const reorderedWorld = {
+    transitions: firstWorld.transitions, invariants: firstWorld.invariants,
+    context: { fee: firstWorld.context.fee, amount: firstWorld.context.amount },
+    states: firstWorld.states, name: firstWorld.name, version: firstWorld.version,
+  };
+  const responses: any[] = await session([
+    call(1, "kadmos_step", { sessionId: "ordered", world: firstWorld, context: { amount: 5, fee: 2 }, transitionId: "MISSING" }),
+    call(2, "kadmos_step", { sessionId: "ordered", world: reorderedWorld, context: { fee: 2, amount: 5 }, transitionId: "PAY", proposedDirective: "DISPATCH_PAYMENT" }),
+  ]) as any[];
+  assert.equal(result(responses[0]).allowed, false);
+  assert.equal(responses[1].error, undefined);
+  assert.equal(result(responses[1]).allowed, true);
+  assert.equal(result(responses[1]).currentState, "PAID");
+});
+
 test("invalid World documents produce invalid params and Unicode separators stay within one frame", async () => {
   const invalid = { ...world, states: [] };
   const unicode = request(2, "tools/call", { name: "kadmos_infer", arguments: { prd: `alpha\u2028beta\u2029gamma` } });
