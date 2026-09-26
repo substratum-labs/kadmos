@@ -19,6 +19,19 @@ export interface LegislativeDilemma {
   readonly optionB: { readonly description: string; readonly fabricGuidance: string };
 }
 
+const bounded = { type: "integer" as const, min: 0, max: 1_000_000_000, default: 0 };
+const boundedNonce = { type: "integer" as const, min: 0, max: 1, default: 0 };
+const canonicalContext = {
+  order_amount: bounded,
+  settled_amount: bounded,
+  refunded_amount: bounded,
+  settlement_nonce: boundedNonce,
+};
+
+function sameGuard(left: string | boolean, right: string | boolean): boolean {
+  return (left === "true" ? true : left) === (right === "true" ? true : right);
+}
+
 export function applyLegislationPatch(baseSpec: WorldSpec, patch: WorldPatch): WorldSpec {
   const states = baseSpec.states.map((state) => ({ ...state }));
   for (const state of patch.states ?? []) {
@@ -34,7 +47,10 @@ export function applyLegislationPatch(baseSpec: WorldSpec, patch: WorldPatch): W
   const context = { ...baseSpec.context };
   for (const [name, field] of Object.entries(patch.context ?? {})) {
     const existing = context[name];
-    if (existing && (field.min !== undefined && existing.min !== undefined && field.min < existing.min || field.max !== undefined && existing.max !== undefined && field.max > existing.max)) throw new Error(`CONFLICTING_BOUNDS: ${name}`);
+    const restoresCanonicalCeiling = Object.hasOwn(canonicalContext, name)
+      && field.max === canonicalContext[name as keyof typeof canonicalContext].max
+      && field.min === 0 && field.default === 0;
+    if (existing && (field.min !== undefined && existing.min !== undefined && field.min < existing.min || field.max !== undefined && existing.max !== undefined && field.max > existing.max && !restoresCanonicalCeiling)) throw new Error(`CONFLICTING_BOUNDS: ${name}`);
     context[name] = { ...existing, ...field };
   }
   const invariants = baseSpec.invariants.map((item) => ({ ...item }));
@@ -52,22 +68,21 @@ export function applyLegislationPatch(baseSpec: WorldSpec, patch: WorldPatch): W
     const index = transitions.findIndex((item) => item.id === refinement.id);
     if (index !== -1) transitions[index] = { ...transitions[index]!, guard: refinement.guard, to: refinement.to ?? transitions[index]!.to, effects: [...(refinement.effects ?? transitions[index]!.effects)] };
   }
+  const addedPatchIds = new Set<string>();
   for (const candidate of patch.transitions ?? []) {
     const transition = { ...candidate, directive: candidate.directive ?? null, effects: [...(candidate.effects ?? [])] };
     const sameId = transitions.find((item) => item.id === transition.id);
-    if (sameId) {
-      if (sameId.from !== transition.from || sameId.to !== transition.to || sameId.guard !== transition.guard || sameId.directive !== transition.directive || JSON.stringify(sameId.effects) !== JSON.stringify(transition.effects)) throw new Error(`CONFLICTING_TRANSITION: ${transition.id}`);
-      continue;
+    if (sameId && sameId.from === transition.from && sameId.to === transition.to && sameGuard(sameId.guard, transition.guard)
+      && sameId.directive === transition.directive && JSON.stringify(sameId.effects) === JSON.stringify(transition.effects)) continue;
+    for (let index = transitions.length - 1; index >= 0; index--) {
+      const existing = transitions[index]!;
+      if (!addedPatchIds.has(existing.id) && (existing.id === transition.id || existing.from === transition.from && existing.to === transition.to)) transitions.splice(index, 1);
     }
-    const sameMove = transitions.find((item) => item.from === transition.from && item.to === transition.to && item.directive === transition.directive);
-    if (sameMove) {
-      if (sameMove.guard !== transition.guard || JSON.stringify(sameMove.effects) !== JSON.stringify(transition.effects)) throw new Error(`CONFLICTING_TRANSITION_MOVE: ${transition.from} -> ${transition.to}`);
-    } else transitions.push(transition);
+    transitions.push(transition);
+    addedPatchIds.add(transition.id);
   }
   return parseWorldSpec(serializeWorldSpec({ ...baseSpec, states, context, invariants, transitions }));
 }
-
-const bounded = { type: "integer" as const, min: 0, max: 1_000_000_000, default: 0 };
 
 export function synthesizeDilemmas(result: BoundaryInferenceResult): LegislativeDilemma[] {
   const source = result.inputContent;
@@ -91,9 +106,7 @@ export function synthesizeDilemmas(result: BoundaryInferenceResult): Legislative
           states: [{ id: "ARBITRATION" }, { id: "REFUNDED", terminal: true }, { id: "SETTLED", terminal: true }],
           context: {
             escrow_balance: result.worldSpec.context.escrow_balance ?? bounded,
-            order_amount: result.worldSpec.context.order_amount ?? bounded,
-            settled_amount: result.worldSpec.context.settled_amount ?? bounded,
-            refunded_amount: result.worldSpec.context.refunded_amount ?? bounded,
+            ...canonicalContext,
           },
           removeTransitions: paymentDirectives.map((transition) => transition.id),
           transitions: [
@@ -121,7 +134,7 @@ export function synthesizeDilemmas(result: BoundaryInferenceResult): Legislative
         description: "Elevate to World law: require a guarded idempotency key and explicit unknown-outcome state before retry.",
         patch: {
           states: [{ id: "OUTCOME_UNKNOWN" }, { id: "FAILED", terminal: true }],
-          context: { settlement_nonce: { type: "integer", min: 0, max: 1, default: 0 } },
+          context: canonicalContext,
           refineTransitions: hazardous.map((transition) => ({ id: transition.id, guard: "settlement_nonce == 0", to: "OUTCOME_UNKNOWN", effects: ["settlement_nonce = 1"] })),
           transitions: [
             { id: "RECORD_UNCERTAIN_OUTCOME", from: paymentPending, to: "OUTCOME_UNKNOWN", guard: "settlement_nonce == 0", effects: ["settlement_nonce = 1"] },
@@ -144,9 +157,7 @@ export function synthesizeDilemmas(result: BoundaryInferenceResult): Legislative
         description: "Elevate to World law: guard refund confirmation with a bounded balance invariant.",
         patch: {
           context: {
-            refunded_amount: result.worldSpec.context.refunded_amount ?? bounded,
-            settled_amount: result.worldSpec.context.settled_amount ?? bounded,
-            order_amount: result.worldSpec.context.order_amount ?? bounded,
+            ...canonicalContext,
           },
           states: [{ id: "REFUNDED", terminal: true }, { id: "SETTLED", terminal: true }],
           invariants: [{ id: "INV-REFUND-CONSERVATION", description: "Refunded and settled value cannot exceed the order amount", predicate: "refunded_amount + settled_amount <= order_amount" }],

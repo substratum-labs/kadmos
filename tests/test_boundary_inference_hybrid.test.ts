@@ -21,34 +21,34 @@ test("omitted provider retains the synchronous heuristic baseline", () => {
 
 test("valid semantic extraction adds formal states, context, invariants, and transitions", async () => {
   const extraction = {
-    states: [{ id: "CREATED", initial: true }, { id: "PAID" }, { id: "SETTLED", terminal: true }],
+    states: [{ id: "CREATED", initial: true }, { id: "PAID" }, { id: "ARCHIVED", terminal: true }],
     context: { captured: { type: "integer", min: 0, max: 1000, default: 0 } },
     invariants: [{ id: "INV_CAPTURE", predicate: "captured <= escrow_balance", description: "Capture cannot exceed escrow" }],
-    transitions: [{ id: "CAPTURE", from: "PAID", to: "SETTLED", guard: "escrow_balance >= 1", directive: "DISPATCH_PAYMENT", effects: ["captured = escrow_balance"] }],
+    transitions: [{ id: "CAPTURE", from: "PAID", to: "ARCHIVED", guard: "escrow_balance >= 1", directive: "DISPATCH_PAYMENT", effects: ["captured = escrow_balance"] }],
   };
   const result = await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(extraction)]) });
-  assert.ok(result.worldSpec.states.some((state) => state.id === "SETTLED" && state.terminal));
+  assert.ok(result.worldSpec.states.some((state) => state.id === "ARCHIVED" && state.terminal));
   assert.equal(result.source, "hybrid");
   assert.equal(result.worldSpec.context.captured?.max, 1000);
   assert.ok(result.worldSpec.invariants.some((invariant) => invariant.predicate === "captured <= escrow_balance"));
   assert.ok(result.worldSpec.transitions.some((transition) => transition.id === "CAPTURE" && transition.effects.includes("captured = escrow_balance")));
-  assert.match(result.portsDts, /"SETTLED"/);
+  assert.match(result.portsDts, /"ARCHIVED"/);
   assert.deepEqual(parseWorldSpec(result.worldYaml), result.worldSpec);
 });
 
 test("merge deduplicates local and semantic entities while preserving an initial state", async () => {
   const extraction = {
-    states: [{ id: "CREATED" }, { id: "PAID" }, { id: "SETTLED", terminal: true }],
-    context: { escrow_balance: { type: "integer", min: 0, max: 500, default: 0 } },
+    states: [{ id: "CREATED" }, { id: "PAID" }, { id: "ARCHIVED", terminal: true }],
+    context: { escrow_balance: { type: "integer", min: 0, max: 1_000_000_000, default: 0 } },
     invariants: [{ id: "INV_EXTRA", predicate: "escrow_balance <= 500" }],
     transitions: [
-      { id: "SETTLE", from: "PAID", to: "SETTLED", guard: "escrow_balance >= 0", directive: null },
+      { id: "SETTLE", from: "PAID", to: "ARCHIVED", guard: "escrow_balance >= 0", directive: null },
     ],
   };
   const result = await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(extraction)]) });
   assert.equal(result.worldSpec.states.filter((state) => state.id === "CREATED").length, 1);
   assert.equal(result.worldSpec.states.filter((state) => state.initial).length, 1);
-  assert.equal(result.worldSpec.context.escrow_balance?.max, 500);
+  assert.equal(result.worldSpec.context.escrow_balance?.max, 1_000_000_000);
   assert.equal(result.worldSpec.context.escrow_balance?.unit, "cents");
   assert.equal(result.worldSpec.invariants.filter((invariant) => invariant.predicate === "escrow_balance >= 0").length, 1);
   assert.equal(result.worldSpec.transitions.filter((transition) => transition.from === "CREATED" && transition.to === "PAID" && transition.directive === null).length, 1);
@@ -130,6 +130,37 @@ test("a shared state edge cannot inject a refund directive under a different ID"
     transitions: [{ id: "EVIL_REFUND", from: "CREATED", to: "PAID", guard: "true", directive: "DISPATCH_REFUND", effects: [] }],
   };
   assert.deepEqual(await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(attack)]) }), baseline);
+});
+
+test("a fresh PAID edge cannot introduce DISPATCH_REFUND", async () => {
+  const baseline = inferBoundary(prd);
+  const extraction = { states: [], context: {}, invariants: [], transitions: [
+    { id: "FRESH_REFUND", from: "PAID", to: "PAID", guard: "true", directive: "DISPATCH_REFUND" },
+  ] };
+  assert.deepEqual(await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(extraction)]) }), baseline);
+});
+
+test("reserved legislative states in extracted states or transition endpoints fall back", async () => {
+  const baseline = inferBoundary(prd);
+  for (const id of ["ARBITRATION", "OUTCOME_UNKNOWN", "REFUNDED", "SETTLED"]) {
+    for (const extraction of [
+      { states: [{ id }], context: {}, invariants: [], transitions: [] },
+      { states: [], context: {}, invariants: [], transitions: [{ id: `TO_${id}`, from: "PAID", to: id, guard: "true" }] },
+      { states: [], context: {}, invariants: [], transitions: [{ id: `FROM_${id}`, from: id, to: "PAID", guard: "true" }] },
+      { states: [], context: {}, invariants: [], transitions: [{ id: `ENTER_${id}`, from: "PAID", to: "PAID", guard: "true" }] },
+    ]) assert.deepEqual(await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(extraction)]) }), baseline, id);
+  }
+});
+
+test("zero extracted context ceiling and changed local ceiling fall back", async () => {
+  const baseline = inferBoundary(prd);
+  for (const context of [
+    { order_amount: { type: "integer", min: 0, max: 0, default: 0 } },
+    { escrow_balance: { type: "integer", min: 0, max: 1, default: 0 } },
+  ]) {
+    const extraction = { states: [], context, invariants: [], transitions: [] };
+    assert.deepEqual(await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(extraction)]) }), baseline);
+  }
 });
 
 test("new transitions cannot assign numeric literals or monetary and local context fields", async () => {

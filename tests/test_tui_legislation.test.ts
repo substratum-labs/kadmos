@@ -56,6 +56,31 @@ test("synthesized A patches remain valid when all are applied in order", () => {
   assert.ok(world.states.length > base.states.length);
 });
 
+test("Option A replaces a candidate transition on the same move with a true string guard", () => {
+  const candidate = { ...base, states: [...base.states, { id: "ARBITRATION" }], transitions: [
+    ...base.transitions,
+    { id: "CANDIDATE_ARBITRATION", from: "PAYMENT_PENDING", to: "ARBITRATION", guard: "true", directive: null, effects: [] },
+  ] };
+  const first = synthesizeDilemmas({ source: "hybrid", inputContent: "cancel payment", worldSpec: candidate, worldYaml: "", portsDts: "", worldCandidates: [], fabricCandidates: [] })[0]!;
+  const world = applyLegislationPatch(candidate, first.optionA.patch);
+  assert.equal(world.transitions.some((item) => item.id === "CANDIDATE_ARBITRATION"), false);
+  assert.ok(world.transitions.some((item) => item.id === "ENTER_CANCELLATION_ARBITRATION"));
+});
+
+test("every Option A patch restores canonical monetary and nonce ceilings", () => {
+  const context = Object.fromEntries(["order_amount", "settled_amount", "refunded_amount", "settlement_nonce"].map((name) => [name, { type: "integer" as const, min: 0, max: 0, default: 0 }]));
+  const candidate = { ...base, context: { ...base.context, ...context } };
+  const dilemmas = synthesizeDilemmas({ source: "hybrid", inputContent: "cancel payment timeout RPC retry refund webhook", worldSpec: candidate, worldYaml: "", portsDts: "", worldCandidates: [], fabricCandidates: [] });
+  for (const item of dilemmas) {
+    const patchContext = item.optionA.patch.context!;
+    for (const name of ["order_amount", "settled_amount", "refunded_amount"]) assert.deepEqual(patchContext[name], { type: "integer", min: 0, max: 1_000_000_000, default: 0 });
+    assert.deepEqual(patchContext.settlement_nonce, { type: "integer", min: 0, max: 1, default: 0 });
+    const world = applyLegislationPatch(candidate, item.optionA.patch);
+    assert.equal(world.context.order_amount?.max, 1_000_000_000);
+    assert.equal(world.context.settlement_nonce?.max, 1);
+  }
+});
+
 test("Option A closes direct payment capture and routes cancellation through arbitration", () => {
   const first = synthesizeDilemmas({ source: "heuristic", inputContent: "cancel payment", worldSpec: base, worldYaml: "", portsDts: "", worldCandidates: [], fabricCandidates: [] })[0]!;
   const world = applyLegislationPatch(base, first.optionA.patch);

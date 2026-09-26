@@ -104,7 +104,12 @@ function parseExtraction(content: string): SemanticWorldExtraction {
 
 function validId(value: string): boolean { return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value); }
 
+const RESERVED_LEGISLATIVE_STATES = new Set(["ARBITRATION", "OUTCOME_UNKNOWN", "REFUNDED", "SETTLED"]);
+
 function mergeWorldSpec(local: WorldSpec, extracted: SemanticWorldExtraction): WorldSpec {
+  if (extracted.states.some((state) => RESERVED_LEGISLATIVE_STATES.has(state.id))
+    || extracted.transitions.some((transition) => RESERVED_LEGISLATIVE_STATES.has(transition.from) || RESERVED_LEGISLATIVE_STATES.has(transition.to)
+      || [...RESERVED_LEGISLATIVE_STATES].some((state) => transition.id.includes(state)))) throw new Error("RESERVED_LEGISLATIVE_STATE");
   const chosenInitial = local.states.find((state) => state.initial)!.id;
   if (extracted.states.some((state) => state.initial && state.id !== chosenInitial)) throw new Error(`CONFLICTING_INITIAL_STATE: ${chosenInitial}`);
   const states = new Map(local.states.map((state) => [state.id, state]));
@@ -113,7 +118,9 @@ function mergeWorldSpec(local: WorldSpec, extracted: SemanticWorldExtraction): W
   const context = { ...local.context };
   for (const [name, field] of Object.entries(extracted.context)) {
     const existing = context[name];
-    if (field.default !== undefined && field.default !== 0
+    if (field.max !== undefined && field.max < 1
+      || existing && field.max !== undefined && field.max !== existing.max
+      || field.default !== undefined && field.default !== 0
       || existing && (existing.min !== undefined && (field.min === undefined || field.min < existing.min)
       || existing.max !== undefined && (field.max === undefined || field.max > existing.max)
       || existing.unit !== undefined && field.unit !== undefined && existing.unit !== field.unit
@@ -128,8 +135,10 @@ function mergeWorldSpec(local: WorldSpec, extracted: SemanticWorldExtraction): W
     if (!existing && !invariants.some((other) => other.predicate === item.predicate)) invariants.push(item);
   }
   const transitions = [...local.transitions];
+  const allowedDirectives = new Set(local.transitions.map((transition) => transition.directive).filter((directive) => directive !== null));
   for (const item of extracted.transitions) {
     const candidate = { ...item, directive: item.directive ?? null, effects: item.effects ?? [] };
+    if (candidate.directive !== null && !allowedDirectives.has(candidate.directive)) throw new Error(`UNDECLARED_DIRECTIVE: ${candidate.directive}`);
     for (const effect of candidate.effects) {
       const assignment = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(effect);
       if (!assignment || Object.hasOwn(local.context, assignment[1]!)
