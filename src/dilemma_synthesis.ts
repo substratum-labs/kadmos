@@ -76,7 +76,11 @@ export function applyLegislationPatch(baseSpec: WorldSpec, patch: WorldPatch): W
       && sameId.directive === transition.directive && JSON.stringify(sameId.effects) === JSON.stringify(transition.effects)) continue;
     for (let index = transitions.length - 1; index >= 0; index--) {
       const existing = transitions[index]!;
-      if (!addedPatchIds.has(existing.id) && (existing.id === transition.id || existing.from === transition.from && existing.to === transition.to)) transitions.splice(index, 1);
+      const sameMove = existing.from === transition.from && existing.to === transition.to
+        && (existing.directive ?? null) === transition.directive;
+      const sameSemantics = sameMove && sameGuard(existing.guard, transition.guard)
+        && JSON.stringify(existing.effects) === JSON.stringify(transition.effects);
+      if (!addedPatchIds.has(existing.id) && (existing.id === transition.id || sameSemantics)) transitions.splice(index, 1);
     }
     transitions.push(transition);
     addedPatchIds.add(transition.id);
@@ -133,12 +137,12 @@ export function synthesizeDilemmas(result: BoundaryInferenceResult): Legislative
       optionA: {
         description: "Elevate to World law: require a guarded idempotency key and explicit unknown-outcome state before retry.",
         patch: {
-          states: [{ id: "OUTCOME_UNKNOWN" }, { id: "FAILED", terminal: true }],
+          states: [{ id: "OUTCOME_UNKNOWN" }, { id: "OUTCOME_FAILED", terminal: true }],
           context: canonicalContext,
           refineTransitions: hazardous.map((transition) => ({ id: transition.id, guard: "settlement_nonce == 0", to: "OUTCOME_UNKNOWN", effects: ["settlement_nonce = 1"] })),
           transitions: [
             { id: "RECORD_UNCERTAIN_OUTCOME", from: paymentPending, to: "OUTCOME_UNKNOWN", guard: "settlement_nonce == 0", effects: ["settlement_nonce = 1"] },
-            { id: "RESOLVE_UNKNOWN_AS_FAILED", from: "OUTCOME_UNKNOWN", to: "FAILED", guard: true },
+            { id: "RESOLVE_UNKNOWN_AS_FAILED", from: "OUTCOME_UNKNOWN", to: "OUTCOME_FAILED", guard: true },
           ],
         },
       },
@@ -146,6 +150,10 @@ export function synthesizeDilemmas(result: BoundaryInferenceResult): Legislative
     });
   }
   if (/refund/i.test(source) && /retry|webhook|cancel/i.test(source)) {
+    const arbitrationOrigin = dilemmas.some((item) => item.id === "DIL-001") || states.some((state) => state.id === "ARBITRATION");
+    const refundOrigin = arbitrationOrigin ? "ARBITRATION"
+      : states.some((state) => state.id === "PAID" && !state.terminal) ? "PAID" : "PAYMENT_PENDING";
+    const needsPaymentPending = refundOrigin === "PAYMENT_PENDING" && !states.some((state) => state.id === "PAYMENT_PENDING");
     dilemmas.push({
       id: "DIL-003", title: "Refund confirmation arrives out of order",
       worstCaseTrace: [
@@ -159,12 +167,14 @@ export function synthesizeDilemmas(result: BoundaryInferenceResult): Legislative
           context: {
             ...canonicalContext,
           },
-          states: [{ id: "REFUNDED", terminal: true }, { id: "SETTLED", terminal: true }],
+          states: [...(needsPaymentPending ? [{ id: "PAYMENT_PENDING" }] : []), ...(arbitrationOrigin ? [{ id: "ARBITRATION" }] : []), { id: "REFUNDED", terminal: true }, { id: "SETTLED", terminal: true }],
           invariants: [{ id: "INV-REFUND-CONSERVATION", description: "Refunded and settled value cannot exceed the order amount", predicate: "refunded_amount + settled_amount <= order_amount" }],
           transitions: [
             { id: "RECORD_ORDER_AMOUNT", from: initial, to: initial, guard: "event.amount >= 0", effects: ["order_amount = event.amount"] },
-            { id: "RECORD_REFUND_AMOUNT", from: initial, to: "REFUNDED", guard: "event.amount > 0", effects: ["refunded_amount = refunded_amount + event.amount"] },
-            { id: "RECORD_SETTLED_AMOUNT", from: initial, to: "SETTLED", guard: "event.amount > 0", effects: ["settled_amount = settled_amount + event.amount"] },
+            ...(needsPaymentPending ? [{ id: "ENTER_PAYMENT_PENDING", from: initial, to: "PAYMENT_PENDING", guard: true }] : []),
+            ...(arbitrationOrigin ? [{ id: "ENTER_CANCELLATION_ARBITRATION", from: paymentPending, to: "ARBITRATION", guard: true }] : []),
+            { id: "RECORD_REFUND_AMOUNT", from: refundOrigin, to: "REFUNDED", guard: "event.amount > 0", effects: ["refunded_amount = refunded_amount + event.amount"] },
+            { id: "RECORD_SETTLED_AMOUNT", from: refundOrigin, to: "SETTLED", guard: "event.amount > 0", effects: ["settled_amount = settled_amount + event.amount"] },
           ],
         },
       },

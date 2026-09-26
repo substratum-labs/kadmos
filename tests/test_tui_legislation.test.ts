@@ -56,6 +56,48 @@ test("synthesized A patches remain valid when all are applied in order", () => {
   assert.ok(world.states.length > base.states.length);
 });
 
+test("Option A patches preserve unrelated directives sharing the initial self-loop", () => {
+  const inferred = inferBoundary("CREATED to PAYMENT_PENDING. cancel payment capture timeout retry refund webhook. fetch('/orders'); sqs.send(message).");
+  const original = inferred.worldSpec.transitions.filter((item) => item.directive === "DISPATCH_HTTP_REQUEST" || item.directive === "DISPATCH_QUEUE_MESSAGE");
+  assert.equal(original.length, 2);
+  const dilemmas = synthesizeDilemmas(inferred);
+  assert.deepEqual(dilemmas.map((item) => item.id), ["DIL-001", "DIL-002", "DIL-003"]);
+  for (const item of dilemmas) {
+    const patched = applyLegislationPatch(inferred.worldSpec, item.optionA.patch);
+    for (const transition of original) {
+      assert.ok(patched.transitions.some((candidate) => candidate.id === transition.id && candidate.directive === transition.directive), `${item.id} removed ${transition.id}`);
+    }
+  }
+  let composed = inferred.worldSpec;
+  for (const item of dilemmas) composed = applyLegislationPatch(composed, item.optionA.patch);
+  for (const transition of original) assert.ok(composed.transitions.some((item) => item.id === transition.id && item.directive === transition.directive));
+});
+
+test("composed Option A requires arbitration before refund or settlement", () => {
+  const inferred = inferBoundary("CREATED to PAYMENT_PENDING. cancel payment capture timeout retry refund webhook.");
+  let world = inferred.worldSpec;
+  for (const item of synthesizeDilemmas(inferred)) world = applyLegislationPatch(world, item.optionA.patch);
+  assert.equal(world.transitions.some((item) => item.from === "CREATED" && (item.to === "REFUNDED" || item.to === "SETTLED")), false);
+  const checker = createWorldChecker(world);
+  const direct = checker.step({ transitionId: "RECORD_REFUND_AMOUNT", eventPayload: { amount: 40 } });
+  assert.equal(direct.allowed, false);
+  assert.equal(direct.violation?.code, "INVALID_TRANSITION");
+  assert.equal(checker.step({ transitionId: "RECORD_ORDER_AMOUNT", eventPayload: { amount: 100 } }).allowed, true);
+  assert.equal(checker.step({ transitionId: "MOVE_CREATED_TO_PAYMENT_PENDING" }).allowed, true);
+  assert.equal(checker.step({ transitionId: "ENTER_CANCELLATION_ARBITRATION" }).currentState, "ARBITRATION");
+  assert.equal(checker.step({ transitionId: "RECORD_REFUND_AMOUNT", eventPayload: { amount: 40 } }).currentState, "REFUNDED");
+});
+
+test("timeout Option A does not make an existing retry state terminal", () => {
+  const inferred = inferBoundary("CREATED to PAYMENT_PENDING. FAILED -> CREATED. payment capture timeout retry.");
+  assert.ok(inferred.worldSpec.transitions.some((item) => item.from === "FAILED" && item.to === "CREATED"));
+  const dilemma = synthesizeDilemmas(inferred).find((item) => item.id === "DIL-002")!;
+  const world = applyLegislationPatch(inferred.worldSpec, dilemma.optionA.patch);
+  assert.equal(world.states.find((item) => item.id === "FAILED")?.terminal, undefined);
+  assert.equal(world.states.find((item) => item.id === "OUTCOME_FAILED")?.terminal, true);
+  assert.ok(world.transitions.some((item) => item.id === "RESOLVE_UNKNOWN_AS_FAILED" && item.to === "OUTCOME_FAILED"));
+});
+
 test("Option A replaces a candidate transition on the same move with a true string guard", () => {
   const candidate = { ...base, states: [...base.states, { id: "ARBITRATION" }], transitions: [
     ...base.transitions,
@@ -105,7 +147,7 @@ test("Option A bounds uncertain payment and provides an unknown-outcome exit", (
   assert.equal(payment.to, "OUTCOME_UNKNOWN");
   const checker = createWorldChecker(world);
   assert.equal(checker.step({ transitionId: "DISPATCH_PAYMENT", proposedDirective: "DISPATCH_PAYMENT" }).allowed, true);
-  assert.equal(checker.step({ transitionId: "RESOLVE_UNKNOWN_AS_FAILED" }).currentState, "FAILED");
+  assert.equal(checker.step({ transitionId: "RESOLVE_UNKNOWN_AS_FAILED" }).currentState, "OUTCOME_FAILED");
 });
 
 test("Option A conservation law rejects an over-refund after amount effects", () => {
@@ -114,6 +156,7 @@ test("Option A conservation law rejects an over-refund after amount effects", ()
   const checker = createWorldChecker(world);
   assert.equal(checker.step({ transitionId: "RECORD_ORDER_AMOUNT", eventPayload: { amount: 100 } }).allowed, true);
   checker.reset({ order_amount: 100, settled_amount: 70 });
+  assert.equal(checker.step({ transitionId: "MOVE_CREATED_TO_PAYMENT_PENDING" }).allowed, true);
   const verdict = checker.step({ transitionId: "RECORD_REFUND_AMOUNT", eventPayload: { amount: 40 } });
   assert.equal(verdict.allowed, false);
   assert.equal(verdict.violation?.code, "INVARIANT_FAILED");

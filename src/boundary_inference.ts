@@ -104,7 +104,7 @@ function parseExtraction(content: string): SemanticWorldExtraction {
 
 function validId(value: string): boolean { return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value); }
 
-const RESERVED_LEGISLATIVE_STATES = new Set(["ARBITRATION", "OUTCOME_UNKNOWN", "REFUNDED", "SETTLED"]);
+const RESERVED_LEGISLATIVE_STATES = new Set(["ARBITRATION", "OUTCOME_UNKNOWN", "OUTCOME_FAILED", "REFUNDED", "SETTLED"]);
 
 function mergeWorldSpec(local: WorldSpec, extracted: SemanticWorldExtraction): WorldSpec {
   if (extracted.states.some((state) => RESERVED_LEGISLATIVE_STATES.has(state.id))
