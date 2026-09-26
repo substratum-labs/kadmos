@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -48,10 +48,25 @@ test("guided --accept-all-a adds the legislative state and invariant to a custom
 test("guided --accept-all-b preserves the inferred minimalist World", async () => {
   const f = fixture();
   try {
-    await runCli(["run", "--prd", f.prdPath, "--provider", "mock", "--accept-all-b", "--dry-run", "--out", f.outDir]);
+    const prompt = await runCli(["run", "--prd", f.prdPath, "--provider", "mock", "--accept-all-b", "--dry-run", "--out", f.outDir]);
+    assert.match(prompt, /LEGISLATIVE FABRIC POLICIES:/);
+    assert.match(prompt, /Deduplicate payment webhooks/);
     const actual = parseWorldSpec(readFileSync(join(f.outDir, "world.spec.yaml"), "utf8"));
     const baseline = inferBoundary(ambiguousPrd, { name: "order.prd" }).worldSpec;
     assert.deepEqual(actual, baseline);
+    assert.equal(JSON.parse(readFileSync(join(f.outDir, "decisions.json"), "utf8")).length, 3);
+    assert.deepEqual(readdirSync(f.outDir).sort(), ["decisions.json", "world.spec.yaml"]);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
+test("--world rejects legislative choice flags", async () => {
+  const f = fixture();
+  try {
+    const world = join(f.directory, "world.yaml");
+    writeFileSync(world, serializeWorldSpec(inferBoundary(ambiguousPrd).worldSpec));
+    for (const flag of ["--accept-all-a", "--accept-all-b", "--non-interactive"]) {
+      await assert.rejects(Promise.resolve().then(() => runCli(["run", "--prd", f.prdPath, "--world", world, flag])), /Usage:/);
+    }
   } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });
 
@@ -73,10 +88,12 @@ test("runner accepts an in-memory World and writes the full evidence bundle plus
     }));
     const steps = [{ transitionId: "MOVE_CREATED_TO_COMPLETED" }];
     const candidate = `\`\`\`json\n${JSON.stringify({ steps })}\n\`\`\`\n\`\`\`typescript\nimport type { IWorldChecker } from "./ports.js"; export class OrderService { constructor(private checker: IWorldChecker) {} run() { this.checker.step({ transitionId: "MOVE_CREATED_TO_COMPLETED" }); } }\n\`\`\``;
-    const result = await runKadmosAgent({ prdPath: f.prdPath, worldSpec, outDir: f.outDir, provider: new MockDeterministicProvider([candidate]) });
+    const fabricGuidance = [{ dilemmaId: "DIL-001", guidance: "Deduplicate payment webhooks." }];
+    const result = await runKadmosAgent({ prdPath: f.prdPath, worldSpec, outDir: f.outDir, provider: new MockDeterministicProvider([candidate]), fabricGuidance });
     assert.equal(result.finalVerdict, "CONSTITUTIONAL_ACCEPTED");
     for (const name of ["fabric.ts", "journey.json", "ports.d.ts", "evidence.json", "world.spec.yaml"]) assert.ok(existsSync(join(f.outDir, name)), name);
     assert.deepEqual(parseWorldSpec(readFileSync(join(f.outDir, "world.spec.yaml"), "utf8")), worldSpec);
     assert.equal(JSON.parse(readFileSync(join(f.outDir, "evidence.json"), "utf8")).finalState, "COMPLETED");
+    assert.deepEqual(JSON.parse(readFileSync(join(f.outDir, "evidence.json"), "utf8")).fabricGuidance, fabricGuidance);
   } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });

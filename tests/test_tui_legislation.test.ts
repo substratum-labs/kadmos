@@ -9,6 +9,7 @@ import { inferBoundary } from "../src/boundary_inference.js";
 import { applyLegislationPatch, synthesizeDilemmas, type LegislativeDilemma } from "../src/dilemma_synthesis.js";
 import { runLegislationWizard } from "../src/tui/wizard.js";
 import { parseWorldSpec } from "../src/world_compiler.js";
+import { createWorldChecker } from "../src/world_checker.js";
 
 const base = inferBoundary("Order status CREATED to PAYMENT_PENDING. Payment capture and cancel may race after timeout; retry refund webhook. Escrow balance and order amount.").worldSpec;
 const dilemma: LegislativeDilemma = {
@@ -48,11 +49,49 @@ test("patch preserves state descriptions and rejects weakened bounds", () => {
 });
 
 test("synthesized A patches remain valid when all are applied in order", () => {
-  const dilemmas = synthesizeDilemmas({ inputContent: "cancel payment timeout RPC retry refund webhook", worldSpec: base, worldYaml: "", portsDts: "", worldCandidates: [], fabricCandidates: [] });
+  const dilemmas = synthesizeDilemmas({ source: "heuristic", inputContent: "cancel payment timeout RPC retry refund webhook", worldSpec: base, worldYaml: "", portsDts: "", worldCandidates: [], fabricCandidates: [] });
   assert.equal(dilemmas.length, 3);
   let world = base;
   for (const item of dilemmas) world = applyLegislationPatch(world, item.optionA.patch);
   assert.ok(world.states.length > base.states.length);
+});
+
+test("Option A closes direct payment capture and routes cancellation through arbitration", () => {
+  const first = synthesizeDilemmas({ source: "heuristic", inputContent: "cancel payment", worldSpec: base, worldYaml: "", portsDts: "", worldCandidates: [], fabricCandidates: [] })[0]!;
+  const world = applyLegislationPatch(base, first.optionA.patch);
+  assert.equal(world.transitions.some((item) => item.from === "CREATED" && item.directive === "DISPATCH_PAYMENT"), false);
+  const checker = createWorldChecker(world);
+  assert.equal(checker.step({ transitionId: "DISPATCH_PAYMENT", proposedDirective: "DISPATCH_PAYMENT" }).allowed, false);
+  assert.equal(checker.step({ transitionId: "ENTER_CANCELLATION_ARBITRATION" }).allowed, false);
+  assert.ok(world.transitions.some((item) => item.from === "ARBITRATION" && item.to === "REFUNDED"));
+  assert.equal(checker.step({ transitionId: "RECORD_ORDER_AMOUNT", eventPayload: { amount: 100 } }).allowed, true);
+  assert.equal(checker.step({ transitionId: "MOVE_CREATED_TO_PAYMENT_PENDING" }).allowed, true);
+  assert.equal(checker.step({ transitionId: "ENTER_CANCELLATION_ARBITRATION" }).allowed, true);
+  assert.equal(checker.step({ transitionId: "CAPTURE_AFTER_ARBITRATION", proposedDirective: "DISPATCH_PAYMENT", eventPayload: { amount: 100 } }).currentState, "SETTLED");
+  assert.equal(checker.getContext().settled_amount, 100);
+  assert.equal(checker.step({ transitionId: "REFUND_AFTER_ARBITRATION", proposedDirective: "DISPATCH_REFUND" }).allowed, false);
+});
+
+test("Option A bounds uncertain payment and provides an unknown-outcome exit", () => {
+  const second = synthesizeDilemmas({ source: "heuristic", inputContent: "timeout payment retry", worldSpec: base, worldYaml: "", portsDts: "", worldCandidates: [], fabricCandidates: [] })[0]!;
+  const world = applyLegislationPatch(base, second.optionA.patch);
+  const payment = world.transitions.find((item) => item.id === "DISPATCH_PAYMENT")!;
+  assert.equal(payment.guard, "settlement_nonce == 0");
+  assert.equal(payment.to, "OUTCOME_UNKNOWN");
+  const checker = createWorldChecker(world);
+  assert.equal(checker.step({ transitionId: "DISPATCH_PAYMENT", proposedDirective: "DISPATCH_PAYMENT" }).allowed, true);
+  assert.equal(checker.step({ transitionId: "RESOLVE_UNKNOWN_AS_FAILED" }).currentState, "FAILED");
+});
+
+test("Option A conservation law rejects an over-refund after amount effects", () => {
+  const third = synthesizeDilemmas({ source: "heuristic", inputContent: "refund retry", worldSpec: base, worldYaml: "", portsDts: "", worldCandidates: [], fabricCandidates: [] })[0]!;
+  const world = applyLegislationPatch(base, third.optionA.patch);
+  const checker = createWorldChecker(world);
+  assert.equal(checker.step({ transitionId: "RECORD_ORDER_AMOUNT", eventPayload: { amount: 100 } }).allowed, true);
+  checker.reset({ order_amount: 100, settled_amount: 70 });
+  const verdict = checker.step({ transitionId: "RECORD_REFUND_AMOUNT", eventPayload: { amount: 40 } });
+  assert.equal(verdict.allowed, false);
+  assert.equal(verdict.violation?.code, "INVARIANT_FAILED");
 });
 
 test("headless wizard applies all A patches or preserves World for all B", async () => {
@@ -96,7 +135,42 @@ test("TTY Ctrl+C aborts and removes wizard listeners", async () => {
   await assert.rejects(pending, /abort/i);
   assert.equal(input.isRaw, false);
   assert.equal(input.listenerCount("keypress"), 0);
-  assert.equal(input.listenerCount("data"), 0);
+  assert.ok(input.listenerCount("data") > 0);
+});
+
+test("redraw failure rejects and restores raw mode", async () => {
+  const input = new PassThrough() as PassThrough & { isTTY: true; isRaw: boolean; setRawMode(value: boolean): void };
+  input.isTTY = true; input.isRaw = false; input.setRawMode = (value) => { input.isRaw = value; };
+  let writes = 0;
+  const output = new PassThrough();
+  output.write = ((chunk: string) => { if (++writes > 7) throw new Error("display failed"); return true; }) as typeof output.write;
+  const pending = runLegislationWizard({ worldSpec: base, dilemmas: [dilemma], input, output });
+  input.write("1");
+  await assert.rejects(pending, /display failed/);
+  assert.equal(input.isRaw, false);
+});
+
+test("two wizard sessions reuse one input stream", async () => {
+  const input = new PassThrough() as PassThrough & { isTTY: true; isRaw: boolean; setRawMode(value: boolean): void };
+  input.isTTY = true; input.isRaw = false; input.setRawMode = (value) => { input.isRaw = value; };
+  for (let index = 0; index < 2; index++) {
+    const pending = runLegislationWizard({ worldSpec: base, dilemmas: [dilemma], input, output: new PassThrough() });
+    input.write("\r");
+    assert.equal((await pending).decisions[0]?.choice, "A");
+    assert.equal(input.isRaw, false);
+  }
+});
+
+test("wizard strips hostile terminal controls from rendered content", async () => {
+  const input = new PassThrough() as PassThrough & { isTTY: true; isRaw: boolean; setRawMode(value: boolean): void };
+  input.isTTY = true; input.isRaw = false; input.setRawMode = (value) => { input.isRaw = value; };
+  const output = new PassThrough();
+  let rendered = "";
+  output.on("data", (chunk) => { rendered += chunk.toString(); });
+  const pending = runLegislationWizard({ worldSpec: { ...base, states: [{ id: "BAD\x1b[2J", initial: true }] }, dilemmas: [{ ...dilemma, title: "evil\x1b[31m" }], input, output });
+  input.write("q");
+  await assert.rejects(pending);
+  assert.doesNotMatch(rendered, /BAD\x1b\[2J|evil\x1b\[31m/);
 });
 
 test("CLI accept-all-a atomically writes a parseable updated YAML file", () => {
@@ -110,5 +184,17 @@ test("CLI accept-all-a atomically writes a parseable updated YAML file", () => {
     const world = parseWorldSpec(readFileSync(out, "utf8"));
     assert.ok(world.states.some((state) => state.id === "ARBITRATION"));
     assert.deepEqual(readdirSync(directory).sort(), ["requirements.txt", "world.spec.yaml"]);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("legislate --out creates a missing parent directory", () => {
+  const directory = mkdtempSync(join(tmpdir(), "kadmos-legislation-"));
+  try {
+    const input = join(directory, "requirements.txt");
+    const out = join(directory, "missing", "nested", "world.spec.yaml");
+    writeFileSync(input, "Order status CREATED to PAYMENT_PENDING. Payment capture and cancel may race.");
+    const result = spawnSync(process.execPath, [join(process.cwd(), "bin", "kadmos.js"), "legislate", input, "--accept-all-a", "--out", out], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(parseWorldSpec(readFileSync(out, "utf8")));
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

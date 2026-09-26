@@ -9,6 +9,7 @@ export interface BoundaryCandidate {
   readonly justification: string;
 }
 export interface BoundaryInferenceResult {
+  readonly source: "heuristic" | "hybrid";
   readonly inputContent: string;
   readonly worldCandidates: readonly BoundaryCandidate[];
   readonly fabricCandidates: readonly BoundaryCandidate[];
@@ -23,7 +24,7 @@ export interface BoundaryInferenceOptions {
 }
 export interface SemanticWorldExtraction {
   readonly states: readonly { readonly id: string; readonly initial?: boolean; readonly terminal?: boolean }[];
-  readonly context: Readonly<Record<string, { readonly type: "integer"; readonly min?: number; readonly max?: number; readonly default?: number }>>;
+  readonly context: Readonly<Record<string, { readonly type: "integer"; readonly unit?: string; readonly min?: number; readonly max?: number; readonly default?: number }>>;
   readonly invariants: readonly { readonly id: string; readonly description?: string; readonly predicate: string }[];
   readonly transitions: readonly { readonly id: string; readonly from: string; readonly to: string; readonly guard: string; readonly directive?: string | null; readonly effects?: readonly string[] }[];
 }
@@ -87,41 +88,63 @@ function parseExtraction(content: string): SemanticWorldExtraction {
   const raw: unknown = JSON.parse(content);
   if (!isRecord(raw) || !Array.isArray(raw.states) || !isRecord(raw.context) || !Array.isArray(raw.invariants) || !Array.isArray(raw.transitions)) throw new Error("INVALID_EXTRACTION: collections");
   for (const state of raw.states) {
-    if (!isRecord(state) || typeof state.id !== "string" || !state.id || state.initial !== undefined && typeof state.initial !== "boolean" || state.terminal !== undefined && typeof state.terminal !== "boolean") throw new Error("INVALID_EXTRACTION: state");
+    if (!isRecord(state) || typeof state.id !== "string" || !validId(state.id) || state.initial !== undefined && typeof state.initial !== "boolean" || state.terminal !== undefined && typeof state.terminal !== "boolean") throw new Error("INVALID_EXTRACTION: state");
   }
   for (const [name, value] of Object.entries(raw.context)) {
-    if (!/^[A-Za-z_][A-Za-z_0-9]*$/.test(name) || !isRecord(value) || value.type !== "integer" || [value.min, value.max, value.default].some((number) => number !== undefined && (typeof number !== "number" || !Number.isSafeInteger(number)))) throw new Error("INVALID_EXTRACTION: context");
+    if (!validId(name) || !isRecord(value) || value.type !== "integer" || value.unit !== undefined && typeof value.unit !== "string" || [value.min, value.max, value.default].some((number) => number !== undefined && (typeof number !== "number" || !Number.isSafeInteger(number)))) throw new Error("INVALID_EXTRACTION: context");
   }
   for (const invariant of raw.invariants) {
-    if (!isRecord(invariant) || typeof invariant.id !== "string" || !invariant.id || typeof invariant.predicate !== "string" || invariant.description !== undefined && typeof invariant.description !== "string") throw new Error("INVALID_EXTRACTION: invariant");
+    if (!isRecord(invariant) || typeof invariant.id !== "string" || !validId(invariant.id) || typeof invariant.predicate !== "string" || invariant.description !== undefined && typeof invariant.description !== "string") throw new Error("INVALID_EXTRACTION: invariant");
   }
   for (const transition of raw.transitions) {
-    if (!isRecord(transition) || typeof transition.id !== "string" || !transition.id || typeof transition.from !== "string" || typeof transition.to !== "string" || typeof transition.guard !== "string" || transition.directive !== undefined && transition.directive !== null && typeof transition.directive !== "string" || transition.effects !== undefined && (!Array.isArray(transition.effects) || !transition.effects.every((effect: unknown) => typeof effect === "string"))) throw new Error("INVALID_EXTRACTION: transition");
+    if (!isRecord(transition) || typeof transition.id !== "string" || !validId(transition.id) || typeof transition.from !== "string" || !validId(transition.from) || typeof transition.to !== "string" || !validId(transition.to) || typeof transition.guard !== "string" || transition.directive !== undefined && transition.directive !== null && typeof transition.directive !== "string" || transition.effects !== undefined && (!Array.isArray(transition.effects) || !transition.effects.every((effect: unknown) => typeof effect === "string"))) throw new Error("INVALID_EXTRACTION: transition");
   }
   return raw as unknown as SemanticWorldExtraction;
 }
+
+function validId(value: string): boolean { return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value); }
 
 function mergeWorldSpec(local: WorldSpec, extracted: SemanticWorldExtraction): WorldSpec {
   const chosenInitial = extracted.states.find((state) => state.initial)?.id ?? local.states.find((state) => state.initial)!.id;
   const states = new Map(local.states.map((state) => [state.id, state]));
   for (const state of extracted.states) states.set(state.id, { ...states.get(state.id), ...state });
   if (!states.has(chosenInitial)) states.set(chosenInitial, { id: chosenInitial });
-  const invariants = [...extracted.invariants, ...local.invariants].filter((item, index, all) => all.findIndex((other) => other.id === item.id || other.predicate === item.predicate) === index);
-  const transitions = [...extracted.transitions.map((transition) => ({ ...transition, directive: transition.directive ?? null, effects: transition.effects ?? [] })), ...local.transitions]
-    .filter((item, index, all) => all.findIndex((other) => other.id === item.id || other.from === item.from && other.to === item.to && other.directive === item.directive) === index);
+  const context = { ...local.context };
+  for (const [name, field] of Object.entries(extracted.context)) {
+    const existing = context[name];
+    if (existing && (existing.min !== undefined && (field.min === undefined || field.min < existing.min)
+      || existing.max !== undefined && (field.max === undefined || field.max > existing.max)
+      || existing.unit !== undefined && field.unit !== undefined && existing.unit !== field.unit
+      || field.default !== undefined && (existing.min !== undefined && field.default < existing.min || existing.max !== undefined && field.default > existing.max))) throw new Error(`CONFLICTING_BOUNDS: ${name}`);
+    context[name] = { ...existing, ...field };
+  }
+  const invariants = [...local.invariants];
+  for (const item of extracted.invariants) {
+    const existing = invariants.find((other) => other.id === item.id);
+    if (existing && existing.predicate !== item.predicate) throw new Error(`CONFLICTING_INVARIANT: ${item.id}`);
+    if (!existing && !invariants.some((other) => other.predicate === item.predicate)) invariants.push(item);
+  }
+  const transitions = [...local.transitions];
+  for (const item of extracted.transitions) {
+    const candidate = { ...item, directive: item.directive ?? null, effects: item.effects ?? [] };
+    const existing = transitions.find((other) => other.id === item.id || other.from === item.from && other.to === item.to && other.directive === item.directive);
+    if (existing) {
+      if (existing.from !== candidate.from || existing.to !== candidate.to || existing.guard !== candidate.guard || existing.directive !== candidate.directive || JSON.stringify(existing.effects) !== JSON.stringify(candidate.effects)) throw new Error(`CONFLICTING_TRANSITION: ${item.id}`);
+    } else transitions.push(candidate);
+  }
   return {
     ...local,
     states: [...states.values()].map((state) => ({ ...state, initial: state.id === chosenInitial })),
-    context: { ...local.context, ...extracted.context },
+    context,
     invariants,
     transitions,
   };
 }
 
-function resultFor(inputContent: string, worldCandidates: BoundaryCandidate[], fabricCandidates: BoundaryCandidate[], worldSpec: WorldSpec): BoundaryInferenceResult {
+function resultFor(inputContent: string, worldCandidates: BoundaryCandidate[], fabricCandidates: BoundaryCandidate[], worldSpec: WorldSpec, source: "heuristic" | "hybrid" = "heuristic"): BoundaryInferenceResult {
   const worldYaml = serializeWorldSpec(worldSpec);
   const validated = parseWorldSpec(worldYaml);
-  return { inputContent, worldCandidates, fabricCandidates, worldSpec: validated, worldYaml, portsDts: compileWorldSpec(validated).portsDts };
+  return { source, inputContent, worldCandidates, fabricCandidates, worldSpec: validated, worldYaml, portsDts: compileWorldSpec(validated).portsDts };
 }
 
 export function inferBoundary(inputContent: string, options?: BoundaryInferenceOptions & { provider?: undefined }): BoundaryInferenceResult;
@@ -157,7 +180,7 @@ export function inferBoundary(inputContent: string, options: BoundaryInferenceOp
   const worldSpec: WorldSpec = {
     version: "kadmos.world.v0", name, description: "Candidate draft; review before adoption", states, context,
     invariants: /must never be negative|nonnegative|non-negative|>=\s*0/i.test(inputContent)
-      ? [...amounts].map((field, index) => ({ id: `INV-${index + 1}-NONNEGATIVE`, description: `${field} cannot be negative`, predicate: `${field} >= 0` })) : [],
+      ? [...amounts].map((field, index) => ({ id: `INV_${index + 1}_NONNEGATIVE`, description: `${field} cannot be negative`, predicate: `${field} >= 0` })) : [],
     transitions: [
       ...explicitMoves.map(([from, to]) => ({ id: `MOVE_${from}_TO_${to}`, from, to, guard: true, directive: null, effects: [] })),
       ...directives.map((directive) => ({ id: directive, from: initial, to: initial, guard: true, directive, effects: [] })),
@@ -172,8 +195,9 @@ export function inferBoundary(inputContent: string, options: BoundaryInferenceOp
         messages: [{ role: "user", content: `Extract a SemanticWorldExtraction JSON object with states [{id, initial?, terminal?}], context {field: {type: "integer", min?, max?, default?}}, invariants [{id, description?, predicate}], and transitions [{id, from, to, guard, directive?, effects?}]. Use only declared context fields in expressions. Requirements:\n${inputContent}` }],
         responseFormat: "json_object",
         temperature: 0.1,
+        ...(options.model ? { model: options.model } : {}),
       });
-      return resultFor(inputContent, worldCandidates, fabricCandidates, mergeWorldSpec(worldSpec, parseExtraction(response.content)));
+      return resultFor(inputContent, worldCandidates, fabricCandidates, mergeWorldSpec(worldSpec, parseExtraction(response.content)), "hybrid");
     } catch {
       return baseline;
     }

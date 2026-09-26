@@ -6,6 +6,7 @@ export interface ChatMessage {
 }
 
 export interface LlmCompletionRequest {
+  readonly model?: string;
   readonly systemPrompt: string;
   readonly messages: readonly ChatMessage[];
   readonly temperature?: number;
@@ -111,7 +112,7 @@ export class OpenAiCompatibleProvider implements ILlmProvider {
     const raw = record(await postJson(`${this.baseUrl}/chat/completions`, {
       authorization: `Bearer ${requireKey(this.apiKey, "KADMOS_OPENAI_API_KEY or OPENAI_API_KEY")}`,
     }, {
-      model: this.defaultModel,
+      model: request.model ?? this.defaultModel,
       messages: [{ role: "system", content: request.systemPrompt }, ...request.messages],
       ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
       ...(request.maxTokens === undefined ? {} : { max_tokens: request.maxTokens }),
@@ -146,7 +147,7 @@ export class AnthropicProvider implements ILlmProvider {
       "x-api-key": requireKey(this.apiKey, "ANTHROPIC_API_KEY"),
       "anthropic-version": "2023-06-01",
     }, {
-      model: this.defaultModel,
+      model: request.model ?? this.defaultModel,
       system: request.systemPrompt,
       messages: request.messages.filter((message) => message.role !== "system"),
       max_tokens: request.maxTokens ?? 4096,
@@ -176,7 +177,7 @@ export class OllamaProvider implements ILlmProvider {
   async complete(request: LlmCompletionRequest): Promise<LlmCompletionResponse> {
     const started = Date.now();
     const raw = record(await postJson(`${this.host}/api/chat`, {}, {
-      model: this.defaultModel,
+      model: request.model ?? this.defaultModel,
       stream: false,
       messages: [{ role: "system", content: request.systemPrompt }, ...request.messages],
       options: {

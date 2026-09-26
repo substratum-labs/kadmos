@@ -11,12 +11,14 @@ import { pathToFileURL } from "node:url";
 import type { StepVerdict, TransitionStepRequest } from "../types/ports.js";
 import type { WorldSpec } from "../types/world.js";
 import { serializeWorldSpec } from "../boundary_inference.js";
+import { atomicWrite } from "../atomic_write.js";
 import { createWorldChecker } from "../world_checker.js";
 import { compileWorldSpec, parseWorldSpec } from "../world_compiler.js";
 import { synthesizeCegisPrompt } from "./cegis_prompt.js";
 import type { ChatMessage, ILlmProvider, LlmCompletionResponse } from "./provider.js";
 
 export interface AgentRunOptions {
+  readonly fabricGuidance?: readonly { readonly dilemmaId: string; readonly guidance: string }[];
   readonly prdPath: string;
   readonly worldSpecPath?: string;
   readonly worldSpec?: WorldSpec;
@@ -35,7 +37,7 @@ export interface AgentRunResult {
   readonly executionTrace: readonly string[];
 }
 
-export function buildInitialPrompt(prdContent: string, worldSpec: WorldSpec, portsDts: string): string {
+export function buildInitialPrompt(prdContent: string, worldSpec: WorldSpec, portsDts: string, fabricGuidance: readonly { readonly dilemmaId: string; readonly guidance: string }[] = []): string {
   return [
     "You are the Kadmos Fabric Builder. Generate a single self-contained TypeScript service class for this PRD.",
     "CONSTITUTIONAL RULES:",
@@ -47,6 +49,7 @@ export function buildInitialPrompt(prdContent: string, worldSpec: WorldSpec, por
     "PRD:", prdContent,
     "", "WORLD SPEC:", JSON.stringify(worldSpec, null, 2),
     "", "INVARIANTS:", ...worldSpec.invariants.map((rule) => `- ${rule.id}: ${rule.predicate}`),
+    ...(fabricGuidance.length ? ["", "LEGISLATIVE FABRIC POLICIES:", ...fabricGuidance.map((item) => `- ${item.dilemmaId}: ${item.guidance}`)] : []),
     "", "PORTS.D.TS:", portsDts,
     "", "Return exactly one ```json block containing {\"steps\":[{\"transitionId\":\"...\",\"proposedDirective\":\"...\",\"eventPayload\":{}}]} and one ```typescript block containing the complete service code. Export a service class with a run() method containing direct checker.step({...}) calls with literal request objects matching the JSON steps in order. The steps must describe the complete legal journey to a terminal state.",
   ].join("\n");
@@ -226,7 +229,7 @@ export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRun
   if (!options.worldSpec && !options.worldSpecPath) throw new Error("Either worldSpec or worldSpecPath is required");
   const worldSpec = options.worldSpec ?? parseWorldSpec(readFileSync(options.worldSpecPath!, "utf8"));
   const { portsDts } = compileWorldSpec(worldSpec);
-  const initialPrompt = buildInitialPrompt(prdContent, worldSpec, portsDts);
+  const initialPrompt = buildInitialPrompt(prdContent, worldSpec, portsDts, options.fabricGuidance);
   const messages: ChatMessage[] = [{ role: "user", content: initialPrompt }];
   const executionTrace: string[] = [];
   let totalTokensUsed = 0;
@@ -287,8 +290,8 @@ export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRun
     writeFileSync(generatedCodePath, candidate.code);
     writeFileSync(join(options.outDir, "journey.json"), `${JSON.stringify(candidate.steps, null, 2)}\n`);
     writeFileSync(join(options.outDir, "ports.d.ts"), portsDts);
-    writeFileSync(join(options.outDir, "evidence.json"), `${JSON.stringify({ worldSpec: { name: worldSpec.name }, finalState: checker.getState(), context: checker.getContext(), turnsExecuted: turn, totalTokensUsed, executionTrace, verificationTimestamp: new Date().toISOString() }, null, 2)}\n`);
-    if (options.worldSpec && !options.worldSpecPath) writeFileSync(join(options.outDir, "world.spec.yaml"), serializeWorldSpec(worldSpec));
+    writeFileSync(join(options.outDir, "evidence.json"), `${JSON.stringify({ worldSpec: { name: worldSpec.name }, fabricGuidance: options.fabricGuidance ?? [], finalState: checker.getState(), context: checker.getContext(), turnsExecuted: turn, totalTokensUsed, executionTrace, verificationTimestamp: new Date().toISOString() }, null, 2)}\n`);
+    if (options.worldSpec && !options.worldSpecPath) atomicWrite(join(options.outDir, "world.spec.yaml"), serializeWorldSpec(worldSpec));
     return { success: true, turnsExecuted: turn, totalTokensUsed, ...(hasCost ? { totalCostUsd } : {}), generatedCodePath, finalVerdict: "CONSTITUTIONAL_ACCEPTED", executionTrace };
   }
   return { success: false, turnsExecuted: maxTurns, totalTokensUsed, ...(hasCost ? { totalCostUsd } : {}), finalVerdict: lastFailure === "compilation" ? "COMPILATION_FAILED" : lastFailure === "malformed" ? "MALFORMED_OUTPUT" : "MAX_TURNS_EXCEEDED", executionTrace };

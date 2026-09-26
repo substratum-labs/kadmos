@@ -1,6 +1,6 @@
-import { readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { atomicWrite } from "./atomic_write.js";
 import { inferBoundary, serializeWorldSpec } from "./boundary_inference.js";
 import { formatDilemmas, synthesizeDilemmas } from "./dilemma_synthesis.js";
 import { runLegislationWizard } from "./tui/wizard.js";
@@ -28,7 +28,7 @@ export function runCli(args: readonly string[]): string | Promise<string> {
     }
     const prdPath = values.get("--prd");
     const worldSpecPath = values.get("--world");
-    if (!prdPath || booleanFlags.has("--accept-all-a") && booleanFlags.has("--accept-all-b")) usage();
+    if (!prdPath || booleanFlags.has("--accept-all-a") && booleanFlags.has("--accept-all-b") || worldSpecPath && ["--accept-all-a", "--accept-all-b", "--non-interactive"].some((flag) => booleanFlags.has(flag))) usage();
     const maxRepairTurns = values.has("--max-turns") ? Number(values.get("--max-turns")) : 3;
     if (!Number.isSafeInteger(maxRepairTurns) || maxRepairTurns < 1) usage();
     const prdContent = readFileSync(prdPath, "utf8");
@@ -45,7 +45,7 @@ export function runCli(args: readonly string[]): string | Promise<string> {
     return (async () => {
       const inference = await inferBoundary(prdContent, { name: basename(prdPath).replace(/\.[^.]+$/, ""), provider, ...(model ? { model } : {}) });
       const dilemmas = synthesizeDilemmas(inference);
-      const { worldSpec: legislatedSpec } = await runLegislationWizard({
+      const { worldSpec: legislatedSpec, decisions } = await runLegislationWizard({
         worldSpec: inference.worldSpec,
         dilemmas,
         acceptAllA: booleanFlags.has("--accept-all-a"),
@@ -53,10 +53,11 @@ export function runCli(args: readonly string[]): string | Promise<string> {
         nonInteractive: booleanFlags.has("--non-interactive"),
       });
       const worldOut = values.get("--world-out") ?? join(outDir, "world.spec.yaml");
-      mkdirSync(dirname(worldOut), { recursive: true });
-      writeFileSync(worldOut, serializeWorldSpec(legislatedSpec));
-      if (booleanFlags.has("--dry-run")) return buildInitialPrompt(prdContent, legislatedSpec, compileWorldSpec(legislatedSpec).portsDts);
-      const result = await runKadmosAgent({ prdPath, worldSpec: legislatedSpec, worldSpecPath: worldOut, outDir, provider, maxRepairTurns });
+      const fabricGuidance = decisions.filter((decision) => decision.choice === "B").map((decision) => ({ dilemmaId: decision.dilemmaId, guidance: dilemmas.find((dilemma) => dilemma.id === decision.dilemmaId)!.optionB.fabricGuidance }));
+      atomicWrite(worldOut, serializeWorldSpec(legislatedSpec));
+      atomicWrite(join(dirname(worldOut), "decisions.json"), `${JSON.stringify(decisions, null, 2)}\n`);
+      if (booleanFlags.has("--dry-run")) return buildInitialPrompt(prdContent, legislatedSpec, compileWorldSpec(legislatedSpec).portsDts, fabricGuidance);
+      const result = await runKadmosAgent({ prdPath, worldSpec: legislatedSpec, worldSpecPath: worldOut, outDir, provider, maxRepairTurns, fabricGuidance });
       return `${JSON.stringify(result, null, 2)}\n`;
     })();
   }
@@ -85,16 +86,9 @@ export function runCli(args: readonly string[]): string | Promise<string> {
       if (!interactive && !acceptAllA && !acceptAllB && !nonInteractive) return formatDilemmas(dilemmas);
       return runLegislationWizard({ worldSpec: inference.worldSpec, dilemmas, acceptAllA, acceptAllB, nonInteractive }).then(({ worldSpec, decisions }) => {
         const destination = out ?? join(dirname(file), "world.spec.yaml");
-        const temporary = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.tmp`);
         const yaml = serializeWorldSpec(worldSpec);
         parseWorldSpec(yaml);
-        try {
-          writeFileSync(temporary, yaml, { flag: "wx" });
-          renameSync(temporary, destination);
-        } catch (error) {
-          try { unlinkSync(temporary); } catch { /* no temporary file was created */ }
-          throw error;
-        }
+        atomicWrite(destination, yaml);
         return `Wrote ${destination} after ${decisions.length} legislative decision(s).\n`;
       });
     }

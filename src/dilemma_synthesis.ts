@@ -3,6 +3,8 @@ import { parseWorldSpec } from "./world_compiler.js";
 import type { WorldSpec } from "./types/world.js";
 
 export interface WorldPatch {
+  readonly removeTransitions?: readonly string[];
+  readonly refineTransitions?: readonly { readonly id: string; readonly guard: string | boolean; readonly to?: string; readonly effects?: readonly string[] }[];
   readonly states?: readonly { readonly id: string; readonly initial?: boolean; readonly terminal?: boolean }[];
   readonly context?: Readonly<Record<string, { readonly type: "integer"; readonly min?: number; readonly max?: number; readonly default?: number }>>;
   readonly invariants?: readonly { readonly id: string; readonly description?: string; readonly predicate: string }[];
@@ -44,7 +46,12 @@ export function applyLegislationPatch(baseSpec: WorldSpec, patch: WorldPatch): W
     }
     if (!invariants.some((item) => item.predicate === invariant.predicate)) invariants.push({ ...invariant });
   }
-  const transitions = baseSpec.transitions.map((item) => ({ ...item, effects: [...item.effects] }));
+  const removed = new Set(patch.removeTransitions ?? []);
+  const transitions = baseSpec.transitions.filter((item) => !removed.has(item.id)).map((item) => ({ ...item, effects: [...item.effects] }));
+  for (const refinement of patch.refineTransitions ?? []) {
+    const index = transitions.findIndex((item) => item.id === refinement.id);
+    if (index !== -1) transitions[index] = { ...transitions[index]!, guard: refinement.guard, to: refinement.to ?? transitions[index]!.to, effects: [...(refinement.effects ?? transitions[index]!.effects)] };
+  }
   for (const candidate of patch.transitions ?? []) {
     const transition = { ...candidate, directive: candidate.directive ?? null, effects: [...(candidate.effects ?? [])] };
     const sameId = transitions.find((item) => item.id === transition.id);
@@ -68,6 +75,8 @@ export function synthesizeDilemmas(result: BoundaryInferenceResult): Legislative
   const states = result.worldSpec.states;
   const initial = states.find((state) => state.initial)!.id;
   const paymentPending = states.some((state) => state.id === "PAYMENT_PENDING") ? "PAYMENT_PENDING" : initial;
+  const hazardous = result.worldSpec.transitions.filter((transition) => transition.directive && /PAYMENT|RPC|HTTP_REQUEST/.test(transition.directive));
+  const paymentDirectives = hazardous.filter((transition) => transition.directive && /PAYMENT/.test(transition.directive));
   if (/cancel/i.test(source) && /payment|capture|paid|charge/i.test(source)) {
     dilemmas.push({
       id: "DIL-001", title: "Concurrent cancellation and payment capture",
@@ -79,11 +88,21 @@ export function synthesizeDilemmas(result: BoundaryInferenceResult): Legislative
       optionA: {
         description: "Elevate to World law: add an atomic cancellation/capture guard and an arbitration state before either terminal outcome.",
         patch: {
-          states: [{ id: "ARBITRATION" }, ...(!states.some((state) => state.id === "CANCELLED") ? [{ id: "CANCELLED", terminal: true }] : [])],
-          context: { escrow_balance: result.worldSpec.context.escrow_balance ?? bounded },
+          states: [{ id: "ARBITRATION" }, { id: "REFUNDED", terminal: true }, { id: "SETTLED", terminal: true }],
+          context: {
+            escrow_balance: result.worldSpec.context.escrow_balance ?? bounded,
+            order_amount: result.worldSpec.context.order_amount ?? bounded,
+            settled_amount: result.worldSpec.context.settled_amount ?? bounded,
+            refunded_amount: result.worldSpec.context.refunded_amount ?? bounded,
+          },
+          removeTransitions: paymentDirectives.map((transition) => transition.id),
           transitions: [
-            { id: "ENTER_CANCELLATION_ARBITRATION", from: paymentPending, to: "ARBITRATION", guard: "escrow_balance == 0" },
-            { id: "REFUND_AFTER_ARBITRATION", from: "ARBITRATION", to: "CANCELLED", guard: true, directive: "DISPATCH_REFUND" },
+            { id: "RECORD_ORDER_AMOUNT", from: initial, to: initial, guard: "event.amount >= 0", effects: ["order_amount = event.amount"] },
+            { id: "ENTER_CANCELLATION_ARBITRATION", from: paymentPending, to: "ARBITRATION", guard: true },
+            { id: "CAPTURE_AFTER_ARBITRATION", from: "ARBITRATION", to: "SETTLED", guard: "escrow_balance == 0 && event.amount > 0 && event.amount <= order_amount", directive: "DISPATCH_PAYMENT", effects: ["settled_amount = event.amount"] },
+            { id: "SETTLE_AFTER_ARBITRATION", from: "ARBITRATION", to: "SETTLED", guard: "escrow_balance > 0 && settled_amount + escrow_balance <= order_amount", effects: ["settled_amount = settled_amount + escrow_balance", "escrow_balance = 0"] },
+            { id: "REFUND_AFTER_ARBITRATION", from: "ARBITRATION", to: "REFUNDED", guard: "escrow_balance > 0 && refunded_amount + escrow_balance <= order_amount", directive: "DISPATCH_REFUND", effects: ["refunded_amount = refunded_amount + escrow_balance", "escrow_balance = 0"] },
+            { id: "CLOSE_EMPTY_ARBITRATION", from: "ARBITRATION", to: "REFUNDED", guard: "escrow_balance == 0" },
           ],
         },
       },
@@ -101,9 +120,13 @@ export function synthesizeDilemmas(result: BoundaryInferenceResult): Legislative
       optionA: {
         description: "Elevate to World law: require a guarded idempotency key and explicit unknown-outcome state before retry.",
         patch: {
-          states: [{ id: "OUTCOME_UNKNOWN" }],
+          states: [{ id: "OUTCOME_UNKNOWN" }, { id: "FAILED", terminal: true }],
           context: { settlement_nonce: { type: "integer", min: 0, max: 1, default: 0 } },
-          transitions: [{ id: "RECORD_UNCERTAIN_OUTCOME", from: paymentPending, to: "OUTCOME_UNKNOWN", guard: "settlement_nonce == 0", effects: ["settlement_nonce = 1"] }],
+          refineTransitions: hazardous.map((transition) => ({ id: transition.id, guard: "settlement_nonce == 0", to: "OUTCOME_UNKNOWN", effects: ["settlement_nonce = 1"] })),
+          transitions: [
+            { id: "RECORD_UNCERTAIN_OUTCOME", from: paymentPending, to: "OUTCOME_UNKNOWN", guard: "settlement_nonce == 0", effects: ["settlement_nonce = 1"] },
+            { id: "RESOLVE_UNKNOWN_AS_FAILED", from: "OUTCOME_UNKNOWN", to: "FAILED", guard: true },
+          ],
         },
       },
       optionB: { description: "Leave in Fabric policy: retry with provider idempotency and asynchronous reconciliation.", fabricGuidance: "Pass the same provider idempotency key on every retry and reconcile uncertain outcomes before replay." },
@@ -125,7 +148,13 @@ export function synthesizeDilemmas(result: BoundaryInferenceResult): Legislative
             settled_amount: result.worldSpec.context.settled_amount ?? bounded,
             order_amount: result.worldSpec.context.order_amount ?? bounded,
           },
+          states: [{ id: "REFUNDED", terminal: true }, { id: "SETTLED", terminal: true }],
           invariants: [{ id: "INV-REFUND-CONSERVATION", description: "Refunded and settled value cannot exceed the order amount", predicate: "refunded_amount + settled_amount <= order_amount" }],
+          transitions: [
+            { id: "RECORD_ORDER_AMOUNT", from: initial, to: initial, guard: "event.amount >= 0", effects: ["order_amount = event.amount"] },
+            { id: "RECORD_REFUND_AMOUNT", from: initial, to: "REFUNDED", guard: "event.amount > 0", effects: ["refunded_amount = refunded_amount + event.amount"] },
+            { id: "RECORD_SETTLED_AMOUNT", from: initial, to: "SETTLED", guard: "event.amount > 0", effects: ["settled_amount = settled_amount + event.amount"] },
+          ],
         },
       },
       optionB: { description: "Leave in Fabric policy: deduplicate webhooks and reconcile with an asynchronous retry worker.", fabricGuidance: "Compute refunds in application code, deduplicate confirmations, and reconcile totals with provider records." },

@@ -20,6 +20,11 @@ export interface LegislationResult {
 
 type TtyInput = NodeJS.ReadableStream & { isTTY?: boolean; isRaw?: boolean; setRawMode?: (value: boolean) => void };
 
+function ttyText(value: string): string {
+  return value.replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, "")
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ");
+}
+
 export async function runLegislationWizard(options: LegislationWizardOptions): Promise<LegislationResult> {
   const { dilemmas } = options;
   if (!dilemmas.length) return { worldSpec: options.worldSpec, decisions: [] };
@@ -42,18 +47,16 @@ export async function runLegislationWizard(options: LegislationWizardOptions): P
   let selected: "A" | "B" = "A";
   const render = () => {
     const dilemma = dilemmas[index]!;
-    output.write(`\x1b[2J\x1b[H\x1b[36mKadmos Legislation\x1b[0m  ${options.worldSpec.name}  (${index + 1}/${dilemmas.length})\n`);
-    output.write(`States: ${worldSpec.states.map((state) => state.id).join(", ")}\n\n\x1b[33m${dilemma.id}: ${dilemma.title}\x1b[0m\n`);
-    for (const [step, trace] of dilemma.worstCaseTrace.entries()) output.write(`  ${step + 1}. ${trace}\n`);
-    output.write(`\n${selected === "A" ? "\x1b[32m❯" : " "} [1] Option A — World law: ${dilemma.optionA.description}${selected === "A" ? "\x1b[0m" : ""}\n`);
-    output.write(`${selected === "B" ? "\x1b[32m❯" : " "} [2] Option B — Fabric policy: ${dilemma.optionB.description}${selected === "B" ? "\x1b[0m" : ""}\n`);
+    output.write(`\x1b[2J\x1b[H\x1b[36mKadmos Legislation\x1b[0m  ${ttyText(options.worldSpec.name)}  (${index + 1}/${dilemmas.length})\n`);
+    output.write(`States: ${worldSpec.states.map((state) => ttyText(state.id)).join(", ")}\n\n\x1b[33m${ttyText(dilemma.id)}: ${ttyText(dilemma.title)}\x1b[0m\n`);
+    for (const [step, trace] of dilemma.worstCaseTrace.entries()) output.write(`  ${step + 1}. ${ttyText(trace)}\n`);
+    output.write(`\n${selected === "A" ? "\x1b[32m❯" : " "} [1] Option A — World law: ${ttyText(dilemma.optionA.description)}${selected === "A" ? "\x1b[0m" : ""}\n`);
+    output.write(`${selected === "B" ? "\x1b[32m❯" : " "} [2] Option B — Fabric policy: ${ttyText(dilemma.optionB.description)}${selected === "B" ? "\x1b[0m" : ""}\n`);
     output.write("\n↑/↓ or 1/2 or A/B to select · Enter to confirm · q to abort\n");
   };
 
   let cleanup = () => {};
   try {
-    const priorDataListeners = new Set(input.listeners("data"));
-    const priorNewListenerHooks = new Set(input.listeners("newListener"));
     emitKeypressEvents(input);
     input.setRawMode(true);
     return await new Promise<LegislationResult>((resolve, reject) => {
@@ -61,38 +64,33 @@ export async function runLegislationWizard(options: LegislationWizardOptions): P
       const onEnd = () => fail(new Error("Legislation wizard aborted: input closed."));
       const onError = (error: Error) => fail(error);
       const onKeypress = (character: string | undefined, key: { name?: string; ctrl?: boolean } = {}) => {
-        if (character === "q" || key.ctrl && key.name === "c") { fail(new Error("Legislation wizard aborted.")); return; }
-        if (key.name === "up" || key.name === "down") selected = selected === "A" ? "B" : "A";
-        else if (character === "1" || character?.toLowerCase() === "a") selected = "A";
-        else if (character === "2" || character?.toLowerCase() === "b") selected = "B";
-        else if (key.name === "return" || key.name === "enter") {
-          try {
+        try {
+          if (character === "q" || key.ctrl && key.name === "c") { fail(new Error("Legislation wizard aborted.")); return; }
+          if (key.name === "up" || key.name === "down") selected = selected === "A" ? "B" : "A";
+          else if (character === "1" || character?.toLowerCase() === "a") selected = "A";
+          else if (character === "2" || character?.toLowerCase() === "b") selected = "B";
+          else if (key.name === "return" || key.name === "enter") {
             const dilemma = dilemmas[index]!;
             if (selected === "A") worldSpec = applyLegislationPatch(worldSpec, dilemma.optionA.patch);
             decisions.push({ dilemmaId: dilemma.id, choice: selected });
             index++;
             if (index === dilemmas.length) { resolve({ worldSpec, decisions }); return; }
             selected = "A";
-          } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); return; }
-        }
-        render();
+          }
+          render();
+        } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
       };
       input.on("keypress", onKeypress);
       input.on("end", onEnd);
       input.on("error", onError);
-      const addedDataListeners = input.listeners("data").filter((listener) => !priorDataListeners.has(listener));
-      const addedNewListenerHooks = input.listeners("newListener").filter((listener) => !priorNewListenerHooks.has(listener));
       cleanup = () => {
         input.off("keypress", onKeypress);
         input.off("end", onEnd);
         input.off("error", onError);
-        for (const listener of addedDataListeners) input.off("data", listener);
-        for (const listener of addedNewListenerHooks) input.off("newListener", listener);
       };
       render();
     });
   } finally {
-    cleanup();
-    input.setRawMode(originalRaw);
+    try { cleanup(); } finally { input.setRawMode(originalRaw); }
   }
 }
