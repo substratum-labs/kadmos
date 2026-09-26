@@ -88,6 +88,38 @@ test("forged child stdout cannot stand in for checker.step calls", async () => {
   } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });
 
+test("direct writes to the step channel cannot stand in for checker.step calls", async () => {
+  const f = fixture();
+  try {
+    const source = `export class OrderService { run() {
+      const fs = this.constructor.constructor('return process')().getBuiltinModule('node:fs');
+      const dir = new URL('.', import.meta.url).pathname;
+      const pause = new Int32Array(new SharedArrayBuffer(4));
+      for (const [id, request] of ${JSON.stringify(goodSteps)}.entries()) {
+        fs.writeFileSync(dir + 'rpc/req_' + id + '.json', JSON.stringify(request));
+        while (!fs.existsSync(dir + 'rpc/res_' + id + '.json')) Atomics.wait(pause, 0, 0, 1);
+      }
+    } }`;
+    const result = await runKadmosAgent({ prdPath: f.prdPath, worldSpecPath: worldPath, outDir: f.outDir, provider: new MockDeterministicProvider([candidate(goodSteps, source)]), maxRepairTurns: 1 });
+    assert.equal(result.success, false);
+    assert.equal(existsSync(f.outDir), false);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
+test("unauthenticated pipe requests cannot stand in for checker.step calls", async () => {
+  const f = fixture();
+  try {
+    const source = `export class OrderService { run() {
+      const fs = this.constructor.constructor('return process')().getBuiltinModule('node:fs');
+      for (const request of ${JSON.stringify(goodSteps)}) fs.writeSync(3, JSON.stringify({ request }) + '\\n');
+    } }`;
+    const result = await runKadmosAgent({ prdPath: f.prdPath, worldSpecPath: worldPath, outDir: f.outDir, provider: new MockDeterministicProvider([candidate(goodSteps, source)]), maxRepairTurns: 1 });
+    assert.equal(result.success, false);
+    assert.match(result.executionTrace[0]!, /Unauthenticated step request/);
+    assert.equal(existsSync(f.outDir), false);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
 test("candidate process exit cannot terminate the runner or admit code", async () => {
   const f = fixture();
   try {

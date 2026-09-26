@@ -1,9 +1,11 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
+import type { Readable, Writable } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
 import { pathToFileURL } from "node:url";
 import type { StepVerdict, TransitionStepRequest } from "../types/ports.js";
@@ -85,8 +87,6 @@ function compileCandidate(code: string, portsDts: string): { diagnostics: string
 
 async function validateServiceClass(javascript: string, worldSpec: WorldSpec, steps: readonly TransitionStepRequest[], turn: number, executionTrace: string[]) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "kadmos-candidate-")));
-  const rpcDir = join(directory, "rpc");
-  mkdirSync(rpcDir);
   const checker = createWorldChecker(worldSpec);
   const observedSteps: TransitionStepRequest[] = [];
   let firstRefusal: StepVerdict | undefined;
@@ -94,27 +94,37 @@ async function validateServiceClass(javascript: string, worldSpec: WorldSpec, st
     const fabricPath = join(directory, "fabric.js");
     writeFileSync(join(directory, "package.json"), '{"type":"module"}');
     writeFileSync(fabricPath, javascript);
+    const secretAuthToken = randomBytes(32).toString("hex");
     const script = `
-      import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-      const rpcDir = ${JSON.stringify(rpcDir)};
-      const pause = new Int32Array(new SharedArrayBuffer(4));
+      import { readSync, writeSync } from "node:fs";
+      let buffered = Buffer.alloc(0);
+      const readLine = () => {
+        for (;;) {
+          const end = buffered.indexOf(10);
+          if (end !== -1) {
+            const line = buffered.subarray(0, end).toString("utf8");
+            buffered = buffered.subarray(end + 1);
+            return line;
+          }
+          const chunk = Buffer.allocUnsafe(4096);
+          const count = readSync(4, chunk, 0, chunk.length, null);
+          if (count === 0) throw new Error("Parent step channel closed");
+          buffered = Buffer.concat([buffered, chunk.subarray(0, count)]);
+          if (buffered.length > 1048576) throw new Error("Step channel message too large");
+        }
+      };
+      const { auth: secretAuthToken } = JSON.parse(readLine());
       const module = await import(${JSON.stringify(pathToFileURL(fabricPath).href)});
       const Service = Object.values(module).find(value => typeof value === "function" && /^class\\s/.test(Function.prototype.toString.call(value)));
       if (!Service) throw new Error("Candidate must export a service class");
-      let id = 0;
       let state = ${JSON.stringify(checker.getState())};
       let context = ${JSON.stringify(checker.getContext())};
       const port = {
         getState: () => state,
         getContext: () => context,
         step: request => {
-          const current = id++;
-          const requestPath = rpcDir + "/req_" + current + ".json";
-          writeFileSync(requestPath + ".tmp", JSON.stringify(request));
-          renameSync(requestPath + ".tmp", requestPath);
-          const responsePath = rpcDir + "/res_" + current + ".json";
-          while (!existsSync(responsePath)) Atomics.wait(pause, 0, 0, 1);
-          const verdict = JSON.parse(readFileSync(responsePath, "utf8"));
+          writeSync(3, JSON.stringify({ auth: secretAuthToken, request }) + "\\n");
+          const verdict = JSON.parse(readLine());
           state = verdict.currentState;
           context = verdict.context;
           return verdict;
@@ -125,40 +135,57 @@ async function validateServiceClass(javascript: string, worldSpec: WorldSpec, st
       if (typeof service.run !== "function") throw new Error("Candidate service must implement run()");
       await service.run();
     `;
-    const child = spawn(process.execPath, ["--permission", `--allow-fs-read=${directory}`, `--allow-fs-write=${rpcDir}`, "--input-type=module", "--eval", script], {
-      stdio: ["ignore", "ignore", "pipe"], timeout: 2000, killSignal: "SIGKILL",
+    const child = spawn(process.execPath, ["--permission", `--allow-fs-read=${directory}`, "--input-type=module", "--eval", script], {
+      stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"], timeout: 2000, killSignal: "SIGKILL",
     });
     let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-8192); });
-    let nextId = 0;
+    child.stderr!.setEncoding("utf8");
+    child.stderr!.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-8192); });
     let rpcError: Error | undefined;
-    const poll = setInterval(() => {
+    let pending = "";
+    const requestPipe = child.stdio[3] as Readable;
+    const responsePipe = child.stdio[4] as Writable;
+    const failRpc = (error: Error) => {
+      if (!rpcError) rpcError = error;
+      child.kill();
+    };
+    requestPipe.on("error", failRpc);
+    responsePipe.on("error", failRpc);
+    requestPipe.setEncoding("utf8");
+    requestPipe.on("data", (chunk: string) => {
       if (rpcError) return;
-      const requestPath = join(rpcDir, `req_${nextId}.json`);
-      if (!existsSync(requestPath)) return;
-      try {
-        const request = JSON.parse(readFileSync(requestPath, "utf8")) as TransitionStepRequest;
-        observedSteps.push(request);
-        const verdict = checker.step(request);
-        executionTrace.push(`Turn ${turn}: ${request.transitionId}: ${verdict.allowed ? "ACCEPTED" : `DENIED ${verdict.violation?.code ?? "UNKNOWN"}`}`);
-        if (!verdict.allowed && !firstRefusal) firstRefusal = verdict;
-        const responsePath = join(rpcDir, `res_${nextId}.json`);
-        writeFileSync(`${responsePath}.tmp`, JSON.stringify(verdict));
-        renameSync(`${responsePath}.tmp`, responsePath);
-        nextId++;
-      } catch (error) {
-        rpcError = error instanceof Error ? error : new Error(String(error));
-        child.kill();
+      pending += chunk;
+      if (pending.length > 1048576) {
+        failRpc(new Error("Step request too large"));
+        return;
       }
-    }, 2);
+      let end: number;
+      while ((end = pending.indexOf("\n")) !== -1 && !rpcError) {
+        const line = pending.slice(0, end);
+        pending = pending.slice(end + 1);
+        try {
+          const message = JSON.parse(line) as { auth?: unknown; request?: TransitionStepRequest };
+          if (message?.auth !== secretAuthToken) throw new Error("Unauthenticated step request");
+          const request = message.request;
+          if (!request || typeof request !== "object") throw new Error("Invalid step request");
+          observedSteps.push(request);
+          const verdict = checker.step(request);
+          executionTrace.push(`Turn ${turn}: ${request.transitionId}: ${verdict.allowed ? "ACCEPTED" : `DENIED ${verdict.violation?.code ?? "UNKNOWN"}`}`);
+          if (!verdict.allowed && !firstRefusal) firstRefusal = verdict;
+          responsePipe.write(`${JSON.stringify(verdict)}\n`);
+        } catch (error) {
+          failRpc(error instanceof Error ? error : new Error(String(error)));
+        }
+      }
+    });
+    responsePipe.write(`${JSON.stringify({ auth: secretAuthToken })}\n`);
     let exitCode: number | null;
     try {
       exitCode = await new Promise<number | null>((resolve, reject) => {
         child.once("error", reject);
         child.once("close", resolve);
       });
-    } finally { clearInterval(poll); }
+    } finally { responsePipe.end(); }
     if (rpcError) throw rpcError;
     if (!observedSteps.length || !isDeepStrictEqual(observedSteps, steps)) throw new Error(`Service checker.step calls must match the JSON journey exactly${stderr.trim() ? `: ${stderr.trim()}` : ""}`);
     if (exitCode !== 0) throw new Error(stderr.trim() || "Candidate execution failed");
