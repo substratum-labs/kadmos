@@ -10,6 +10,7 @@ import { isDeepStrictEqual } from "node:util";
 import { pathToFileURL } from "node:url";
 import type { StepVerdict, TransitionStepRequest } from "../types/ports.js";
 import type { WorldSpec } from "../types/world.js";
+import { serializeWorldSpec } from "../boundary_inference.js";
 import { createWorldChecker } from "../world_checker.js";
 import { compileWorldSpec, parseWorldSpec } from "../world_compiler.js";
 import { synthesizeCegisPrompt } from "./cegis_prompt.js";
@@ -17,7 +18,8 @@ import type { ChatMessage, ILlmProvider, LlmCompletionResponse } from "./provide
 
 export interface AgentRunOptions {
   readonly prdPath: string;
-  readonly worldSpecPath: string;
+  readonly worldSpecPath?: string;
+  readonly worldSpec?: WorldSpec;
   readonly outDir: string;
   readonly provider: ILlmProvider;
   readonly maxRepairTurns?: number;
@@ -221,7 +223,8 @@ export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRun
   const maxTurns = options.maxRepairTurns ?? 3;
   if (!Number.isSafeInteger(maxTurns) || maxTurns < 1) throw new Error("maxRepairTurns must be a positive integer");
   const prdContent = readFileSync(options.prdPath, "utf8");
-  const worldSpec = parseWorldSpec(readFileSync(options.worldSpecPath, "utf8"));
+  if (!options.worldSpec && !options.worldSpecPath) throw new Error("Either worldSpec or worldSpecPath is required");
+  const worldSpec = options.worldSpec ?? parseWorldSpec(readFileSync(options.worldSpecPath!, "utf8"));
   const { portsDts } = compileWorldSpec(worldSpec);
   const initialPrompt = buildInitialPrompt(prdContent, worldSpec, portsDts);
   const messages: ChatMessage[] = [{ role: "user", content: initialPrompt }];
@@ -285,6 +288,7 @@ export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRun
     writeFileSync(join(options.outDir, "journey.json"), `${JSON.stringify(candidate.steps, null, 2)}\n`);
     writeFileSync(join(options.outDir, "ports.d.ts"), portsDts);
     writeFileSync(join(options.outDir, "evidence.json"), `${JSON.stringify({ worldSpec: { name: worldSpec.name }, finalState: checker.getState(), context: checker.getContext(), turnsExecuted: turn, totalTokensUsed, executionTrace, verificationTimestamp: new Date().toISOString() }, null, 2)}\n`);
+    if (options.worldSpec && !options.worldSpecPath) writeFileSync(join(options.outDir, "world.spec.yaml"), serializeWorldSpec(worldSpec));
     return { success: true, turnsExecuted: turn, totalTokensUsed, ...(hasCost ? { totalCostUsd } : {}), generatedCodePath, finalVerdict: "CONSTITUTIONAL_ACCEPTED", executionTrace };
   }
   return { success: false, turnsExecuted: maxTurns, totalTokensUsed, ...(hasCost ? { totalCostUsd } : {}), finalVerdict: lastFailure === "compilation" ? "COMPILATION_FAILED" : lastFailure === "malformed" ? "MALFORMED_OUTPUT" : "MAX_TURNS_EXCEEDED", executionTrace };

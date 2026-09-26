@@ -9,31 +9,56 @@ import { buildInitialPrompt, runKadmosAgent } from "./agent/runner.js";
 import { createLlmProvider } from "./agent/provider.js";
 
 function usage(): never {
-  throw new Error("Usage: kadmos infer <file> | legislate <file> [--interactive|--accept-all-a|--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> | run --prd <file> --world <file> [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--dry-run]");
+  throw new Error("Usage: kadmos infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
 }
 
 export function runCli(args: readonly string[]): string | Promise<string> {
   if (args[0] === "run") {
     const values = new Map<string, string>();
-    let dryRun = false;
+    const booleanFlags = new Set<string>();
     for (let i = 1; i < args.length; i++) {
       const flag = args[i]!;
-      if (flag === "--dry-run") { if (dryRun) usage(); dryRun = true; continue; }
-      if (!["--prd", "--world", "--out", "--model", "--provider", "--max-turns"].includes(flag) || values.has(flag) || !args[i + 1] || args[i + 1]!.startsWith("--")) usage();
+      if (["--dry-run", "--accept-all-a", "--accept-all-b", "--non-interactive"].includes(flag)) {
+        if (booleanFlags.has(flag)) usage();
+        booleanFlags.add(flag);
+        continue;
+      }
+      if (!["--prd", "--world", "--world-out", "--out", "--model", "--provider", "--max-turns"].includes(flag) || values.has(flag) || !args[i + 1] || args[i + 1]!.startsWith("--")) usage();
       values.set(flag, args[++i]!);
     }
     const prdPath = values.get("--prd");
     const worldSpecPath = values.get("--world");
-    if (!prdPath || !worldSpecPath) usage();
+    if (!prdPath || booleanFlags.has("--accept-all-a") && booleanFlags.has("--accept-all-b")) usage();
     const maxRepairTurns = values.has("--max-turns") ? Number(values.get("--max-turns")) : 3;
     if (!Number.isSafeInteger(maxRepairTurns) || maxRepairTurns < 1) usage();
-    const worldSpec = parseWorldSpec(readFileSync(worldSpecPath, "utf8"));
     const prdContent = readFileSync(prdPath, "utf8");
-    if (dryRun) return buildInitialPrompt(prdContent, worldSpec, compileWorldSpec(worldSpec).portsDts);
     const model = values.get("--model") ?? process.env.KADMOS_MODEL;
+    const outDir = values.get("--out") ?? "./dist/fabric";
+    if (worldSpecPath) {
+      const worldSpec = parseWorldSpec(readFileSync(worldSpecPath, "utf8"));
+      if (booleanFlags.has("--dry-run")) return buildInitialPrompt(prdContent, worldSpec, compileWorldSpec(worldSpec).portsDts);
+      const provider = createLlmProvider(values.get("--provider") ?? "openai", model ? { model } : {});
+      return runKadmosAgent({ prdPath, worldSpecPath, outDir, provider, maxRepairTurns })
+        .then((result) => `${JSON.stringify(result, null, 2)}\n`);
+    }
     const provider = createLlmProvider(values.get("--provider") ?? "openai", model ? { model } : {});
-    return runKadmosAgent({ prdPath, worldSpecPath, outDir: values.get("--out") ?? "./dist/fabric", provider, maxRepairTurns })
-      .then((result) => `${JSON.stringify(result, null, 2)}\n`);
+    return (async () => {
+      const inference = await inferBoundary(prdContent, { name: basename(prdPath).replace(/\.[^.]+$/, ""), provider, ...(model ? { model } : {}) });
+      const dilemmas = synthesizeDilemmas(inference);
+      const { worldSpec: legislatedSpec } = await runLegislationWizard({
+        worldSpec: inference.worldSpec,
+        dilemmas,
+        acceptAllA: booleanFlags.has("--accept-all-a"),
+        acceptAllB: booleanFlags.has("--accept-all-b"),
+        nonInteractive: booleanFlags.has("--non-interactive"),
+      });
+      const worldOut = values.get("--world-out") ?? join(outDir, "world.spec.yaml");
+      mkdirSync(dirname(worldOut), { recursive: true });
+      writeFileSync(worldOut, serializeWorldSpec(legislatedSpec));
+      if (booleanFlags.has("--dry-run")) return buildInitialPrompt(prdContent, legislatedSpec, compileWorldSpec(legislatedSpec).portsDts);
+      const result = await runKadmosAgent({ prdPath, worldSpec: legislatedSpec, worldSpecPath: worldOut, outDir, provider, maxRepairTurns });
+      return `${JSON.stringify(result, null, 2)}\n`;
+    })();
   }
   const [command, file] = args;
   if (!file) usage();
