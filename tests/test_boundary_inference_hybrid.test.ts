@@ -4,6 +4,9 @@ import { inferBoundary } from "../src/boundary_inference.js";
 import { MockDeterministicProvider } from "../src/agent/provider.js";
 import type { LlmCompletionRequest } from "../src/agent/provider.js";
 import { parseWorldSpec } from "../src/world_compiler.js";
+import { synthesizeDilemmas } from "../src/dilemma_synthesis.js";
+import { createWorldChecker } from "../src/world_checker.js";
+import { runLegislationWizard } from "../src/tui/wizard.js";
 
 const prd = "Order status moves from CREATED to PAID. Escrow balance must never be negative. Payment capture uses a gateway; retry on timeout.";
 
@@ -18,18 +21,18 @@ test("omitted provider retains the synchronous heuristic baseline", () => {
 
 test("valid semantic extraction adds formal states, context, invariants, and transitions", async () => {
   const extraction = {
-    states: [{ id: "CREATED", initial: true }, { id: "PAID", terminal: true }],
+    states: [{ id: "CREATED", initial: true }, { id: "PAID" }, { id: "SETTLED", terminal: true }],
     context: { captured: { type: "integer", min: 0, max: 1000, default: 0 } },
     invariants: [{ id: "INV_CAPTURE", predicate: "captured <= escrow_balance", description: "Capture cannot exceed escrow" }],
-    transitions: [{ id: "CAPTURE", from: "CREATED", to: "PAID", guard: "escrow_balance >= 1", directive: "DISPATCH_PAYMENT", effects: ["captured = escrow_balance"] }],
+    transitions: [{ id: "CAPTURE", from: "PAID", to: "SETTLED", guard: "escrow_balance >= 1", directive: "DISPATCH_PAYMENT", effects: ["captured = escrow_balance"] }],
   };
   const result = await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(extraction)]) });
-  assert.ok(result.worldSpec.states.some((state) => state.id === "PAID" && state.terminal));
+  assert.ok(result.worldSpec.states.some((state) => state.id === "SETTLED" && state.terminal));
   assert.equal(result.source, "hybrid");
   assert.equal(result.worldSpec.context.captured?.max, 1000);
   assert.ok(result.worldSpec.invariants.some((invariant) => invariant.predicate === "captured <= escrow_balance"));
   assert.ok(result.worldSpec.transitions.some((transition) => transition.id === "CAPTURE" && transition.effects.includes("captured = escrow_balance")));
-  assert.match(result.portsDts, /"PAID"/);
+  assert.match(result.portsDts, /"SETTLED"/);
   assert.deepEqual(parseWorldSpec(result.worldYaml), result.worldSpec);
 });
 
@@ -91,4 +94,49 @@ test("hybrid extraction rejects clobbered invariant, bounds, transitions, and co
     { ...empty, states: [{ id: "PAID\u001b[2J" }] },
   ];
   for (const attack of attacks) assert.deepEqual(await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(attack)]) }), baseline);
+});
+
+test("omitted directive cannot mint escrow on an existing move or authorize refund after Option A", async () => {
+  const input = `${prd} Cancellation and refund may race with payment capture.`;
+  const baseline = inferBoundary(input);
+  const attack = {
+    states: [], context: {}, invariants: [],
+    transitions: [{ id: "MINT_ESCROW", from: "CREATED", to: "PAID", guard: "true", effects: ["escrow_balance = 100"] }],
+  };
+  const result = await inferBoundary(input, { provider: new MockDeterministicProvider([JSON.stringify(attack)]) });
+  assert.deepEqual(result, baseline);
+  const dilemmas = synthesizeDilemmas(result);
+  assert.ok(dilemmas.some((item) => item.id === "DIL-001"));
+  const legislated = await runLegislationWizard({ worldSpec: result.worldSpec, dilemmas, acceptAllA: true, nonInteractive: true });
+  const checker = createWorldChecker(legislated.worldSpec);
+  assert.equal(checker.getContext().escrow_balance, 0);
+  assert.equal(checker.step({ transitionId: "ENTER_CANCELLATION_ARBITRATION" }).allowed, true);
+  assert.equal(checker.step({ transitionId: "REFUND_AFTER_ARBITRATION", proposedDirective: "DISPATCH_REFUND" }).allowed, false);
+});
+
+test("a different directive cannot add effects to an existing state edge", async () => {
+  const baseline = inferBoundary(prd);
+  const attack = {
+    states: [], context: {}, invariants: [],
+    transitions: [{ id: "MINT_WITH_DIRECTIVE", from: "CREATED", to: "PAID", guard: "true", directive: "DISPATCH_PAYMENT", effects: ["escrow_balance = 100"] }],
+  };
+  assert.deepEqual(await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(attack)]) }), baseline);
+});
+
+test("semantic extraction cannot replace the opening escrow balance", async () => {
+  const baseline = inferBoundary(prd);
+  const attack = { states: [], context: { escrow_balance: { type: "integer", unit: "cents", min: 0, max: 1_000_000_000, default: 1_000_000_000 } }, invariants: [], transitions: [] };
+  const result = await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(attack)]) });
+  assert.deepEqual(result, baseline);
+  assert.equal(result.worldSpec.context.escrow_balance?.default, 0);
+  assert.equal(createWorldChecker(result.worldSpec).getContext().escrow_balance, 0);
+});
+
+test("semantic extraction cannot assign a new initial state", async () => {
+  const baseline = inferBoundary(prd);
+  const attack = { states: [{ id: "HIJACKED", initial: true }], context: {}, invariants: [], transitions: [] };
+  const result = await inferBoundary(prd, { provider: new MockDeterministicProvider([JSON.stringify(attack)]) });
+  assert.deepEqual(result, baseline);
+  assert.equal(result.worldSpec.states.find((state) => state.initial)?.id, "CREATED");
+  assert.equal(createWorldChecker(result.worldSpec).getState(), "CREATED");
 });
