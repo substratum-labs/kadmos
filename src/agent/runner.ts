@@ -1,11 +1,12 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import type { TransitionStepRequest } from "../types/ports.js";
+import { pathToFileURL } from "node:url";
+import type { StepVerdict, TransitionStepRequest } from "../types/ports.js";
 import type { WorldSpec } from "../types/world.js";
 import { createWorldChecker } from "../world_checker.js";
 import { compileWorldSpec, parseWorldSpec } from "../world_compiler.js";
@@ -68,6 +69,7 @@ function compileCandidate(code: string, portsDts: string): { diagnostics: string
   try {
     const codePath = join(directory, "fabric.ts");
     writeFileSync(codePath, code);
+    writeFileSync(join(directory, "package.json"), '{"type":"module"}');
     const portsPath = join(directory, "ports.d.ts");
     writeFileSync(portsPath, portsDts);
     const require = createRequire(import.meta.url);
@@ -81,32 +83,89 @@ function compileCandidate(code: string, portsDts: string): { diagnostics: string
   }
 }
 
-function validateServiceClass(javascript: string, worldSpec: WorldSpec, steps: readonly TransitionStepRequest[]): void {
-  const checkerUrl = new URL("../world_checker.js", import.meta.url).href;
-  const script = `
-    import { readFileSync } from "node:fs";
-    import { Script } from "node:vm";
-    import { createWorldChecker } from ${JSON.stringify(checkerUrl)};
-    const { javascript, worldSpec } = JSON.parse(readFileSync(0, "utf8"));
-    const exports = {};
-    new Script(javascript).runInNewContext({ exports }, { timeout: 1000 });
-    const Service = Object.values(exports).find(value => typeof value === "function" && /^class\\s/.test(Function.prototype.toString.call(value)));
-    if (!Service) throw new Error("Candidate must export a service class");
-    const checker = createWorldChecker(worldSpec);
-    const observed = [];
-    const port = { getState: () => checker.getState(), getContext: () => checker.getContext(), step: request => { observed.push(request); return checker.step(request); }, reset: () => { throw new Error("Candidate cannot reset checker"); } };
-    const service = new Service(port);
-    if (typeof service.run !== "function") throw new Error("Candidate service must implement run()");
-    await service.run();
-    process.stdout.write(JSON.stringify({ observed }) + "\\n");
-  `;
-  const child = spawnSync(process.execPath, ["--permission", `--allow-fs-read=${dirname(new URL(checkerUrl).pathname)}`, "--input-type=module", "--eval", script], {
-    input: JSON.stringify({ javascript, worldSpec }), encoding: "utf8", timeout: 2000, maxBuffer: 1024 * 1024,
-  });
-  if (child.status !== 0) throw new Error((child.stderr || child.error?.message || "Candidate execution failed").trim());
-  let observed: unknown;
-  try { observed = JSON.parse(child.stdout.trim()).observed; } catch { throw new Error("Candidate execution produced invalid evidence"); }
-  if (!Array.isArray(observed) || !observed.length || !isDeepStrictEqual(observed, steps)) throw new Error("Service checker.step calls must match the JSON journey exactly");
+async function validateServiceClass(javascript: string, worldSpec: WorldSpec, steps: readonly TransitionStepRequest[], turn: number, executionTrace: string[]) {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "kadmos-candidate-")));
+  const rpcDir = join(directory, "rpc");
+  mkdirSync(rpcDir);
+  const checker = createWorldChecker(worldSpec);
+  const observedSteps: TransitionStepRequest[] = [];
+  let firstRefusal: StepVerdict | undefined;
+  try {
+    const fabricPath = join(directory, "fabric.js");
+    writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+    writeFileSync(fabricPath, javascript);
+    const script = `
+      import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+      const rpcDir = ${JSON.stringify(rpcDir)};
+      const pause = new Int32Array(new SharedArrayBuffer(4));
+      const module = await import(${JSON.stringify(pathToFileURL(fabricPath).href)});
+      const Service = Object.values(module).find(value => typeof value === "function" && /^class\\s/.test(Function.prototype.toString.call(value)));
+      if (!Service) throw new Error("Candidate must export a service class");
+      let id = 0;
+      let state = ${JSON.stringify(checker.getState())};
+      let context = ${JSON.stringify(checker.getContext())};
+      const port = {
+        getState: () => state,
+        getContext: () => context,
+        step: request => {
+          const current = id++;
+          const requestPath = rpcDir + "/req_" + current + ".json";
+          writeFileSync(requestPath + ".tmp", JSON.stringify(request));
+          renameSync(requestPath + ".tmp", requestPath);
+          const responsePath = rpcDir + "/res_" + current + ".json";
+          while (!existsSync(responsePath)) Atomics.wait(pause, 0, 0, 1);
+          const verdict = JSON.parse(readFileSync(responsePath, "utf8"));
+          state = verdict.currentState;
+          context = verdict.context;
+          return verdict;
+        },
+        reset: () => { throw new Error("Candidate cannot reset checker"); },
+      };
+      const service = new Service(port);
+      if (typeof service.run !== "function") throw new Error("Candidate service must implement run()");
+      await service.run();
+    `;
+    const child = spawn(process.execPath, ["--permission", `--allow-fs-read=${directory}`, `--allow-fs-write=${rpcDir}`, "--input-type=module", "--eval", script], {
+      stdio: ["ignore", "ignore", "pipe"], timeout: 2000, killSignal: "SIGKILL",
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-8192); });
+    let nextId = 0;
+    let rpcError: Error | undefined;
+    const poll = setInterval(() => {
+      if (rpcError) return;
+      const requestPath = join(rpcDir, `req_${nextId}.json`);
+      if (!existsSync(requestPath)) return;
+      try {
+        const request = JSON.parse(readFileSync(requestPath, "utf8")) as TransitionStepRequest;
+        observedSteps.push(request);
+        const verdict = checker.step(request);
+        executionTrace.push(`Turn ${turn}: ${request.transitionId}: ${verdict.allowed ? "ACCEPTED" : `DENIED ${verdict.violation?.code ?? "UNKNOWN"}`}`);
+        if (!verdict.allowed && !firstRefusal) firstRefusal = verdict;
+        const responsePath = join(rpcDir, `res_${nextId}.json`);
+        writeFileSync(`${responsePath}.tmp`, JSON.stringify(verdict));
+        renameSync(`${responsePath}.tmp`, responsePath);
+        nextId++;
+      } catch (error) {
+        rpcError = error instanceof Error ? error : new Error(String(error));
+        child.kill();
+      }
+    }, 2);
+    let exitCode: number | null;
+    try {
+      exitCode = await new Promise<number | null>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", resolve);
+      });
+    } finally { clearInterval(poll); }
+    if (rpcError) throw rpcError;
+    if (!observedSteps.length || !isDeepStrictEqual(observedSteps, steps)) throw new Error(`Service checker.step calls must match the JSON journey exactly${stderr.trim() ? `: ${stderr.trim()}` : ""}`);
+    if (exitCode !== 0) throw new Error(stderr.trim() || "Candidate execution failed");
+    return { checker, firstRefusal };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 function compilationRepairPrompt(diagnostics: string): string {
@@ -134,6 +193,7 @@ export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRun
 
   for (let turn = 1; turn <= maxTurns; turn++) {
     let candidate: { code: string; steps: TransitionStepRequest[] };
+    let validation: Awaited<ReturnType<typeof validateServiceClass>>;
     let reply: LlmCompletionResponse;
     try {
       reply = await options.provider.complete({ systemPrompt: "You are the Kadmos Fabric Builder. Obey the World constitution and output only the requested blocks.", messages });
@@ -158,7 +218,7 @@ export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRun
       }
       const compilation = compileCandidate(candidate.code, portsDts);
       if (compilation.diagnostics.length) throw new Error(compilation.diagnostics.join("; "));
-      validateServiceClass(compilation.javascript!, worldSpec, candidate.steps);
+      validation = await validateServiceClass(compilation.javascript!, worldSpec, candidate.steps, turn, executionTrace);
     } catch (error) {
       const diagnostics = error instanceof Error ? error.message : String(error);
       executionTrace.push(`Turn ${turn}: compilation failed: ${diagnostics}`);
@@ -167,19 +227,12 @@ export async function runKadmosAgent(options: AgentRunOptions): Promise<AgentRun
       continue;
     }
 
-    const checker = createWorldChecker(worldSpec);
-    let refused = false;
-    for (const step of candidate.steps) {
-      const verdict = checker.step(step);
-      executionTrace.push(`Turn ${turn}: ${step.transitionId}: ${verdict.allowed ? "ACCEPTED" : `DENIED ${verdict.violation?.code ?? "UNKNOWN"}`}`);
-      if (!verdict.allowed) {
-        messages.push({ role: "user", content: synthesizeCegisPrompt(verdict, worldSpec) });
-        lastFailure = "plan";
-        refused = true;
-        break;
-      }
+    const { checker, firstRefusal } = validation;
+    if (firstRefusal) {
+      messages.push({ role: "user", content: synthesizeCegisPrompt(firstRefusal, worldSpec) });
+      lastFailure = "plan";
+      continue;
     }
-    if (refused) continue;
     if (!worldSpec.states.some((state) => state.id === checker.getState() && state.terminal)) {
       executionTrace.push(`Turn ${turn}: non-terminal state ${checker.getState()}`);
       messages.push({ role: "user", content: nonTerminalRepairPrompt(checker.getState(), worldSpec) });

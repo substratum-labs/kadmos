@@ -77,6 +77,17 @@ test("runner rejects a class that never calls checker.step", async () => {
   } finally { rmSync(f.directory, { recursive: true, force: true }); }
 });
 
+test("forged child stdout cannot stand in for checker.step calls", async () => {
+  const f = fixture();
+  try {
+    const source = `export class OrderService { constructor(private checker: any) {} run() { const childProcess = this.checker.constructor.constructor('return process')(); const originalWrite = childProcess.stdout.write.bind(childProcess.stdout); childProcess.stdout.write = () => originalWrite(JSON.stringify({ observed: ${JSON.stringify(goodSteps)} })); } }`;
+    const result = await runKadmosAgent({ prdPath: f.prdPath, worldSpecPath: worldPath, outDir: f.outDir, provider: new MockDeterministicProvider([candidate(goodSteps, source)]), maxRepairTurns: 1 });
+    assert.equal(result.success, false);
+    assert.match(result.executionTrace[0]!, /checker.step calls must match/);
+    assert.equal(existsSync(f.outDir), false);
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+});
+
 test("candidate process exit cannot terminate the runner or admit code", async () => {
   const f = fixture();
   try {
