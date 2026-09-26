@@ -34,7 +34,7 @@ export type * from "./types/ports.js";
 export type * from "./types/counterexample.js";
 export { createWorldChecker } from "./world_checker.js";
 export { parseWorldSpec, compileWorldSpec, type WorldProjection } from "./world_compiler.js";
-export { inferBoundary, type BoundaryCategory, type BoundaryCandidate, type BoundaryInferenceResult } from "./boundary_inference.js";
+export { inferBoundary, type BoundaryCategory, type BoundaryCandidate, type BoundaryInferenceResult, type BoundaryInferenceOptions, type SemanticWorldExtraction } from "./boundary_inference.js";
 export { synthesizeDilemmas, formatDilemmas, type LegislativeDilemma } from "./dilemma_synthesis.js";
 export type * from "./agent/provider.js";
 export { MockDeterministicProvider } from "./agent/provider.js";

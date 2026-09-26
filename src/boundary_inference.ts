@@ -1,4 +1,5 @@
-import { compileWorldSpec } from "./world_compiler.js";
+import { compileWorldSpec, parseWorldSpec } from "./world_compiler.js";
+import type { ILlmProvider } from "./agent/provider.js";
 import type { WorldSpec } from "./types/world.js";
 
 export type BoundaryCategory = "monetary" | "lifecycle" | "safety" | "side_effect" | "network" | "timeout" | "retry" | "cache" | "formatting" | "ui";
@@ -14,6 +15,17 @@ export interface BoundaryInferenceResult {
   readonly worldSpec: WorldSpec;
   readonly worldYaml: string;
   readonly portsDts: string;
+}
+export interface BoundaryInferenceOptions {
+  readonly name?: string;
+  readonly provider?: ILlmProvider;
+  readonly model?: string;
+}
+export interface SemanticWorldExtraction {
+  readonly states: readonly { readonly id: string; readonly initial?: boolean; readonly terminal?: boolean }[];
+  readonly context: Readonly<Record<string, { readonly type: "integer"; readonly min?: number; readonly max?: number; readonly default?: number }>>;
+  readonly invariants: readonly { readonly id: string; readonly description?: string; readonly predicate: string }[];
+  readonly transitions: readonly { readonly id: string; readonly from: string; readonly to: string; readonly guard: string; readonly directive?: string | null; readonly effects?: readonly string[] }[];
 }
 
 const rules: readonly { category: BoundaryCategory; domain: "world" | "fabric"; pattern: RegExp; justification: string }[] = [
@@ -38,6 +50,7 @@ function toYaml(spec: WorldSpec): string {
   for (const state of spec.states) {
     lines.push(`  - id: ${yamlScalar(state.id)}`);
     if (state.initial) lines.push("    initial: true");
+    if (state.terminal) lines.push("    terminal: true");
   }
   lines.push("context:");
   for (const [name, value] of Object.entries(spec.context)) {
@@ -51,11 +64,62 @@ function toYaml(spec: WorldSpec): string {
   lines.push(spec.invariants.length ? "invariants:" : "invariants: []");
   for (const invariant of spec.invariants) lines.push(`  - id: ${yamlScalar(invariant.id)}`, `    description: ${yamlScalar(invariant.description ?? "Candidate invariant")}`, `    predicate: ${yamlScalar(invariant.predicate)}`);
   lines.push(spec.transitions.length ? "transitions:" : "transitions: []");
-  for (const transition of spec.transitions) lines.push(`  - id: ${yamlScalar(transition.id)}`, `    from: ${yamlScalar(transition.from)}`, `    to: ${yamlScalar(transition.to)}`, `    guard: ${yamlScalar(transition.guard)}`, `    directive: ${yamlScalar(transition.directive)}`, "    effects: []");
+  for (const transition of spec.transitions) {
+    lines.push(`  - id: ${yamlScalar(transition.id)}`, `    from: ${yamlScalar(transition.from)}`, `    to: ${yamlScalar(transition.to)}`, `    guard: ${yamlScalar(transition.guard)}`, `    directive: ${yamlScalar(transition.directive)}`);
+    lines.push(transition.effects.length ? "    effects:" : "    effects: []");
+    for (const effect of transition.effects) lines.push(`      - ${yamlScalar(effect)}`);
+  }
   return `${lines.join("\n")}\n`;
 }
 
-export function inferBoundary(inputContent: string, options: { name?: string } = {}): BoundaryInferenceResult {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseExtraction(content: string): SemanticWorldExtraction {
+  const raw: unknown = JSON.parse(content);
+  if (!isRecord(raw) || !Array.isArray(raw.states) || !isRecord(raw.context) || !Array.isArray(raw.invariants) || !Array.isArray(raw.transitions)) throw new Error("INVALID_EXTRACTION: collections");
+  for (const state of raw.states) {
+    if (!isRecord(state) || typeof state.id !== "string" || !state.id || state.initial !== undefined && typeof state.initial !== "boolean" || state.terminal !== undefined && typeof state.terminal !== "boolean") throw new Error("INVALID_EXTRACTION: state");
+  }
+  for (const [name, value] of Object.entries(raw.context)) {
+    if (!/^[A-Za-z_][A-Za-z_0-9]*$/.test(name) || !isRecord(value) || value.type !== "integer" || [value.min, value.max, value.default].some((number) => number !== undefined && (typeof number !== "number" || !Number.isSafeInteger(number)))) throw new Error("INVALID_EXTRACTION: context");
+  }
+  for (const invariant of raw.invariants) {
+    if (!isRecord(invariant) || typeof invariant.id !== "string" || !invariant.id || typeof invariant.predicate !== "string" || invariant.description !== undefined && typeof invariant.description !== "string") throw new Error("INVALID_EXTRACTION: invariant");
+  }
+  for (const transition of raw.transitions) {
+    if (!isRecord(transition) || typeof transition.id !== "string" || !transition.id || typeof transition.from !== "string" || typeof transition.to !== "string" || typeof transition.guard !== "string" || transition.directive !== undefined && transition.directive !== null && typeof transition.directive !== "string" || transition.effects !== undefined && (!Array.isArray(transition.effects) || !transition.effects.every((effect: unknown) => typeof effect === "string"))) throw new Error("INVALID_EXTRACTION: transition");
+  }
+  return raw as unknown as SemanticWorldExtraction;
+}
+
+function mergeWorldSpec(local: WorldSpec, extracted: SemanticWorldExtraction): WorldSpec {
+  const chosenInitial = extracted.states.find((state) => state.initial)?.id ?? local.states.find((state) => state.initial)!.id;
+  const states = new Map(local.states.map((state) => [state.id, state]));
+  for (const state of extracted.states) states.set(state.id, { ...states.get(state.id), ...state });
+  if (!states.has(chosenInitial)) states.set(chosenInitial, { id: chosenInitial });
+  const invariants = [...extracted.invariants, ...local.invariants].filter((item, index, all) => all.findIndex((other) => other.id === item.id || other.predicate === item.predicate) === index);
+  const transitions = [...extracted.transitions.map((transition) => ({ ...transition, directive: transition.directive ?? null, effects: transition.effects ?? [] })), ...local.transitions]
+    .filter((item, index, all) => all.findIndex((other) => other.id === item.id || other.from === item.from && other.to === item.to && other.directive === item.directive) === index);
+  return {
+    ...local,
+    states: [...states.values()].map((state) => ({ ...state, initial: state.id === chosenInitial })),
+    context: { ...local.context, ...extracted.context },
+    invariants,
+    transitions,
+  };
+}
+
+function resultFor(inputContent: string, worldCandidates: BoundaryCandidate[], fabricCandidates: BoundaryCandidate[], worldSpec: WorldSpec): BoundaryInferenceResult {
+  const worldYaml = toYaml(worldSpec);
+  const validated = parseWorldSpec(worldYaml);
+  return { inputContent, worldCandidates, fabricCandidates, worldSpec: validated, worldYaml, portsDts: compileWorldSpec(validated).portsDts };
+}
+
+export function inferBoundary(inputContent: string, options?: BoundaryInferenceOptions & { provider?: undefined }): BoundaryInferenceResult;
+export function inferBoundary(inputContent: string, options: BoundaryInferenceOptions & { provider: ILlmProvider }): Promise<BoundaryInferenceResult>;
+export function inferBoundary(inputContent: string, options: BoundaryInferenceOptions = {}): BoundaryInferenceResult | Promise<BoundaryInferenceResult> {
   const worldCandidates: BoundaryCandidate[] = [];
   const fabricCandidates: BoundaryCandidate[] = [];
   for (const rule of rules) {
@@ -92,5 +156,19 @@ export function inferBoundary(inputContent: string, options: { name?: string } =
       ...directives.map((directive) => ({ id: directive, from: initial, to: initial, guard: true, directive, effects: [] })),
     ],
   };
-  return { inputContent, worldCandidates, fabricCandidates, worldSpec, worldYaml: toYaml(worldSpec), portsDts: compileWorldSpec(worldSpec).portsDts };
+  const baseline = resultFor(inputContent, worldCandidates, fabricCandidates, worldSpec);
+  if (!options.provider) return baseline;
+  return (async () => {
+    try {
+      const response = await options.provider!.complete({
+        systemPrompt: "You are a formal methods software architect extracting formal World IR specifications from requirements. Return a single valid JSON object strictly adhering to SemanticWorldExtraction schema.",
+        messages: [{ role: "user", content: `Extract a SemanticWorldExtraction JSON object with states [{id, initial?, terminal?}], context {field: {type: "integer", min?, max?, default?}}, invariants [{id, description?, predicate}], and transitions [{id, from, to, guard, directive?, effects?}]. Use only declared context fields in expressions. Requirements:\n${inputContent}` }],
+        responseFormat: "json_object",
+        temperature: 0.1,
+      });
+      return resultFor(inputContent, worldCandidates, fabricCandidates, mergeWorldSpec(worldSpec, parseExtraction(response.content)));
+    } catch {
+      return baseline;
+    }
+  })();
 }
