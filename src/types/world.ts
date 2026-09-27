@@ -7,11 +7,11 @@ export interface StateDef {
 }
 
 export interface ContextVarDef {
-  readonly type: "integer";
+  readonly type: "integer" | "string";
   readonly unit?: string;
   readonly min?: number;
   readonly max?: number;
-  readonly default?: number;
+  readonly default?: number | string;
 }
 
 export interface InvariantDef {

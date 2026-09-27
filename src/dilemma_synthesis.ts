@@ -1,12 +1,12 @@
 import { serializeWorldSpec, type BoundaryInferenceResult } from "./boundary_inference.js";
 import { parseWorldSpec } from "./world_compiler.js";
-import type { WorldSpec } from "./types/world.js";
+import type { ContextVarDef, WorldSpec } from "./types/world.js";
 
 export interface WorldPatch {
   readonly removeTransitions?: readonly string[];
   readonly refineTransitions?: readonly { readonly id: string; readonly guard: string | boolean; readonly to?: string; readonly effects?: readonly string[] }[];
   readonly states?: readonly { readonly id: string; readonly initial?: boolean; readonly terminal?: boolean }[];
-  readonly context?: Readonly<Record<string, { readonly type: "integer"; readonly min?: number; readonly max?: number; readonly default?: number }>>;
+  readonly context?: Readonly<Record<string, ContextVarDef>>;
   readonly invariants?: readonly { readonly id: string; readonly description?: string; readonly predicate: string }[];
   readonly transitions?: readonly { readonly id: string; readonly from: string; readonly to: string; readonly guard: string | boolean; readonly directive?: string | null; readonly effects?: readonly string[] }[];
 }

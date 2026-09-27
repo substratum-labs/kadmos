@@ -1,0 +1,125 @@
+version: "kadmos.world.v0"
+name: "JobWorld"
+description: "Distributed job lifecycle with fenced worker settlement and bounded retries"
+
+states:
+  - id: WAITING
+    initial: true
+    description: "Queued for worker pickup"
+  - id: ACTIVE
+    description: "Held by a worker lease"
+  - id: DELAYED_RETRY
+    description: "Waiting for retry backoff"
+  - id: COMPLETED
+    description: "Result persisted"
+    terminal: true
+  - id: FAILED
+    description: "Dead-lettered after fatal error or retry exhaustion"
+    terminal: true
+  - id: REVOKED
+    description: "Cancelled"
+    terminal: true
+
+context:
+  job_id:
+    type: string
+    default: ''
+  lock_token:
+    type: string
+    default: ''
+  lock_epoch:
+    type: integer
+    default: 0
+    min: 0
+  retries:
+    type: integer
+    default: 0
+    min: 0
+  max_retries:
+    type: integer
+    default: 3
+    min: 0
+  result_digest:
+    type: string
+    default: ''
+  failed_reason:
+    type: string
+    default: ''
+
+invariants:
+  - id: INV-01-RETRY-BOUND
+    predicate: "retries <= max_retries"
+  - id: INV-02-LOCK-TOKEN-CONSISTENCY
+    predicate: "(state == 'ACTIVE' => lock_token != '') && (state != 'ACTIVE' => lock_token == '')"
+  - id: INV-03-NON-NEGATIVE-RETRIES
+    predicate: "retries >= 0"
+
+transitions:
+  - id: ACQUIRE_LOCK
+    from: WAITING
+    to: ACTIVE
+    guard: "request.token != ''"
+    directive: "DISPATCH_PAYLOAD"
+    effects:
+      - "lock_token = request.token"
+      - "lock_epoch = lock_epoch + 1"
+  - id: REPORT_SUCCESS
+    from: ACTIVE
+    to: COMPLETED
+    guard: "request.token == lock_token"
+    directive: "PERSIST_RESULT"
+    effects:
+      - "result_digest = request.result_digest"
+      - "lock_token = ''"
+  - id: REPORT_RETRYABLE_FAILURE
+    from: ACTIVE
+    to: DELAYED_RETRY
+    guard: "request.token == lock_token && retries < max_retries"
+    directive: "SCHEDULE_BACKOFF"
+    effects:
+      - "retries = retries + 1"
+      - "failed_reason = request.reason"
+      - "lock_token = ''"
+  - id: RETRY_DELAY_ELAPSED
+    from: DELAYED_RETRY
+    to: WAITING
+    guard: true
+    directive: "ENQUEUE_FOR_PICKUP"
+    effects: []
+  - id: REPORT_FATAL_FAILURE
+    from: ACTIVE
+    to: FAILED
+    guard: "request.token == lock_token"
+    directive: "TRIGGER_DEAD_LETTER_ALERT"
+    effects:
+      - "failed_reason = request.reason"
+      - "lock_token = ''"
+  - id: RETRY_EXHAUSTED
+    from: ACTIVE
+    to: FAILED
+    guard: "request.token == lock_token && retries >= max_retries"
+    directive: "TRIGGER_DEAD_LETTER_ALERT"
+    effects:
+      - "failed_reason = request.reason"
+      - "lock_token = ''"
+  - id: CANCEL_FROM_WAITING
+    from: WAITING
+    to: REVOKED
+    guard: true
+    directive: "NOTIFY_CANCELLATION"
+    effects:
+      - "lock_token = ''"
+  - id: CANCEL_FROM_ACTIVE
+    from: ACTIVE
+    to: REVOKED
+    guard: true
+    directive: "NOTIFY_CANCELLATION"
+    effects:
+      - "lock_token = ''"
+  - id: CANCEL_FROM_DELAYED
+    from: DELAYED_RETRY
+    to: REVOKED
+    guard: true
+    directive: "NOTIFY_CANCELLATION"
+    effects:
+      - "lock_token = ''"

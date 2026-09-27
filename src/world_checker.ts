@@ -65,27 +65,28 @@ export function createWorldChecker(
   if (!initial) throw new Error("INITIAL_STATE: exactly one required");
 
   let state = initial;
-  let context: Record<string, number> = {};
+  let context: Record<string, number | string> = {};
   let history: StepRecord[] = [];
   let busy = false;
 
-  const env = (atState: string, values: Record<string, number>, eventPayload?: Readonly<Record<string, unknown>>) => ({
+  const env = (atState: string, values: Record<string, number | string>, eventPayload?: Readonly<Record<string, unknown>>) => ({
     ...values,
     state: atState,
     event: eventPayload ?? {},
+    request: eventPayload ?? {},
   });
 
-  const checkBounds = (values: Record<string, number>): string | undefined => {
+  const checkBounds = (values: Record<string, number | string>): string | undefined => {
     for (const [key, definition] of Object.entries(spec.context)) {
       const value = values[key];
-      if (value === undefined || !Number.isSafeInteger(value)) return key;
-      if (definition.min !== undefined && value < definition.min) return key;
-      if (definition.max !== undefined && value > definition.max) return key;
+      if (definition.type === "string" ? typeof value !== "string" : typeof value !== "number" || !Number.isSafeInteger(value)) return key;
+      if (definition.min !== undefined && typeof value === "number" && value < definition.min) return key;
+      if (definition.max !== undefined && typeof value === "number" && value > definition.max) return key;
     }
     return undefined;
   };
 
-  const checkInvariants = (atState: string, values: Record<string, number>, eventPayload?: Readonly<Record<string, unknown>>): string | undefined => {
+  const checkInvariants = (atState: string, values: Record<string, number | string>, eventPayload?: Readonly<Record<string, unknown>>): string | undefined => {
     const environment = env(atState, values, eventPayload);
     for (const invariant of spec.invariants) {
       try {
@@ -115,14 +116,14 @@ export function createWorldChecker(
     };
 
     try {
-      const candidateContext: Record<string, number> = Object.fromEntries(
+      const candidateContext: Record<string, number | string> = Object.fromEntries(
         Object.entries(spec.context).map(([name, definition]) => [name, definition.default ?? 0]),
       );
       for (const [name, value] of Object.entries(next)) {
-        if (!Object.hasOwn(spec.context, name) || typeof value !== "number" || !Number.isSafeInteger(value)) {
+        if (!Object.hasOwn(spec.context, name) || (spec.context[name]!.type === "string" ? typeof value !== "string" : typeof value !== "number" || !Number.isSafeInteger(value))) {
           throw new Error(`INVALID_BOUNDS: ${name}`);
         }
-        candidateContext[name] = value;
+        candidateContext[name] = value as string | number;
       }
       const invalidBound = checkBounds(candidateContext);
       if (invalidBound) {
@@ -242,7 +243,7 @@ export function createWorldChecker(
 
         const transition = spec.transitions.find((item) => item.id === snapshotAction && item.from === snapshotState);
         if (!transition) {
-          return reject("INVALID_TRANSITION", `Transition '${snapshotAction}' is not legal from state '${snapshotState}'`);
+          return reject(spec.states.some((item) => item.id === snapshotState && item.terminal) ? "ILLEGAL_TRANSITION" : "INVALID_TRANSITION", `Transition '${snapshotAction}' is not legal from state '${snapshotState}'`);
         }
 
         if ((snapshotDirective ?? null) !== transition.directive) {
@@ -269,10 +270,10 @@ export function createWorldChecker(
               return reject("INVALID_EFFECT", "Invalid effect assignment target");
             }
             const value = evaluate(match[2]!, env(transition.to, candidateContext, safePayload));
-            if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-              return reject("INVALID_EFFECT", "Effect expression did not yield an integer");
+            if (spec.context[match[1]!]!.type === "string" ? typeof value !== "string" : typeof value !== "number" || !Number.isSafeInteger(value)) {
+              return reject("INVALID_EFFECT", "Effect expression has wrong type");
             }
-            candidateContext[match[1]!] = value;
+            candidateContext[match[1]!] = value as string | number;
           }
         } catch (e: unknown) {
           if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e;

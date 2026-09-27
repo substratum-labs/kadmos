@@ -135,7 +135,7 @@ export function runOrderFabricDemo(): boolean {
     return false;
   }
   console.log(`   Allowed! State: ${step2.previousState} -> ${step2.currentState}`);
-  console.log(`   Escrow Balance updated to: $${((step2.context.escrow_balance ?? 0) / 100).toFixed(2)}`);
+  console.log(`   Escrow Balance updated to: $${(Number(step2.context.escrow_balance ?? 0) / 100).toFixed(2)}`);
 
   // Sub-step 5.3: Dispatch Goods
   console.log("\n-> Executing Sub-step 3: DISPATCH_GOODS");
@@ -149,8 +149,8 @@ export function runOrderFabricDemo(): boolean {
   }
   console.log(`   Allowed! State: ${step3.previousState} -> ${step3.currentState}`);
   console.log(`   Authorized Directive: '${step3.directiveAllowed}'`);
-  console.log(`   Settled Amount: $${((step3.context.settled_amount ?? 0) / 100).toFixed(2)}`);
-  console.log(`   Escrow Balance settled to: $${((step3.context.escrow_balance ?? 0) / 100).toFixed(2)}`);
+  console.log(`   Settled Amount: $${(Number(step3.context.settled_amount ?? 0) / 100).toFixed(2)}`);
+  console.log(`   Escrow Balance settled to: $${(Number(step3.context.escrow_balance ?? 0) / 100).toFixed(2)}`);
   console.log("   [Host Simulation] Calling shipping provider with authorized directive...");
 
   // Step 6: Audit & Verification

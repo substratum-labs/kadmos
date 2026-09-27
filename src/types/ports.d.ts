@@ -3,7 +3,7 @@ import type { StepRecord } from "./counterexample.js";
 /** Contract mirrored by the compiler's disposable ports.d.ts projection. */
 export type WorldState = string;
 export type WorldDirective = string;
-export type WorldContext = Readonly<Record<string, number>>;
+export type WorldContext = Readonly<Record<string, number | string>>;
 
 export interface TransitionStepRequest {
   readonly transitionId: string;

@@ -62,7 +62,7 @@ function randomItem<T>(items: readonly T[], random: () => number): T {
   return items[Math.floor(random() * items.length)]!;
 }
 
-function eventPayload(transition: TransitionDef, context: Readonly<Record<string, number>>, random: () => number): Record<string, unknown> {
+function eventPayload(transition: TransitionDef, context: Readonly<Record<string, number | string>>, random: () => number): Record<string, unknown> {
   const expressions = [transition.guard, ...transition.effects].filter((value): value is string => typeof value === "string");
   const payload: Record<string, unknown> = {};
   for (const expression of expressions) {
@@ -76,7 +76,7 @@ function eventPayload(transition: TransitionDef, context: Readonly<Record<string
   return payload;
 }
 
-function generateRequest(spec: WorldSpec, state: string, context: Readonly<Record<string, number>>, random: () => number): TransitionStepRequest {
+function generateRequest(spec: WorldSpec, state: string, context: Readonly<Record<string, number | string>>, random: () => number): TransitionStepRequest {
   const legal = spec.transitions.filter((transition) => transition.from === state);
   if (legal.length && random() < 0.7) {
     const transition = randomItem(legal, random);

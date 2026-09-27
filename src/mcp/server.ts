@@ -42,7 +42,7 @@ function world(value: unknown): WorldSpec {
 type Checker = ReturnType<typeof createWorldChecker>;
 type Session = { checker: Checker; world: WorldSpec };
 
-function contextMatches(actual: Record<string, number>, expected: Record<string, number>): boolean {
+function contextMatches(actual: Record<string, number | string>, expected: Record<string, number | string>): boolean {
   const actualKeys = Object.keys(actual);
   const expectedKeys = Object.keys(expected);
   return actualKeys.length === expectedKeys.length && actualKeys.every((key) => Object.hasOwn(expected, key) && expected[key] === actual[key]);
