@@ -1,4 +1,6 @@
 import { cpSync, existsSync, lstatSync, mkdtempSync, readFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { atomicWrite } from "./atomic_write.js";
 import { inferBoundary, serializeWorldSpec } from "./boundary_inference.js";
@@ -9,9 +11,11 @@ import { buildInitialPrompt, runKadmosAgent } from "./agent/runner.js";
 import { createLlmProvider } from "./agent/provider.js";
 import { runMcpServer } from "./mcp/server.js";
 import { runDifferentialFuzzing } from "./fuzzer.js";
+import { renderWorldGraph } from "./visualizer.js";
+import { initKadmosProject, type ScaffoldOptions } from "./scaffold.js";
 
 function usage(): never {
-  throw new Error("Usage: kadmos mcp | test <world-file> [--runs <N>] [--steps <M>] [--seed <S>] [--coverage] [--json] | infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
+  throw new Error("Usage: kadmos mcp | graph <world-file> [--format mermaid|dot|html] [--out <file>] [--open] | init [directory] [--template default|order-settlement|circuit-breaker] [--lang ts|python|all] [--force] | test <world-file> [--runs <N>] [--steps <M>] [--seed <S>] [--coverage] [--json] | infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
 }
 
 function publishProjectionDirectory(outDir: string, files: Record<string, string>): void {
@@ -49,6 +53,46 @@ function publishProjectionDirectory(outDir: string, files: Record<string, string
 }
 
 export function runCli(args: readonly string[]): string | Promise<string> {
+  if (args[0] === "init") {
+    let directory = ".";
+    let index = 1;
+    if (args[index] && !args[index]!.startsWith("--")) directory = args[index++]!;
+    const options: { template?: NonNullable<ScaffoldOptions["template"]>; lang?: NonNullable<ScaffoldOptions["lang"]>; force?: boolean } = {};
+    for (; index < args.length; index++) {
+      const flag = args[index];
+      if (flag === "--force" && !options.force) options.force = true;
+      else if (flag === "--template" && !options.template && ["default", "order-settlement", "circuit-breaker"].includes(args[index + 1] ?? "")) options.template = args[++index] as NonNullable<ScaffoldOptions["template"]>;
+      else if (flag === "--lang" && !options.lang && ["ts", "python", "all"].includes(args[index + 1] ?? "")) options.lang = args[++index] as NonNullable<ScaffoldOptions["lang"]>;
+      else usage();
+    }
+    return initKadmosProject(directory, options).then((result) => `Initialized ${result.directory} (${result.files.length} files)\n`);
+  }
+  if (args[0] === "graph") {
+    const file = args[1];
+    if (!file || file.startsWith("--")) usage();
+    let format: "mermaid" | "dot" | "html" = "mermaid";
+    let seenFormat = false;
+    let out: string | undefined;
+    let open = false;
+    for (let i = 2; i < args.length; i++) {
+      const flag = args[i];
+      if (flag === "--format" && !seenFormat && ["mermaid", "dot", "html"].includes(args[i + 1] ?? "")) { format = args[++i] as "mermaid" | "dot" | "html"; seenFormat = true; }
+      else if (flag === "--out" && !out && args[i + 1] && !args[i + 1]!.startsWith("--")) out = args[++i];
+      else if (flag === "--open" && !open) open = true;
+      else usage();
+    }
+    if (open && format !== "html") usage();
+    const graph = renderWorldGraph(parseWorldSpec(readFileSync(file, "utf8")), format);
+    if (!out && !open) return graph;
+    const destination = resolve(out ?? join(mkdtempSync(join(tmpdir(), "kadmos-graph-")), "world.html"));
+    atomicWrite(destination, graph);
+    if (open) {
+      const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+      const opener = spawnSync(command, process.platform === "win32" ? ["/c", "start", "", destination] : [destination], { encoding: "utf8" });
+      if (opener.error || opener.status !== 0) throw new Error(`Could not open graph: ${opener.error?.message ?? opener.stderr}`);
+    }
+    return `Wrote ${destination}\n`;
+  }
   if (args[0] === "test") {
     const file = args[1];
     if (!file || file.startsWith("--")) usage();

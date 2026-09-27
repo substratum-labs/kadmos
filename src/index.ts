@@ -34,6 +34,8 @@ export type * from "./types/ports.js";
 export type * from "./types/counterexample.js";
 export { createWorldChecker } from "./world_checker.js";
 export { runDifferentialFuzzing, mulberry32, type FuzzOptions, type FuzzReport } from "./fuzzer.js";
+export { renderWorldGraph } from "./visualizer.js";
+export { initKadmosProject, type ScaffoldOptions, type ScaffoldResult } from "./scaffold.js";
 export { runMcpServer } from "./mcp/server.js";
 export { parseWorldSpec, compileWorldSpec, type WorldProjection } from "./world_compiler.js";
 export { compileWorldSpecPython, type PythonWorldProjection } from "./python_compiler.js";
