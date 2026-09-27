@@ -1,6 +1,7 @@
 import type { IWorldChecker, StepVerdict, TransitionStepRequest, WorldContext } from "./types/ports.js";
 import type { StepRecord } from "./types/counterexample.js";
 import type { WorldSpec } from "./types/world.js";
+import { types as nodeTypes } from "node:util";
 import { evaluate } from "./world_expression.js";
 
 function deepFreeze<T>(obj: T): T {
@@ -15,9 +16,18 @@ function deepFreeze<T>(obj: T): T {
   return obj;
 }
 
-export function sanitizePayload(raw: unknown): Record<string, unknown> | undefined {
+export function sanitizePayload(raw: unknown, depth: number = 0): Record<string, unknown> | undefined {
+  if (depth > 128) throw new Error("SECURITY_VIOLATION: payload depth exceeded");
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("INVALID_EVENT_PAYLOAD: must be an object");
+  if (nodeTypes.isProxy(raw)) throw new Error("SECURITY_VIOLATION: proxy not permitted in eventPayload");
+  if (Object.prototype.toString.call(raw) !== "[object Object]") {
+    throw new Error("SECURITY_VIOLATION: non-plain object not permitted in eventPayload");
+  }
+  const proto = Object.getPrototypeOf(raw);
+  if (proto !== Object.prototype && proto !== null) {
+    throw new Error("SECURITY_VIOLATION: non-plain object prototype not permitted in eventPayload");
+  }
   const result: Record<string, unknown> = Object.create(null);
   for (const key of Object.getOwnPropertyNames(raw)) {
     if (key === "__proto__" || key === "constructor" || key === "prototype") {
@@ -31,7 +41,7 @@ export function sanitizePayload(raw: unknown): Record<string, unknown> | undefin
     const val = desc.value;
     let copy: unknown;
     if (typeof val === "object" && val !== null) {
-      copy = sanitizePayload(val);
+      copy = sanitizePayload(val, depth + 1);
     } else if (typeof val === "function" || typeof val === "symbol") {
       throw new Error(`SECURITY_VIOLATION: ${typeof val} not permitted in eventPayload`);
     } else {
@@ -154,6 +164,8 @@ export function createWorldChecker(
       };
 
       try {
+        const snapshotAction = typeof request.transitionId === "string" ? request.transitionId : String(request.transitionId ?? "");
+        const snapshotDirective = request.proposedDirective === undefined ? undefined : (request.proposedDirective === null ? null : String(request.proposedDirective));
         let safePayload: Record<string, unknown> | undefined;
         try {
           safePayload = sanitizePayload(request.eventPayload);
@@ -171,7 +183,7 @@ export function createWorldChecker(
               shortestCounterexampleTrace: [...snapshotHistory, {
                 step: snapshotHistory.length + 1,
                 state: snapshotState,
-                action: request.transitionId,
+                action: snapshotAction,
               }],
             },
           };
@@ -180,9 +192,9 @@ export function createWorldChecker(
         const record: StepRecord = {
           step: snapshotHistory.length + 1,
           state: snapshotState,
-          action: request.transitionId,
+          action: snapshotAction,
           ...(safePayload === undefined ? {} : { eventPayload: safePayload }),
-          ...(request.proposedDirective === undefined ? {} : { proposedDirective: request.proposedDirective }),
+          ...(snapshotDirective === undefined ? {} : { proposedDirective: snapshotDirective }),
         };
 
         const reject = (code: string, message: string, violatedInvariant?: string): StepVerdict => {
@@ -202,12 +214,12 @@ export function createWorldChecker(
           };
         };
 
-        const transition = spec.transitions.find((item) => item.id === request.transitionId && item.from === state);
+        const transition = spec.transitions.find((item) => item.id === snapshotAction && item.from === state);
         if (!transition) {
-          return reject("INVALID_TRANSITION", `Transition '${request.transitionId}' is not legal from state '${state}'`);
+          return reject("INVALID_TRANSITION", `Transition '${snapshotAction}' is not legal from state '${state}'`);
         }
 
-        if ((request.proposedDirective ?? null) !== transition.directive) {
+        if ((snapshotDirective ?? null) !== transition.directive) {
           return reject("UNAUTHORIZED_DIRECTIVE", "Directive does not match declared transition");
         }
 

@@ -66,14 +66,34 @@ test("reserved payload keys return security verdicts without changing state", as
       }
       const deep: Record<string, unknown> = {};
       let cursor = deep;
-      for (let level = 0; level < 12000; level++) {
+      for (let level = 0; level < 1200; level++) {
         const child: Record<string, unknown> = {};
         cursor.child = child;
         cursor = child;
       }
       const verdict = gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY", eventPayload: deep });
+      assert.equal(verdict.allowed, false);
       assert.equal(verdict.violation?.code, "SECURITY_VIOLATION");
+      assert.match(verdict.violation?.message ?? "", /depth exceeded/);
+      assert.equal(verdict.currentState, "CREATED");
       assert.equal(gate.getState(), "CREATED");
+      for (const payload of [new Date(), new Map(), new Number(1), new Proxy({}, { getPrototypeOf: () => Date.prototype }), new Proxy({}, {})]) {
+        const rejected = gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY", eventPayload: payload as Record<string, unknown> });
+        assert.equal(rejected.allowed, false);
+        assert.equal(rejected.violation?.code, "SECURITY_VIOLATION");
+        assert.equal(rejected.currentState, "CREATED");
+        assert.equal(rejected.directiveAllowed, null);
+        assert.equal(gate.getState(), "CREATED");
+      }
+      const request = { transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY", get eventPayload() {
+        request.transitionId = "ABORT_UNPAID";
+        request.proposedDirective = "CHANGED";
+        return {};
+      } };
+      const accepted = gate.step(request);
+      assert.equal(accepted.allowed, true);
+      assert.equal(accepted.directiveAllowed, "DISPATCH_PAYMENT_GATEWAY");
+      assert.equal(gate.getState(), "PAYMENT_PENDING");
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

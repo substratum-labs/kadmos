@@ -26,7 +26,7 @@ function evaluateWorld(expression: string | boolean, env: Record<string, unknown
     else if (/^\d/.test(token)) left = Number(token);
     else if (/^[A-Za-z_]/.test(token)) {
       left = env[token];
-      while (tokens[index] === ".") { index++; const property = tokens[index++]; if (!property || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(property)) throw new Error("INVALID_EXPRESSION"); left = left && typeof left === "object" ? (left as Record<string, unknown>)[property] : undefined; }
+      while (tokens[index] === ".") { index++; const property = tokens[index++]; if (!property || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(property)) throw new Error("INVALID_EXPRESSION"); left = left && typeof left === "object" && Object.hasOwn(left, property) ? (left as Record<string, unknown>)[property] : undefined; }
     } else throw new Error("INVALID_EXPRESSION");
     while (true) {
       const operator = tokens[index];
@@ -58,18 +58,27 @@ function evaluateWorld(expression: string | boolean, env: Record<string, unknown
 }
 
 
-function sanitizeWorldPayload(raw: unknown): Record<string, unknown> | undefined {
+function sanitizeWorldPayload(raw: unknown, depth: number = 0): Record<string, unknown> | undefined {
+  if (depth > 128) throw new Error("SECURITY_VIOLATION: payload depth exceeded");
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("INVALID_EVENT_PAYLOAD: must be an object");
-  const result: Record<string, unknown> = {};
+  const isProxy = (globalThis as { process?: { getBuiltinModule?: (name: string) => { types: { isProxy: (value: unknown) => boolean } } } }).process?.getBuiltinModule?.("node:util")?.types.isProxy;
+  if (isProxy?.(raw)) throw new Error("SECURITY_VIOLATION: proxy not permitted in eventPayload");
+  if (Object.prototype.toString.call(raw) !== "[object Object]") throw new Error("SECURITY_VIOLATION: non-plain object not permitted in eventPayload");
+  const proto = Object.getPrototypeOf(raw);
+  if (proto !== Object.prototype && proto !== null) throw new Error("SECURITY_VIOLATION: non-plain object prototype not permitted in eventPayload");
+  const result: Record<string, unknown> = Object.create(null);
   for (const key of Object.getOwnPropertyNames(raw)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") throw new Error(`SECURITY_VIOLATION: '${key}' not permitted in eventPayload`);
     const desc = Object.getOwnPropertyDescriptor(raw, key);
     if (!desc) continue;
     if (desc.get || desc.set) throw new Error("SECURITY_VIOLATION: accessor property not permitted");
     const val = desc.value;
-    if (typeof val === "object" && val !== null) result[key] = sanitizeWorldPayload(val);
+    let copy: unknown;
+    if (typeof val === "object" && val !== null) copy = sanitizeWorldPayload(val, depth + 1);
     else if (typeof val === "function" || typeof val === "symbol") throw new Error("SECURITY_VIOLATION: invalid type");
-    else result[key] = val;
+    else copy = val;
+    Object.defineProperty(result, key, { value: copy, writable: true, enumerable: true, configurable: true });
   }
   return result;
 }
@@ -139,19 +148,21 @@ export class WorldChecker implements IWorldChecker {
     const snapshotHistory = [...this.history];
     const rollback = () => { this.state = snapshotState; this.context = { ...snapshotContext }; this.history = [...snapshotHistory]; };
     try {
+      const snapshotAction = typeof request.transitionId === "string" ? request.transitionId : String(request.transitionId ?? "");
+      const snapshotDirective = request.proposedDirective === undefined ? undefined : (request.proposedDirective === null ? null : String(request.proposedDirective));
       let safePayload: Record<string, unknown> | undefined;
       try { safePayload = sanitizeWorldPayload(request.eventPayload); } catch (e: unknown) {
         rollback();
-        return { allowed: false, previousState: snapshotState, currentState: snapshotState, context: this.getContext(), directiveAllowed: null, violation: { code: "SECURITY_VIOLATION", message: e instanceof Error ? e.message : "Invalid payload", shortestCounterexampleTrace: [...snapshotHistory, { step: snapshotHistory.length + 1, state: snapshotState, action: request.transitionId }] } };
+        return { allowed: false, previousState: snapshotState, currentState: snapshotState, context: this.getContext(), directiveAllowed: null, violation: { code: "SECURITY_VIOLATION", message: e instanceof Error ? e.message : "Invalid payload", shortestCounterexampleTrace: [...snapshotHistory, { step: snapshotHistory.length + 1, state: snapshotState, action: snapshotAction }] } };
       }
-      const record: StepRecord = { step: snapshotHistory.length + 1, state: snapshotState, action: request.transitionId, ...(safePayload === undefined ? {} : { eventPayload: safePayload }), ...(request.proposedDirective === undefined ? {} : { proposedDirective: request.proposedDirective }) };
+      const record: StepRecord = { step: snapshotHistory.length + 1, state: snapshotState, action: snapshotAction, ...(safePayload === undefined ? {} : { eventPayload: safePayload }), ...(snapshotDirective === undefined ? {} : { proposedDirective: snapshotDirective as Exclude<StepRecord["proposedDirective"], undefined> }) };
       const reject = (code: string, message: string, violatedInvariant?: string): StepVerdict => {
         rollback();
         return { allowed: false, previousState: snapshotState, currentState: snapshotState, context: this.getContext(), directiveAllowed: null, violation: { code, message, ...(violatedInvariant === undefined ? {} : { violatedInvariant }), shortestCounterexampleTrace: [...snapshotHistory, record] } };
       };
-      const transition = world.transitions.find((item) => item.id === request.transitionId && item.from === this.state);
-      if (!transition) return reject("INVALID_TRANSITION", `Transition "${request.transitionId}" is not legal from state "${this.state}"`);
-      if ((request.proposedDirective ?? null) !== transition.directive) return reject("UNAUTHORIZED_DIRECTIVE", "Directive does not match declared transition");
+      const transition = world.transitions.find((item) => item.id === snapshotAction && item.from === this.state);
+      if (!transition) return reject("INVALID_TRANSITION", `Transition "${snapshotAction}" is not legal from state "${this.state}"`);
+      if ((snapshotDirective ?? null) !== transition.directive) return reject("UNAUTHORIZED_DIRECTIVE", "Directive does not match declared transition");
       const env = (at: string, values: Record<string, number>): Record<string, unknown> => ({ ...values, state: at, event: safePayload ?? {} });
       try {
         const guardVal = evaluateWorld(transition.guard, env(this.state, this.context));
