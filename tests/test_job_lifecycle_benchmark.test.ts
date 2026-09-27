@@ -109,11 +109,11 @@ for (const terminal of ["COMPLETED", "FAILED", "REVOKED"] as const) {
 }
 
 test("JobWorld passes cross-language differential fuzzing with zero divergences", async () => {
-  const report = await runDifferentialFuzzing(spec, { runs: 50, stepsPerRun: 40, seed: 42 });
+  const report = await runDifferentialFuzzing(spec, { runs: 100, stepsPerRun: 40, seed: 105 });
   assert.equal(report.passed, true);
   assert.equal(report.divergences.length, 0);
   assert.equal(report.stateCoverage.ratio, 1, JSON.stringify(report.stateCoverage));
-  assert.ok(report.transitionCoverage.ratio >= 0.9, JSON.stringify(report.transitionCoverage));
+  assert.equal(report.transitionCoverage.ratio, 1, JSON.stringify(report.transitionCoverage));
 });
 
 test("ACTIVE requires a nonempty worker token or supervisor token for exits", () => {
