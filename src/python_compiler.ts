@@ -227,9 +227,11 @@ def sanitize_world_payload(raw: Any) -> dict[str, Any] | None:
             raise ValueError("SECURITY_VIOLATION: payload node count exceeded")
         seen.add(identity)
         result = {}
-        for key, item in value.items():
-            if type(key) is not str or key in ("__proto__", "constructor", "prototype"):
+        for key, item in list(dict.items(value)):
+            if type(key) is not str:
                 raise ValueError("SECURITY_VIOLATION: invalid payload key")
+            if key in ("__proto__", "constructor", "prototype"):
+                raise ValueError(f"SECURITY_VIOLATION: '{key}' not permitted in eventPayload")
             result[key] = copy(item, depth + 1)
         return result
 
@@ -359,7 +361,7 @@ class WorldChecker(IWorldChecker):
                 return security_reject("transitionId must be a string")
             action = action_val
             if has_proposed and proposed_val is not None and type(proposed_val) is not str:
-                return security_reject("proposedDirective must be a string or None", action)
+                return security_reject("proposedDirective must be a string, null, or undefined", "<invalid>")
             proposed = proposed_val
             try:
                 payload = sanitize_world_payload(raw_payload)

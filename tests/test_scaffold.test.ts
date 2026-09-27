@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -39,6 +39,7 @@ test("CLI init honors template and language and refuses existing nonempty direct
     const first = spawnSync(process.execPath, [cli, "init", dir, "--template", "circuit-breaker", "--lang", "python"], { encoding: "utf8" });
     assert.equal(first.status, 0, first.stderr);
     assert.equal(parseWorldSpec(readFileSync(join(dir, "world.yaml"), "utf8")).name, "CircuitBreakerWorld");
+    assert.equal(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).scripts.compile, "kadmos compile world.yaml --out src/world --lang python");
     assert.equal(existsSync(join(dir, "src/worker.ts")), false);
     assert.ok(existsSync(join(dir, "src/worker.py")));
     writeFileSync(join(dir, "sentinel"), "keep");
@@ -49,5 +50,24 @@ test("CLI init honors template and language and refuses existing nonempty direct
     assert.equal(readFileSync(join(dir, "sentinel"), "utf8"), "keep");
     assert.ok(existsSync(join(dir, "src/worker.ts")));
     assert.equal(existsSync(join(dir, "src/worker.py")), false);
+    assert.equal(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).scripts.compile, "kadmos compile world.yaml --out src/world --lang ts");
+  } finally { rmSync(parent, { recursive: true, force: true }); }
+});
+
+test("force replaces a linked src directory without touching its external target", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "kadmos-init-link-"));
+  const app = join(parent, "app");
+  const outside = join(parent, "outside");
+  try {
+    mkdirSync(app);
+    mkdirSync(join(outside, "world"), { recursive: true });
+    writeFileSync(join(outside, "world", "ports.py"), "outside sentinel");
+    writeFileSync(join(outside, "sentinel"), "keep");
+    symlinkSync(outside, join(app, "src"), "dir");
+    await initKadmosProject(app, { force: true, lang: "ts" });
+    assert.equal(lstatSync(join(app, "src")).isSymbolicLink(), false);
+    assert.ok(existsSync(join(app, "src/world/ports.d.ts")));
+    assert.equal(readFileSync(join(outside, "world", "ports.py"), "utf8"), "outside sentinel");
+    assert.equal(readFileSync(join(outside, "sentinel"), "utf8"), "keep");
   } finally { rmSync(parent, { recursive: true, force: true }); }
 });

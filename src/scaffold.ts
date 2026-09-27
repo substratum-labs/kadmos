@@ -1,4 +1,4 @@
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { compileWorldSpec, compileWorldSpecPython, parseWorldSpec } from "./world_compiler.js";
 
@@ -150,8 +150,9 @@ export async function initKadmosProject(targetDir: string, options: ScaffoldOpti
   if (!["ts", "python", "all"].includes(lang)) throw new Error(`Unknown language: ${lang}`);
   const directory = resolve(targetDir);
   const existing = lstatSync(directory, { throwIfNoEntry: false });
-  if (existing && !existing.isDirectory()) throw new Error(`Target is not a directory: ${directory}`);
-  if (existing && readdirSync(directory).length && !options.force) throw new Error(`Target directory is not empty: ${directory} (use --force to overwrite generated files)`);
+  const linkedTarget = existing?.isSymbolicLink() ?? false;
+  if (existing && !existing.isDirectory() && !(linkedTarget && options.force)) throw new Error(`Target is not a directory: ${directory}`);
+  if (existing?.isDirectory() && readdirSync(directory).length && !options.force) throw new Error(`Target directory is not empty: ${directory} (use --force to overwrite generated files)`);
   mkdirSync(dirname(directory), { recursive: true });
   const temporary = mkdtempSync(join(dirname(directory), `.${basename(directory)}.init-`));
   const staged = join(temporary, "project");
@@ -160,26 +161,37 @@ export async function initKadmosProject(targetDir: string, options: ScaffoldOpti
   const world = parseWorldSpec(yaml);
   const example = sample(template);
   const files: string[] = [];
+  const clearLinkedParents = (path: string): boolean => {
+    let parent = staged;
+    for (const part of path.split("/").slice(0, -1)) {
+      parent = join(parent, part);
+      if (lstatSync(parent, { throwIfNoEntry: false })?.isSymbolicLink()) {
+        unlinkSync(parent);
+        return true;
+      }
+    }
+    return false;
+  };
   const write = (path: string, content: string): void => {
     const destination = join(staged, path);
-    const parts = path.split("/");
-    let parent = staged;
-    for (const part of parts.slice(0, -1)) {
-      parent = join(parent, part);
-      if (lstatSync(parent, { throwIfNoEntry: false })?.isSymbolicLink()) rmSync(parent);
-    }
+    clearLinkedParents(path);
     mkdirSync(dirname(destination), { recursive: true });
-    if (lstatSync(destination, { throwIfNoEntry: false })?.isSymbolicLink()) rmSync(destination);
+    if (lstatSync(destination, { throwIfNoEntry: false })?.isSymbolicLink()) unlinkSync(destination);
     writeFileSync(destination, content);
     files.push(path);
   };
   try {
-    if (existing) cpSync(directory, staged, { recursive: true });
+    if (existing && !linkedTarget) cpSync(directory, staged, { recursive: true });
     else mkdirSync(staged);
     const obsolete = lang === "all" ? [] : lang === "ts"
       ? ["src/world/ports.py", "src/world/world_checker.py", "src/worker.py", "tests/test_gatekeeper.py"]
       : ["src/world/ports.d.ts", "src/world/world_checker.ts", "src/worker.ts", "tests/test_gatekeeper.test.ts", "tsconfig.json"];
-    for (const path of obsolete) rmSync(join(staged, path), { force: true });
+    for (const path of obsolete) {
+      if (clearLinkedParents(path)) continue;
+      const destination = join(staged, path);
+      if (lstatSync(destination, { throwIfNoEntry: false })?.isSymbolicLink()) unlinkSync(destination);
+      else rmSync(destination, { force: true });
+    }
     write("world.yaml", yaml);
     if (lang === "ts" || lang === "all") {
       const compiled = compileWorldSpec(world);
@@ -238,7 +250,7 @@ class GatekeeperTest(unittest.TestCase):
         self.assertEqual(verdict["currentState"], ${JSON.stringify(example.state)})
 `);
     }
-    write("package.json", `${JSON.stringify({ name: basename(directory).toLowerCase().replace(/[^a-z0-9._-]/g, "-") || "kadmos-app", private: true, type: "module", scripts: { compile: "kadmos compile world.yaml --out src/world --lang all", test: "kadmos test world.yaml --runs 30", graph: "kadmos graph world.yaml --format html --out state_machine.html", ...(lang !== "python" ? { "test:worker": "tsc && node --test dist/tests/test_gatekeeper.test.js" } : {}) }, dependencies: { kadmos: "latest" }, ...(lang !== "python" ? { devDependencies: { typescript: "^7.0.2", "@types/node": "^26.5.1" } } : {}) }, null, 2)}\n`);
+    write("package.json", `${JSON.stringify({ name: basename(directory).toLowerCase().replace(/[^a-z0-9._-]/g, "-") || "kadmos-app", private: true, type: "module", scripts: { compile: "kadmos compile world.yaml --out src/world --lang " + lang, test: "kadmos test world.yaml --runs 30", graph: "kadmos graph world.yaml --format html --out state_machine.html", ...(lang !== "python" ? { "test:worker": "tsc && node --test dist/tests/test_gatekeeper.test.js" } : {}) }, dependencies: { kadmos: "latest" }, ...(lang !== "python" ? { devDependencies: { typescript: "^7.0.2", "@types/node": "^26.5.1" } } : {}) }, null, 2)}\n`);
     if (lang !== "python") write("tsconfig.json", `${JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", strict: true, outDir: "dist", rootDir: ".", types: ["node"] }, include: ["src/**/*.ts", "tests/**/*.ts"] }, null, 2)}\n`);
     write(".gitignore", "node_modules/\n__pycache__/\ndist/\n*.pyc\nstate_machine.html\n");
     write(".github/workflows/ci.yml", `name: Kadmos CI

@@ -16,7 +16,8 @@ test("Mermaid renders entry, exits, guarded and directed transitions", () => {
   assert.match(graph, /\[\*\] --> CREATED/);
   assert.match(graph, /FULFILLED --> \[\*\]/);
   assert.match(graph, /CANCELLED --> \[\*\]/);
-  assert.match(graph, /CREATED --> PAYMENT_PENDING : INITIATE_PAYMENT \[order_amount &gt; 0\] \/ DISPATCH_PAYMENT_GATEWAY/);
+  assert.match(graph, /CREATED --> PAYMENT_PENDING : INITIATE_PAYMENT \[order_amount > 0\] \/ DISPATCH_PAYMENT_GATEWAY/);
+  assert.doesNotMatch(graph, /&gt;/);
   assert.match(graph, /state "Order registered in system, awaiting payment" as CREATED/);
 });
 
@@ -34,10 +35,21 @@ test("HTML escapes untrusted text while retaining Mermaid module", () => {
   const html = renderWorldGraph(hostile, "html");
   assert.match(html, /<title>Kadmos World: &lt;script&gt;/);
   assert.match(html, /class="mermaid"/);
-  assert.match(html, /mermaid@10\/dist\/mermaid.esm.min.mjs/);
+  assert.match(html, /mermaid@10\.9\.1\/dist\/mermaid.esm.min.mjs/);
+  assert.match(html, /securityLevel: 'strict'/);
   assert.doesNotMatch(html, /<script>alert\("x"\)<\/script>/);
   assert.match(html, /5 states/);
   assert.match(html, /3 invariants/);
+});
+
+test("Mermaid quotes descriptions and backslashes without corrupting graph syntax", () => {
+  const changed = { ...spec, states: spec.states.map((state) => state.id === "CREATED" ? { ...state, description: 'foo\\"bar' } : state) };
+  const graph = renderWorldGraph(changed, "mermaid");
+  assert.match(graph, /state "foo\\\\\\"bar" as CREATED/);
+  const nonString = { ...spec, states: spec.states.map((state) => state.id === "CREATED" ? { ...state, description: 42 as unknown as string } : state) };
+  assert.match(renderWorldGraph(nonString, "mermaid"), /state "42" as CREATED/);
+  const zero = { ...spec, states: spec.states.map((state) => state.id === "CREATED" ? { ...state, description: 0 as unknown as string } : state) };
+  assert.match(renderWorldGraph(zero, "mermaid"), /state "0" as CREATED/);
 });
 
 test("CLI graph writes selected format atomically", () => {

@@ -26,7 +26,7 @@ export interface FuzzReport {
 }
 
 export function mulberry32(seed: number): () => number {
-  let state = seed >>> 0;
+  let state = ((seed >>> 0) ^ Math.floor(seed / 0x100000000)) >>> 0;
   return () => {
     state = (state + 0x6d2b79f5) >>> 0;
     let t = Math.imul(state ^ state >>> 15, state | 1);
@@ -118,8 +118,20 @@ function verdictDifference(ts: StepVerdict, py: StepVerdict | undefined): string
   for (const key of tsKeys) if (ts.context[key] !== py.context[key] || !Number.isSafeInteger(py.context[key])) return `context.${key}: TS=${ts.context[key]}, Python=${py.context[key]}`;
   if (!ts.allowed) {
     if (ts.violation?.code !== py.violation?.code) return `violation.code: TS=${ts.violation?.code}, Python=${py.violation?.code}`;
+    if (ts.violation?.message !== py.violation?.message) return `violation.message: TS=${ts.violation?.message}, Python=${py.violation?.message}`;
     if (ts.violation?.violatedInvariant !== py.violation?.violatedInvariant) return `violation.violatedInvariant: TS=${ts.violation?.violatedInvariant}, Python=${py.violation?.violatedInvariant}`;
-    if (ts.violation?.shortestCounterexampleTrace.length !== py.violation?.shortestCounterexampleTrace?.length) return `violation.shortestCounterexampleTrace.length: TS=${ts.violation?.shortestCounterexampleTrace.length}, Python=${py.violation?.shortestCounterexampleTrace?.length}`;
+    const tsTrace = ts.violation?.shortestCounterexampleTrace ?? [];
+    const pyTrace = py.violation?.shortestCounterexampleTrace ?? [];
+    if (tsTrace.length !== pyTrace.length) return `violation.trace.length: TS=${tsTrace.length}, Python=${pyTrace.length}`;
+    for (let i = 0; i < tsTrace.length; i++) {
+      const t = tsTrace[i]!;
+      const p = pyTrace[i]!;
+      if (t.step !== p.step) return `trace[${i}].step: TS=${t.step}, Python=${p.step}`;
+      if (t.state !== p.state) return `trace[${i}].state: TS=${t.state}, Python=${p.state}`;
+      if (t.action !== p.action) return `trace[${i}].action: TS=${t.action}, Python=${p.action}`;
+      if ((t.proposedDirective ?? null) !== (p.proposedDirective ?? null)) return `trace[${i}].proposedDirective: TS=${t.proposedDirective}, Python=${p.proposedDirective}`;
+      if (JSON.stringify(t.eventPayload ?? {}) !== JSON.stringify(p.eventPayload ?? {})) return `trace[${i}].eventPayload mismatch`;
+    }
   }
   return undefined;
 }

@@ -1,11 +1,11 @@
 import type { WorldSpec } from "./types/world.js";
 
-function htmlEscape(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+function htmlEscape(value: unknown): string {
+  return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-function mermaidText(value: string): string {
-  return htmlEscape(value.replace(/\r\n?|\n/g, " ")).replace(/[`{}|]/g, (character) => `&#${character.charCodeAt(0)};`);
+function mermaidText(value: unknown): string {
+  return String(value).replace(/\r\n?|\n/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function edgeLabel(transition: WorldSpec["transitions"][number]): string {
@@ -18,7 +18,7 @@ function mermaid(spec: WorldSpec): string {
   const lines = ["stateDiagram-v2"];
   for (const state of spec.states) {
     const alias = aliases.get(state.id)!;
-    if (state.description || alias !== state.id) lines.push(`    state "${mermaidText(state.description ?? state.id)}" as ${alias}`);
+    if (state.description != null || alias !== state.id) lines.push(`    state "${mermaidText(state.description ?? state.id)}" as ${alias}`);
   }
   const initial = spec.states.find((state) => state.initial);
   if (initial) lines.push(`    [*] --> ${aliases.get(initial.id)}`);
@@ -56,7 +56,7 @@ function html(spec: WorldSpec): string {
   <header><h1>${htmlEscape(spec.name)}</h1><p class="stats">${spec.states.length} states · ${spec.transitions.length} transitions · ${spec.invariants.length} invariants</p></header>
   <section><pre class="mermaid">${htmlEscape(mermaid(spec))}</pre></section>
   <section><h2>Declared invariants</h2><ul>${invariants}</ul></section>
-  <script type="module">import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs'; mermaid.initialize({ startOnLoad: true, theme: 'neutral' });</script>
+  <script type="module">import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs'; mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'strict' });</script>
 </body>
 </html>
 `;

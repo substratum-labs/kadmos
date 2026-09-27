@@ -1,13 +1,67 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { runDifferentialFuzzing } from "../src/fuzzer.js";
-import { parseWorldSpec } from "../src/world_compiler.js";
+import { mulberry32, runDifferentialFuzzing } from "../src/fuzzer.js";
+import { compileWorldSpecPython, parseWorldSpec } from "../src/world_compiler.js";
+import { createWorldChecker } from "../src/world_checker.js";
 import type { StepVerdict, TransitionStepRequest } from "../src/types/ports.js";
 
 const file = new URL("../../conformance/fixtures/order_settlement.world.yaml", import.meta.url);
 const world = parseWorldSpec(readFileSync(file, "utf8"));
+
+test("seed high bits change the generated sequence", () => {
+  const sequence = (seed: number) => Array.from({ length: 8 }, mulberry32(seed));
+  assert.notDeepEqual(sequence(1), sequence(2 ** 32 + 1));
+});
+
+test("Python and TypeScript reject reserved payload keys and invalid directives identically", () => {
+  const requests = [
+    { transitionId: "INITIATE_PAYMENT", eventPayload: { ["__proto__"]: 1 } },
+    { transitionId: "INITIATE_PAYMENT", proposedDirective: 1 },
+  ];
+  const ts = requests.map((request) => createWorldChecker(world).step(request as TransitionStepRequest));
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-fuzz-parity-"));
+  try {
+    const projection = compileWorldSpecPython(world);
+    writeFileSync(join(dir, "world_checker.py"), projection.worldCheckerPy);
+    writeFileSync(join(dir, "ports.py"), projection.portsPy);
+    const py = spawnSync("python3", ["-B", "-c", "import json,sys; from world_checker import WorldChecker; print(json.dumps([WorldChecker().step(r) for r in json.load(sys.stdin)]))"], { cwd: dir, input: JSON.stringify(requests), encoding: "utf8" });
+    assert.equal(py.status, 0, py.stderr);
+    const verdicts = JSON.parse(py.stdout) as StepVerdict[];
+    for (let i = 0; i < requests.length; i++) {
+      assert.equal(verdicts[i]?.violation?.code, ts[i]?.violation?.code);
+      assert.equal(verdicts[i]?.violation?.message, ts[i]?.violation?.message);
+      assert.deepEqual(verdicts[i]?.violation?.shortestCounterexampleTrace, ts[i]?.violation?.shortestCounterexampleTrace);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("oracle reports differences in violation messages and every trace field", async () => {
+  const changes: Array<[string, (verdict: any) => void]> = [
+    ["violation.message", (v) => { v.violation!.message = "mutated"; }],
+    ["trace[0].step", (v) => { v.violation!.shortestCounterexampleTrace[0]!.step = 999; }],
+    ["trace[0].state", (v) => { v.violation!.shortestCounterexampleTrace[0]!.state = "MUTANT"; }],
+    ["trace[0].action", (v) => { v.violation!.shortestCounterexampleTrace[0]!.action = "MUTANT"; }],
+    ["trace[0].proposedDirective", (v) => { v.violation!.shortestCounterexampleTrace[0]!.proposedDirective = "MUTANT"; }],
+    ["trace[0].eventPayload", (v) => { v.violation!.shortestCounterexampleTrace[0]!.eventPayload = { mutated: true }; }],
+  ];
+  for (const [expected, mutate] of changes) {
+    const report = await runDifferentialFuzzing(world, { runs: 1, stepsPerRun: 20, seed: 7,
+      pythonRunner: async (_requests, verdicts) => {
+        const copy = structuredClone(verdicts);
+        const rejected = copy[0]?.find((verdict) => !verdict.allowed);
+        assert.ok(rejected);
+        mutate(rejected);
+        return copy;
+      },
+    });
+    assert.ok(report.divergences[0]);
+    assert.ok(report.divergences[0].reason.startsWith(expected), report.divergences[0].reason);
+  }
+});
 
 test("same seed yields exactly the same generated requests", async () => {
   const sequences: TransitionStepRequest[][][] = [];
