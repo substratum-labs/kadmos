@@ -108,6 +108,7 @@ test("projects typecheckable ports.d.ts and world_checker.ts", () => {
       "--ignoreConfig",
       "--strict", "--noEmit", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
       join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
     ], { encoding: "utf8" });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
@@ -141,6 +142,7 @@ test("generated checker enforces payment guard, applies effects, and validates t
     const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
       join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
     ], { encoding: "utf8" });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);

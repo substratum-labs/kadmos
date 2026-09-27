@@ -50,6 +50,7 @@ test("reserved payload keys return security verdicts without changing state", as
     const build = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
       join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
     ], { encoding: "utf8" });
     assert.equal(build.status, 0, build.stderr);
@@ -74,7 +75,7 @@ test("reserved payload keys return security verdicts without changing state", as
       const verdict = gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY", eventPayload: deep });
       assert.equal(verdict.allowed, false);
       assert.equal(verdict.violation?.code, "SECURITY_VIOLATION");
-      assert.match(verdict.violation?.message ?? "", /depth exceeded/);
+      assert.match(verdict.violation?.message ?? "", /(?:depth|node count) exceeded/);
       assert.equal(verdict.currentState, "CREATED");
       assert.equal(gate.getState(), "CREATED");
       for (const payload of [new Date(), new Map(), new Number(1), new Proxy({}, { getPrototypeOf: () => Date.prototype }), new Proxy({}, {})]) {
@@ -85,6 +86,23 @@ test("reserved payload keys return security verdicts without changing state", as
         assert.equal(rejected.directiveAllowed, null);
         assert.equal(gate.getState(), "CREATED");
       }
+      const hostile = { transitionId: { toString() { hostile.proposedDirective = "DISPATCH_PAYMENT_GATEWAY"; return "INITIATE_PAYMENT"; } }, proposedDirective: "WRONG" };
+      const coerced = gate.step(hostile as unknown as Parameters<IWorldChecker["step"]>[0]);
+      assert.equal(coerced.allowed, false);
+      assert.equal(coerced.violation?.code, "SECURITY_VIOLATION");
+      assert.equal(hostile.proposedDirective, "WRONG");
+      assert.equal(gate.getState(), "CREATED");
+      for (const malformed of [null, [], { get transitionId() { throw new Error("read transitionId"); } },
+        { transitionId: "INITIATE_PAYMENT", get proposedDirective() { throw new Error("read proposedDirective"); } }]) {
+        const rejected = gate.step(malformed as unknown as Parameters<IWorldChecker["step"]>[0]);
+        assert.equal(rejected.violation?.code, "SECURITY_VIOLATION");
+        assert.equal(gate.getState(), "CREATED");
+      }
+      const shared = {};
+      const diamond = gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY", eventPayload: { left: shared, right: shared } });
+      assert.equal(diamond.violation?.code, "SECURITY_VIOLATION");
+      assert.match(diamond.violation?.message ?? "", /cyclic or shared object graph/);
+      assert.equal(gate.getState(), "CREATED");
       const request = { transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY", get eventPayload() {
         request.transitionId = "ABORT_UNPAID";
         request.proposedDirective = "CHANGED";
@@ -94,6 +112,11 @@ test("reserved payload keys return security verdicts without changing state", as
       assert.equal(accepted.allowed, true);
       assert.equal(accepted.directiveAllowed, "DISPATCH_PAYMENT_GATEWAY");
       assert.equal(gate.getState(), "PAYMENT_PENDING");
+      const firstFailure = gate.step({ transitionId: "BAD" });
+      const trace = firstFailure.violation!.shortestCounterexampleTrace;
+      try { (trace[0] as { action: string }).action = "CORRUPTED"; } catch { /* frozen trace is expected */ }
+      const nextFailure = gate.step({ transitionId: "BAD" });
+      assert.equal(nextFailure.violation?.shortestCounterexampleTrace[0]?.action, "INITIATE_PAYMENT");
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
@@ -111,6 +134,7 @@ test("event property evaluation ignores inherited object methods", async () => {
     const build = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
       join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
     ], { encoding: "utf8" });
     assert.equal(build.status, 0, build.stderr);
@@ -178,6 +202,7 @@ test("P0-3 reset atomicity (compiled): bad reset preserves PAID state and blocks
     const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
       join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
     ], { encoding: "utf8" });
     assert.equal(result.status, 0);
@@ -273,6 +298,7 @@ test("P2 logical operators: require boolean operands without coercion on both br
     const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
       join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
     ], { encoding: "utf8" });
     assert.equal(result.status, 0);
@@ -324,6 +350,7 @@ test("P1-1 initial invariant check: compiled checker constructor throws if defau
     const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
       join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
     ], { encoding: "utf8" });
     assert.equal(result.status, 0);

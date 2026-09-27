@@ -16,11 +16,14 @@ function deepFreeze<T>(obj: T): T {
   return obj;
 }
 
-export function sanitizePayload(raw: unknown, depth: number = 0): Record<string, unknown> | undefined {
+export function sanitizePayload(raw: unknown, depth: number = 0, seen: Set<object> = new Set<object>()): Record<string, unknown> | undefined {
   if (depth > 128) throw new Error("SECURITY_VIOLATION: payload depth exceeded");
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("INVALID_EVENT_PAYLOAD: must be an object");
   if (nodeTypes.isProxy(raw)) throw new Error("SECURITY_VIOLATION: proxy not permitted in eventPayload");
+  if (seen.has(raw)) throw new Error("SECURITY_VIOLATION: cyclic or shared object graph in payload");
+  if (seen.size >= 128) throw new Error("SECURITY_VIOLATION: payload node count exceeded");
+  seen.add(raw);
   if (Object.prototype.toString.call(raw) !== "[object Object]") {
     throw new Error("SECURITY_VIOLATION: non-plain object not permitted in eventPayload");
   }
@@ -41,7 +44,7 @@ export function sanitizePayload(raw: unknown, depth: number = 0): Record<string,
     const val = desc.value;
     let copy: unknown;
     if (typeof val === "object" && val !== null) {
-      copy = sanitizePayload(val, depth + 1);
+      copy = sanitizePayload(val, depth + 1, seen);
     } else if (typeof val === "function" || typeof val === "symbol") {
       throw new Error(`SECURITY_VIOLATION: ${typeof val} not permitted in eventPayload`);
     } else {
@@ -164,8 +167,27 @@ export function createWorldChecker(
       };
 
       try {
-        const snapshotAction = typeof request.transitionId === "string" ? request.transitionId : String(request.transitionId ?? "");
-        const snapshotDirective = request.proposedDirective === undefined ? undefined : (request.proposedDirective === null ? null : String(request.proposedDirective));
+        const rejectRequest = (message: string): StepVerdict => ({
+          allowed: false, previousState: snapshotState, currentState: snapshotState,
+          context: { ...snapshotContext }, directiveAllowed: null,
+          violation: { code: "SECURITY_VIOLATION", message,
+            shortestCounterexampleTrace: [...snapshotHistory, { step: snapshotHistory.length + 1, state: snapshotState, action: "<invalid>" }]
+              .map((r) => deepFreeze(structuredClone(r))) },
+        });
+        if (request === null || typeof request !== "object" || Array.isArray(request)) {
+          return rejectRequest("step request must be an object");
+        }
+        const descAction = Object.getOwnPropertyDescriptor(request, "transitionId");
+        const descDirective = Object.getOwnPropertyDescriptor(request, "proposedDirective");
+        if (descAction?.get || descAction?.set || descDirective?.get || descDirective?.set) {
+          return rejectRequest("Accessor property not permitted on step request");
+        }
+        if (typeof descAction?.value !== "string") return rejectRequest("transitionId must be a string");
+        if (descDirective?.value !== undefined && descDirective?.value !== null && typeof descDirective?.value !== "string") {
+          return rejectRequest("proposedDirective must be a string, null, or undefined");
+        }
+        const snapshotAction: string = descAction.value;
+        const snapshotDirective: string | null = descDirective?.value ?? null;
         let safePayload: Record<string, unknown> | undefined;
         try {
           safePayload = sanitizePayload(request.eventPayload);
@@ -184,7 +206,7 @@ export function createWorldChecker(
                 step: snapshotHistory.length + 1,
                 state: snapshotState,
                 action: snapshotAction,
-              }],
+              }].map((r) => deepFreeze(structuredClone(r))),
             },
           };
         }
@@ -194,7 +216,7 @@ export function createWorldChecker(
           state: snapshotState,
           action: snapshotAction,
           ...(safePayload === undefined ? {} : { eventPayload: safePayload }),
-          ...(snapshotDirective === undefined ? {} : { proposedDirective: snapshotDirective }),
+          ...(descDirective === undefined ? {} : { proposedDirective: snapshotDirective }),
         };
 
         const reject = (code: string, message: string, violatedInvariant?: string): StepVerdict => {
@@ -209,7 +231,7 @@ export function createWorldChecker(
               code,
               message,
               ...(violatedInvariant === undefined ? {} : { violatedInvariant }),
-              shortestCounterexampleTrace: [...snapshotHistory, record],
+              shortestCounterexampleTrace: [...snapshotHistory, record].map((r) => deepFreeze(structuredClone(r))),
             },
           };
         };
@@ -268,7 +290,7 @@ export function createWorldChecker(
         // Commit state transition atomically
         state = transition.to;
         context = candidateContext;
-        history.push(record);
+        history.push(deepFreeze(record));
 
         return {
           allowed: true,

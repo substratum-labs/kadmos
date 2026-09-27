@@ -12,6 +12,41 @@ const yaml = readFileSync(new URL("../../conformance/fixtures/order_settlement.w
 const world = parseWorldSpec(yaml);
 const run = (args: string[], cwd?: string) => spawnSync("python3", args, { cwd, encoding: "utf8" });
 
+test("Python request snapshot, shared graph, and trace isolation fail closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-py-snapshot-"));
+  try {
+    const projection = compileWorldSpecPython(world);
+    writeFileSync(join(dir, "ports.py"), projection.portsPy);
+    writeFileSync(join(dir, "world_checker.py"), projection.worldCheckerPy);
+    writeFileSync(join(dir, "check.py"), `from world_checker import WorldChecker
+c = WorldChecker()
+class Hostile(dict):
+    def get(self, key, default=None):
+        if key == 'eventPayload':
+            self['proposedDirective'] = 'DISPATCH_PAYMENT_GATEWAY'
+        return super().get(key, default)
+request = Hostile(transitionId='INITIATE_PAYMENT', proposedDirective='WRONG', eventPayload={})
+verdict = c.step(request)
+assert not verdict['allowed'] and verdict['violation']['code'] == 'SECURITY_VIOLATION', verdict
+assert c.get_state() == 'CREATED'
+for request in ({'transitionId': object()}, {'transitionId': 'INITIATE_PAYMENT', 'proposedDirective': object()}):
+    verdict = c.step(request)
+    assert verdict['violation']['code'] == 'SECURITY_VIOLATION', verdict
+shared = {}
+verdict = c.step({'transitionId': 'INITIATE_PAYMENT', 'proposedDirective': 'DISPATCH_PAYMENT_GATEWAY', 'eventPayload': {'left': shared, 'right': shared}})
+assert verdict['violation']['code'] == 'SECURITY_VIOLATION', verdict
+assert 'cyclic or shared object graph' in verdict['violation']['message']
+assert c.step({'transitionId': 'INITIATE_PAYMENT', 'proposedDirective': 'DISPATCH_PAYMENT_GATEWAY'})['allowed']
+first = c.step({'transitionId': 'BAD'})
+first['violation']['shortestCounterexampleTrace'][0]['action'] = 'CORRUPTED'
+second = c.step({'transitionId': 'BAD'})
+assert second['violation']['shortestCounterexampleTrace'][0]['action'] == 'INITIATE_PAYMENT', second
+`);
+    const py = run(["check.py"], dir);
+    assert.equal(py.status, 0, `${py.stdout}\n${py.stderr}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("Python payload boundary rejects reserved keys and depth, and converts numbers to float64", () => {
   const dir = mkdtempSync(join(tmpdir(), "kadmos-py-boundary-"));
   try {
