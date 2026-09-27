@@ -51,14 +51,16 @@ invariants:
     predicate: "retries <= max_retries"
   - id: INV-02-LOCK-TOKEN-CONSISTENCY
     predicate: "(state == 'ACTIVE' => lock_token != '') && (state != 'ACTIVE' => lock_token == '')"
-  - id: INV-03-NON-NEGATIVE-RETRIES
+  - id: INV-03-TERMINAL-LOCK-EMPTY
+    predicate: "(state == 'COMPLETED' || state == 'FAILED' || state == 'REVOKED') => lock_token == ''"
+  - id: INV-04-NON-NEGATIVE-RETRIES
     predicate: "retries >= 0"
 
 transitions:
   - id: ACQUIRE_LOCK
     from: WAITING
     to: ACTIVE
-    guard: "request.token != ''"
+    guard: "request.token != null && request.token != ''"
     directive: "DISPATCH_PAYLOAD"
     effects:
       - "lock_token = request.token"
@@ -66,7 +68,7 @@ transitions:
   - id: REPORT_SUCCESS
     from: ACTIVE
     to: COMPLETED
-    guard: "request.token == lock_token"
+    guard: "request.token != null && request.token != '' && request.token == lock_token"
     directive: "PERSIST_RESULT"
     effects:
       - "result_digest = request.result_digest"
@@ -74,7 +76,7 @@ transitions:
   - id: REPORT_RETRYABLE_FAILURE
     from: ACTIVE
     to: DELAYED_RETRY
-    guard: "request.token == lock_token && retries < max_retries"
+    guard: "request.token != null && request.token != '' && request.token == lock_token && retries < max_retries"
     directive: "SCHEDULE_BACKOFF"
     effects:
       - "retries = retries + 1"
@@ -89,7 +91,7 @@ transitions:
   - id: REPORT_FATAL_FAILURE
     from: ACTIVE
     to: FAILED
-    guard: "request.token == lock_token"
+    guard: "request.token != null && request.token != '' && request.token == lock_token"
     directive: "TRIGGER_DEAD_LETTER_ALERT"
     effects:
       - "failed_reason = request.reason"
@@ -97,7 +99,7 @@ transitions:
   - id: RETRY_EXHAUSTED
     from: ACTIVE
     to: FAILED
-    guard: "request.token == lock_token && retries >= max_retries"
+    guard: "request.token != null && request.token != '' && request.token == lock_token && retries >= max_retries"
     directive: "TRIGGER_DEAD_LETTER_ALERT"
     effects:
       - "failed_reason = request.reason"
@@ -112,7 +114,7 @@ transitions:
   - id: CANCEL_FROM_ACTIVE
     from: ACTIVE
     to: REVOKED
-    guard: true
+    guard: "(request.token != null && request.token != '' && request.token == lock_token) || (request.supervisor_token != null && request.supervisor_token != '')"
     directive: "NOTIFY_CANCELLATION"
     effects:
       - "lock_token = ''"
@@ -123,3 +125,11 @@ transitions:
     directive: "NOTIFY_CANCELLATION"
     effects:
       - "lock_token = ''"
+  - id: RECOVER_STALE_LEASE
+    from: ACTIVE
+    to: WAITING
+    guard: "request.supervisor_token != null && request.supervisor_token != ''"
+    directive: "EVICT_STALE_WORKER"
+    effects:
+      - "lock_token = ''"
+      - "lock_epoch = lock_epoch + 1"

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TypedDict, Literal, Protocol, Optional, Any, Dict, List
 
 WorldState = Literal["WAITING", "ACTIVE", "DELAYED_RETRY", "COMPLETED", "FAILED", "REVOKED"]
-WorldDirective = Literal["DISPATCH_PAYLOAD", "PERSIST_RESULT", "SCHEDULE_BACKOFF", "ENQUEUE_FOR_PICKUP", "TRIGGER_DEAD_LETTER_ALERT", "NOTIFY_CANCELLATION"]
+WorldDirective = Literal["DISPATCH_PAYLOAD", "PERSIST_RESULT", "SCHEDULE_BACKOFF", "ENQUEUE_FOR_PICKUP", "TRIGGER_DEAD_LETTER_ALERT", "NOTIFY_CANCELLATION", "EVICT_STALE_WORKER"]
 
 WorldContext = TypedDict("WorldContext", {"job_id": str, "lock_token": str, "lock_epoch": int, "retries": int, "max_retries": int, "result_digest": str, "failed_reason": str})
 

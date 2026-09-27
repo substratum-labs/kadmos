@@ -591,10 +591,10 @@ test("Python expression and payload handling matches TypeScript fail-closed beha
     const requests = ["OR", "IMPLIES", "MISSING"].map(transitionId => ({ transitionId }));
     const expected = [...requests.map(request => ts.step(request)), ts.step({ transitionId: "MISSING", eventPayload: { tags: [1] } })];
     for (let i = 0; i < expected.length; i++) {
-      assert.equal(actual.verdicts[i].violation.code, expected[i]!.violation?.code);
-      assert.equal(actual.verdicts[i].allowed, false);
+      assert.equal(actual.verdicts[i].allowed, expected[i]!.allowed);
+      assert.equal(actual.verdicts[i].violation?.code, expected[i]!.violation?.code);
     }
-    assert.deepEqual(actual.verdicts.map((verdict: any) => verdict.violation.code), ["GUARD_FAILED", "GUARD_FAILED", "GUARD_FAILED", "SECURITY_VIOLATION"]);
+    assert.deepEqual(actual.verdicts.map((verdict: any) => verdict.violation?.code ?? null), ["GUARD_FAILED", "GUARD_FAILED", null, "SECURITY_VIOLATION"]);
     assert.equal(actual.context.order_amount, 9999);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

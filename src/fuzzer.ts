@@ -66,11 +66,18 @@ function eventPayload(transition: TransitionDef, context: Readonly<Record<string
   const expressions = [transition.guard, ...transition.effects].filter((value): value is string => typeof value === "string");
   const payload: Record<string, unknown> = {};
   for (const expression of expressions) {
-    for (const match of expression.matchAll(/\bevent\.([A-Za-z_][A-Za-z_0-9]*)\b/g)) {
+    for (const match of expression.matchAll(/\b(?:event|request)\.([A-Za-z_][A-Za-z_0-9]*)\b/g)) {
       const key = match[1]!;
-      const equality = new RegExp(`event\\.${key}\\s*==\\s*([A-Za-z_][A-Za-z_0-9]*)|([A-Za-z_][A-Za-z_0-9]*)\\s*==\\s*event\\.${key}`).exec(expression);
+      const equality = new RegExp(`(?:event|request)\\.${key}\\s*==\\s*([A-Za-z_][A-Za-z_0-9]*)|([A-Za-z_][A-Za-z_0-9]*)\\s*==\\s*(?:event|request)\\.${key}`).exec(expression);
       const contextKey = equality?.[1] ?? equality?.[2];
-      payload[key] = contextKey && Object.hasOwn(context, contextKey) ? context[contextKey] : Math.floor(random() * 10);
+      const value = contextKey && Object.hasOwn(context, contextKey) ? context[contextKey] : undefined;
+      if (key.includes("supervisor")) payload[key] = "supervisor_token";
+      else if (key === "token" || key.includes("token")) payload[key] = (context.lock_token as string) || "worker_token";
+      else if (key === "result_digest") payload[key] = "digest_abc";
+      else if (key === "reason") payload[key] = "error_503";
+      else if (typeof value === "string") payload[key] = value || "val";
+      else if (typeof value === "number" && Number.isSafeInteger(value)) payload[key] = value;
+      else payload[key] = Math.floor(random() * 10);
     }
   }
   return payload;

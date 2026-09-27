@@ -74,13 +74,25 @@ export class JobWorker {
   async enqueue(): Promise<void> { await this.redis.lpush("jobs:wait", this.jobId); }
   async begin(token: string): Promise<boolean> {
     const id = await this.redis.rpoplpush("jobs:wait", "jobs:active");
-    if (id !== this.jobId) return false;
+    if (id === null) return false;
+    if (id !== this.jobId) {
+      await this.redis.lrem("jobs:active", 1, id);
+      await this.redis.lpush("jobs:wait", id);
+      return false;
+    }
     if (!this.permit("ACQUIRE_LOCK", "DISPATCH_PAYLOAD", { token })) {
       await this.redis.lrem("jobs:active", 1, id);
       await this.redis.lpush("jobs:wait", id);
       return false;
     }
     await this.redis.set(this.lockKey, token);
+    return true;
+  }
+  async recoverLease(supervisorToken: string): Promise<boolean> {
+    if (!this.permit("RECOVER_STALE_LEASE", "EVICT_STALE_WORKER", { supervisor_token: supervisorToken })) return false;
+    await this.redis.del(this.lockKey);
+    await this.redis.lrem("jobs:active", 1, this.jobId);
+    await this.enqueue();
     return true;
   }
   async succeed(token: string, result_digest: string): Promise<boolean> {
@@ -104,9 +116,17 @@ export class JobWorker {
   async wakeDue(now: number): Promise<boolean> {
     const due = await this.redis.zrangebyscore("jobs:delayed", "-inf", now);
     if (!due.includes(this.jobId)) return false;
-    if (!this.permit("RETRY_DELAY_ELAPSED", "ENQUEUE_FOR_PICKUP", {})) return false;
-    await this.redis.zrem("jobs:delayed", this.jobId);
-    await this.enqueue();
-    return true;
+    try {
+      if (!await this.redis.zrem("jobs:delayed", this.jobId)) return false;
+      await this.enqueue();
+      if (this.permit("RETRY_DELAY_ELAPSED", "ENQUEUE_FOR_PICKUP", {})) return true;
+    } catch (error) {
+      await this.redis.lrem("jobs:wait", 1, this.jobId);
+      await this.redis.zadd("jobs:delayed", now, this.jobId);
+      throw error;
+    }
+    await this.redis.lrem("jobs:wait", 1, this.jobId);
+    await this.redis.zadd("jobs:delayed", now, this.jobId);
+    return false;
   }
 }

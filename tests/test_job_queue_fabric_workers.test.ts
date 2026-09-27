@@ -59,9 +59,8 @@ test("TypeScript worker rejects stale settlement without deleting the new lock",
   const { redis, checker, worker } = setup();
   await worker.enqueue();
   assert.equal(await worker.begin("worker-a"), true);
-  checker.reset({ lock_epoch: 1 }); // Supervisor recovered an expired lease.
-  await redis.del("job-42:lock");
-  await worker.enqueue();
+  assert.equal(await worker.recoverLease("supervisor-token"), true);
+  assert.equal(checker.getState(), "WAITING");
   assert.equal(await worker.begin("worker-b"), true);
   assert.equal(await worker.succeed("worker-a", "stale"), false);
   assert.equal(worker.lastRejection?.violation?.code, "GUARD_FAILED");
@@ -82,11 +81,62 @@ test("TypeScript worker routes a fatal failure directly to dead letter", async (
   assert.equal(await redis.get("job-42:result"), null);
 });
 
-test("Python worker exercises the same four offline lifecycles", () => {
+test("Python worker exercises the offline lifecycles and Redis rollback", () => {
   const script = join(process.cwd(), "examples/job-queue-benchmark/python_worker.py");
   const run = spawnSync("python3", ["-B", script, "--self-test"], { encoding: "utf8" });
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(JSON.parse(run.stdout), {
-    happy: "COMPLETED", recovery: "COMPLETED", exhausted: "FAILED", fencing: "COMPLETED",
+    happy: "COMPLETED", recovery: "COMPLETED", exhausted: "FAILED", fencing: "COMPLETED", rollback: "DELAYED_RETRY",
   });
+});
+
+test("wakeDue restores delayed membership when queue insertion throws after mutation", async () => {
+  class ThrowingRedis extends MemoryRedis {
+    failWaitPush = false;
+    override async lpush(key: string, value: string): Promise<number> {
+      const count = await super.lpush(key, value);
+      if (key === "jobs:wait" && this.failWaitPush) { this.failWaitPush = false; throw new Error("injected Redis failure"); }
+      return count;
+    }
+  }
+  const redis = new ThrowingRedis();
+  const checker = new WorldChecker();
+  const worker = new JobWorker(redis, checker, "job-42");
+  await worker.enqueue();
+  assert.equal(await worker.begin("worker-a"), true);
+  assert.equal(await worker.fail("worker-a", "503", 100), true);
+  redis.failWaitPush = true;
+  await assert.rejects(worker.wakeDue(100), /injected Redis failure/);
+  assert.equal(checker.getState(), "DELAYED_RETRY");
+  assert.deepEqual(await redis.zrangebyscore("jobs:delayed", "-inf", 100), ["job-42"]);
+  assert.equal(await redis.lpop("jobs:wait"), null);
+  assert.equal(await worker.wakeDue(100), true);
+});
+
+test("begin leaves a foreign queued job available to its owner", async () => {
+  const redis = new MemoryRedis();
+  const worker = new JobWorker(redis, new WorldChecker(), "job-42");
+  await redis.lpush("jobs:wait", "job-99");
+  assert.equal(await worker.begin("worker-a"), false);
+  assert.equal(await redis.lpop("jobs:wait"), "job-99");
+  assert.equal(await redis.lpop("jobs:active"), null);
+});
+
+test("wakeDue restores the due job when the gate rejects", async () => {
+  const { redis, checker, worker } = setup();
+  await worker.enqueue();
+  assert.equal(await worker.begin("worker-a"), true);
+  assert.equal(await worker.fail("worker-a", "503", 100), true);
+  checker.reset();
+  assert.equal(await worker.wakeDue(100), false);
+  assert.deepEqual(await redis.zrangebyscore("jobs:delayed", "-inf", 100), ["job-42"]);
+  assert.equal(await redis.lpop("jobs:wait"), null);
+});
+
+test("begin returns a rejected job to wait when the lock token is empty", async () => {
+  const { redis, worker } = setup();
+  await worker.enqueue();
+  assert.equal(await worker.begin(""), false);
+  assert.equal(await redis.lpop("jobs:active"), null);
+  assert.equal(await redis.lpop("jobs:wait"), "job-42");
 });

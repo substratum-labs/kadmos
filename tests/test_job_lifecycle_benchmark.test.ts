@@ -19,11 +19,13 @@ const step = (gate: ReturnType<typeof createWorldChecker>, transitionId: string,
 test("JobWorld parses and compiles the complete six-state contract", () => {
   assert.deepEqual(spec.states.map((state) => state.id), ["WAITING", "ACTIVE", "DELAYED_RETRY", "COMPLETED", "FAILED", "REVOKED"]);
   assert.deepEqual(spec.states.filter((state) => state.terminal).map((state) => state.id), ["COMPLETED", "FAILED", "REVOKED"]);
-  assert.equal(spec.transitions.length, 9);
-  assert.deepEqual(spec.invariants.map((invariant) => invariant.id), ["INV-01-RETRY-BOUND", "INV-02-LOCK-TOKEN-CONSISTENCY", "INV-03-NON-NEGATIVE-RETRIES"]);
+  assert.equal(spec.transitions.length, 10);
+  assert.deepEqual(spec.invariants.map((invariant) => invariant.id), ["INV-01-RETRY-BOUND", "INV-02-LOCK-TOKEN-CONSISTENCY", "INV-03-TERMINAL-LOCK-EMPTY", "INV-04-NON-NEGATIVE-RETRIES"]);
   const compiled = compileWorldSpec(spec);
   assert.match(compiled.portsDts, /export type WorldState/);
   assert.match(compiled.worldCheckerTs, /REPORT_RETRYABLE_FAILURE/);
+  assert.match(compiled.worldCheckerTs, /Transition \'\$\{snapshotAction\}\' is not legal from state \'\$\{snapshotState\}\'/);
+  for (const message of ["Invalid effect assignment target", "Effect expression has wrong type", "Effect evaluation failed"]) assert.ok(compiled.worldCheckerTs.includes(message));
 });
 
 test("kadmos graph emits Mermaid with states and directives", () => {
@@ -45,9 +47,13 @@ test("kadmos compile --lang all emits TypeScript and Python projections", () => 
 });
 
 test("zombie Worker A cannot settle when Worker B owns the current token", () => {
-  const gate = createWorldChecker(spec, { lock_epoch: 1 }); // Supervisor snapshot after Worker A lease expiry.
+  const gate = createWorldChecker(spec);
+  assert.equal(step(gate, "ACQUIRE_LOCK", "worker_A").allowed, true);
+  const recovered = gate.step({ transitionId: "RECOVER_STALE_LEASE", proposedDirective: "EVICT_STALE_WORKER", eventPayload: { supervisor_token: "supervisor-token" } });
+  assert.equal(recovered.allowed, true);
+  assert.equal(recovered.currentState, "WAITING");
   assert.equal(step(gate, "ACQUIRE_LOCK", "worker_B").allowed, true);
-  assert.equal(gate.getContext().lock_epoch, 2);
+  assert.equal(gate.getContext().lock_epoch, 3);
   const before = gate.getContext();
   const stale = step(gate, "REPORT_SUCCESS", "worker_A");
   assert.equal(stale.allowed, false);
@@ -103,7 +109,20 @@ for (const terminal of ["COMPLETED", "FAILED", "REVOKED"] as const) {
 }
 
 test("JobWorld passes cross-language differential fuzzing with zero divergences", async () => {
-  const report = await runDifferentialFuzzing(spec, { runs: 10, stepsPerRun: 25, seed: 42 });
+  const report = await runDifferentialFuzzing(spec, { runs: 50, stepsPerRun: 40, seed: 42 });
   assert.equal(report.passed, true);
   assert.equal(report.divergences.length, 0);
+  assert.equal(report.stateCoverage.ratio, 1, JSON.stringify(report.stateCoverage));
+  assert.ok(report.transitionCoverage.ratio >= 0.9, JSON.stringify(report.transitionCoverage));
+});
+
+test("ACTIVE requires a nonempty worker token or supervisor token for exits", () => {
+  const gate = createWorldChecker(spec);
+  assert.equal(step(gate, "ACQUIRE_LOCK", "").allowed, false);
+  assert.equal(step(gate, "ACQUIRE_LOCK", "worker").allowed, true);
+  const cancel = gate.step({ transitionId: "CANCEL_FROM_ACTIVE", proposedDirective: "NOTIFY_CANCELLATION", eventPayload: {} });
+  assert.equal(cancel.allowed, false);
+  const recover = gate.step({ transitionId: "RECOVER_STALE_LEASE", proposedDirective: "EVICT_STALE_WORKER", eventPayload: { supervisor_token: "" } });
+  assert.equal(recover.allowed, false);
+  assert.equal(gate.getState(), "ACTIVE");
 });

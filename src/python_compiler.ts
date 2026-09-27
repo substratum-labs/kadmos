@@ -150,7 +150,7 @@ def evaluate_world(expression: str | bool, environment: dict[str, Any]) -> Any:
                     raise ValueError("INVALID_EXPRESSION: property")
                 property_name = tokens[position]
                 position += 1
-                left = left.get(property_name, _UNDEFINED) if type(left) is dict and property_name in left else _UNDEFINED
+                left = left.get(property_name) if type(left) is dict and property_name in left else None
         else:
             raise ValueError("INVALID_EXPRESSION: invalid operand")
         while position < len(tokens):

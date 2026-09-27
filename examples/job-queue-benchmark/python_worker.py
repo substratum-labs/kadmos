@@ -87,13 +87,25 @@ class JobWorker:
 
     def begin(self, token: str) -> bool:
         job_id = self.redis.rpoplpush("jobs:wait", "jobs:active")
+        if job_id is None:
+            return False
         if job_id != self.job_id:
+            self.redis.lrem("jobs:active", 1, job_id)
+            self.redis.lpush("jobs:wait", job_id)
             return False
         if not self.permit("ACQUIRE_LOCK", "DISPATCH_PAYLOAD", token=token):
             self.redis.lrem("jobs:active", 1, job_id)
             self.redis.lpush("jobs:wait", job_id)
             return False
         self.redis.set(f"{self.job_id}:lock", token)
+        return True
+
+    def recover_lease(self, supervisor_token: str) -> bool:
+        if not self.permit("RECOVER_STALE_LEASE", "EVICT_STALE_WORKER", supervisor_token=supervisor_token):
+            return False
+        self.redis.delete(f"{self.job_id}:lock")
+        self.redis.lrem("jobs:active", 1, self.job_id)
+        self.enqueue()
         return True
 
     def succeed(self, token: str, result_digest: str) -> bool:
@@ -122,11 +134,21 @@ class JobWorker:
 
     def wake_due(self, now: float) -> bool:
         due = self.redis.zrangebyscore("jobs:delayed", "-inf", now)
-        if self.job_id not in due or not self.permit("RETRY_DELAY_ELAPSED", "ENQUEUE_FOR_PICKUP"):
+        if self.job_id not in due:
             return False
-        self.redis.zrem("jobs:delayed", self.job_id)
-        self.enqueue()
-        return True
+        try:
+            if not self.redis.zrem("jobs:delayed", self.job_id):
+                return False
+            self.enqueue()
+            if self.permit("RETRY_DELAY_ELAPSED", "ENQUEUE_FOR_PICKUP"):
+                return True
+        except Exception:
+            self.redis.lrem("jobs:wait", 1, self.job_id)
+            self.redis.zadd("jobs:delayed", {self.job_id: now})
+            raise
+        self.redis.lrem("jobs:wait", 1, self.job_id)
+        self.redis.zadd("jobs:delayed", {self.job_id: now})
+        return False
 
 
 def self_test() -> dict[str, str]:
@@ -137,9 +159,7 @@ def self_test() -> dict[str, str]:
         worker.enqueue()
         if scenario == "fencing":
             assert worker.begin("worker-a")
-            checker.reset({"lock_epoch": 1})  # Supervisor recovered expired lease.
-            redis.delete("job-42:lock")
-            worker.enqueue()
+            assert worker.recover_lease("supervisor-token")
             assert worker.begin("worker-b")
             assert not worker.succeed("worker-a", "stale")
             assert worker.last_rejection["violation"]["code"] == "GUARD_FAILED"
@@ -167,6 +187,31 @@ def self_test() -> dict[str, str]:
                 assert redis.lpop("jobs:dead") == "job-42"
         assert redis.get("job-42:lock") is None
         outcomes[scenario] = checker.get_state()
+    class ThrowingRedis(MemoryRedis):
+        fail_wait_push = False
+
+        def lpush(self, key: str, value: str) -> int:
+            count = super().lpush(key, value)
+            if key == "jobs:wait" and self.fail_wait_push:
+                self.fail_wait_push = False
+                raise RuntimeError("injected Redis failure")
+            return count
+
+    redis, checker = ThrowingRedis(), WorldChecker()
+    worker = JobWorker(redis, checker, "job-42")
+    worker.enqueue()
+    assert worker.begin("worker-a") and worker.fail("worker-a", "503", 100)
+    redis.fail_wait_push = True
+    try:
+        worker.wake_due(100)
+        raise AssertionError("Redis failure was not propagated")
+    except RuntimeError as error:
+        assert str(error) == "injected Redis failure"
+    assert checker.get_state() == "DELAYED_RETRY"
+    assert redis.zrangebyscore("jobs:delayed", "-inf", 100) == ["job-42"]
+    assert redis.lpop("jobs:wait") is None
+    assert worker.wake_due(100)
+    outcomes["rollback"] = "DELAYED_RETRY"
     return outcomes
 
 

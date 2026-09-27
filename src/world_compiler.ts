@@ -243,7 +243,7 @@ export function compileWorldSpec(spec: WorldSpec): WorldProjection {
     "        return { allowed: false, previousState: snapshotState, currentState: snapshotState, context: this.getContext(), directiveAllowed: null, violation: { code, message, ...(violatedInvariant === undefined ? {} : { violatedInvariant }), shortestCounterexampleTrace: [...snapshotHistory, record].map((r) => deepFreezeWorld(structuredClone(r))) } };",
     "      };",
     "      const transition = world.transitions.find((item) => item.id === snapshotAction && item.from === snapshotState);",
-    '      if (!transition) return reject(stateDefinitions.some((item) => item.id === snapshotState && item.terminal === true) ? "ILLEGAL_TRANSITION" : "INVALID_TRANSITION", `Transition "${snapshotAction}" is not legal from state "${snapshotState}"`);',
+    '      if (!transition) return reject(stateDefinitions.some((item) => item.id === snapshotState && item.terminal === true) ? "ILLEGAL_TRANSITION" : "INVALID_TRANSITION", `Transition \'${snapshotAction}\' is not legal from state \'${snapshotState}\'`);',
     '      if ((snapshotDirective ?? null) !== transition.directive) return reject("UNAUTHORIZED_DIRECTIVE", "Directive does not match declared transition");',
     "      const env = (at: string, values: Record<string, number | string>): Record<string, unknown> => ({ ...values, state: at, event: safePayload ?? {}, request: safePayload ?? {} });",
     "      try {",
@@ -254,12 +254,12 @@ export function compileWorldSpec(spec: WorldSpec): WorldProjection {
     "      try {",
     "        for (const effect of transition.effects) {",
     "          const match = /^([A-Za-z_][A-Za-z_0-9]*)\\s*=\\s*(.+)$/.exec(effect);",
-    '          if (!match || !Object.hasOwn(world.context, match[1]!)) return reject("INVALID_EFFECT", "Invalid effect target");',
+    '          if (!match || !Object.hasOwn(world.context, match[1]!)) return reject("INVALID_EFFECT", "Invalid effect assignment target");',
     "          const value = evaluateWorld(match[2]!, env(transition.to, candidate));",
-    '          if (contextDefinitions[match[1]!]!.type === "string" ? typeof value !== "string" : typeof value !== "number" || !Number.isSafeInteger(value)) return reject("INVALID_EFFECT", "Invalid effect result");',
+    '          if (contextDefinitions[match[1]!]!.type === "string" ? typeof value !== "string" : typeof value !== "number" || !Number.isSafeInteger(value)) return reject("INVALID_EFFECT", "Effect expression has wrong type");',
     "          candidate[match[1]!] = value as string | number;",
     "        }",
-    '      } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("INVALID_EFFECT", "Effect execution failed"); }',
+    '      } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("INVALID_EFFECT", "Effect evaluation failed"); }',
     "      const boundError = this.checkBounds(candidate);",
     '      if (boundError) return reject("INVALID_BOUNDS", `Context bound failed on "${boundError}"`);',
     "      const violatedInv = this.checkInvariants(transition.to, candidate, safePayload);",
@@ -339,7 +339,7 @@ function evaluateWorld(expression: string | boolean, env: Record<string, unknown
     else if (/^\\d/.test(token)) left = Number(token);
     else if (/^[A-Za-z_]/.test(token)) {
       left = env[token];
-      while (tokens[index] === ".") { index++; const property = tokens[index++]; if (!property || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(property)) throw new Error("INVALID_EXPRESSION"); left = left && typeof left === "object" && Object.hasOwn(left, property) ? (left as Record<string, unknown>)[property] : undefined; }
+      while (tokens[index] === ".") { index++; const property = tokens[index++]; if (!property || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(property)) throw new Error("INVALID_EXPRESSION"); left = left && typeof left === "object" && Object.hasOwn(left, property) ? (left as Record<string, unknown>)[property] : null; }
     } else throw new Error("INVALID_EXPRESSION");
     while (true) {
       const operator = tokens[index];
