@@ -103,14 +103,48 @@ test("reserved payload keys return security verdicts without changing state", as
       assert.equal(diamond.violation?.code, "SECURITY_VIOLATION");
       assert.match(diamond.violation?.message ?? "", /cyclic or shared object graph/);
       assert.equal(gate.getState(), "CREATED");
-      const request = { transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY", get eventPayload() {
-        request.transitionId = "ABORT_UNPAID";
-        request.proposedDirective = "CHANGED";
-        return {};
+      const initiated = gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY" });
+      assert.equal(initiated.allowed, true);
+      let payloadGetterCalled = false;
+      const request = { transitionId: "CONFIRM_PAYMENT", get eventPayload() {
+        payloadGetterCalled = true;
+        (gate as unknown as { state: string; context: Record<string, number>; history: unknown[] }).state = "PAID";
+        (gate as unknown as { state: string; context: Record<string, number>; history: unknown[] }).context = { escrow_balance: 5000 };
+        (gate as unknown as { state: string; context: Record<string, number>; history: unknown[] }).history = [];
+        return { captured_amount: 5000 };
       } };
-      const accepted = gate.step(request);
-      assert.equal(accepted.allowed, true);
-      assert.equal(accepted.directiveAllowed, "DISPATCH_PAYMENT_GATEWAY");
+      const getterVerdict = gate.step(request);
+      assert.equal(getterVerdict.violation?.code, "SECURITY_VIOLATION");
+      assert.equal(payloadGetterCalled, false);
+      assert.equal(gate.getState(), "PAYMENT_PENDING");
+      assert.equal(gate.getContext().escrow_balance, 0);
+      assert.equal(getterVerdict.violation?.shortestCounterexampleTrace.length, 2);
+      let toStringCalled = false;
+      const hostileId = { toString() {
+        toStringCalled = true;
+        (gate as unknown as { state: string }).state = "PAID";
+        return "CONFIRM_PAYMENT";
+      } };
+      const hostileVerdict = gate.step({ transitionId: hostileId as unknown as string, eventPayload: { captured_amount: 5000 } });
+      assert.equal(hostileVerdict.violation?.code, "SECURITY_VIOLATION");
+      assert.equal(toStringCalled, false);
+      assert.equal(hostileVerdict.violation?.shortestCounterexampleTrace.at(-1)?.action, "<invalid>");
+      assert.equal(gate.getState(), "PAYMENT_PENDING");
+      assert.equal(gate.getContext().escrow_balance, 0);
+      (gate as unknown as { state: string; context: Record<string, number>; history: unknown[] }).state = "PAID";
+      (gate as unknown as { state: string; context: Record<string, number>; history: unknown[] }).context = { escrow_balance: 5000 };
+      (gate as unknown as { state: string; context: Record<string, number>; history: unknown[] }).history = [];
+      assert.equal(gate.getState(), "PAYMENT_PENDING");
+      assert.equal(gate.getContext().escrow_balance, 0);
+      const proxyVerdict = gate.step(new Proxy({ transitionId: "CONFIRM_PAYMENT", eventPayload: { captured_amount: 5000 } }, {
+        get() { (gate as unknown as { state: string }).state = "PAID"; throw Error("proxy read"); },
+        getOwnPropertyDescriptor() { (gate as unknown as { state: string }).state = "PAID"; throw Error("proxy descriptor"); },
+      }));
+      assert.equal(proxyVerdict.violation?.code, "SECURITY_VIOLATION");
+      assert.equal(gate.getState(), "PAYMENT_PENDING");
+      assert.equal(gate.getContext().escrow_balance, 0);
+      const confirmWithoutCapture = gate.step({ transitionId: "CONFIRM_PAYMENT" });
+      assert.equal(confirmWithoutCapture.allowed, false);
       assert.equal(gate.getState(), "PAYMENT_PENDING");
       const firstFailure = gate.step({ transitionId: "BAD" });
       const trace = firstFailure.violation!.shortestCounterexampleTrace;

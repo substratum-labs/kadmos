@@ -304,21 +304,29 @@ class WorldChecker(IWorldChecker):
         self._busy = True
         previous = self.state
         original_context = dict(self.context)
-        original_history = list(self.history)
+        original_history = copy.deepcopy(self.history)
+        def rollback() -> None:
+            self.state = previous
+            self.context = dict(original_context)
+            self.history = copy.deepcopy(original_history)
         try:
             def security_reject(message: str, action: str = "<invalid>") -> dict[str, Any]:
+                rollback()
                 trace = [copy.deepcopy(r) for r in original_history] + [{"step": len(original_history) + 1, "state": previous, "action": action}]
                 return {"allowed": False, "previousState": previous, "currentState": previous, "context": original_context, "directiveAllowed": None, "violation": {"code": "SECURITY_VIOLATION", "message": message, "shortestCounterexampleTrace": trace}}
             if type(request) is not dict:
                 return security_reject("step request must be a dict")
-            action = request.get("transitionId")
-            if type(action) is not str:
-                return security_reject("transitionId must be a string", str(action))
-            proposed = request.get("proposedDirective")
-            if proposed is not None and type(proposed) is not str:
+            action_val = request.get("transitionId")
+            if type(action_val) is not str:
+                return security_reject("transitionId must be a string")
+            action = action_val
+            proposed_val = request.get("proposedDirective")
+            if proposed_val is not None and type(proposed_val) is not str:
                 return security_reject("proposedDirective must be a string or None", action)
+            proposed = proposed_val
+            raw_payload = request.get("eventPayload")
             try:
-                payload = sanitize_world_payload(request.get("eventPayload"))
+                payload = sanitize_world_payload(raw_payload)
             except Exception as error:
                 return security_reject(str(error), action)
             record = {"step": len(original_history) + 1, "state": previous, "action": action}
@@ -328,6 +336,7 @@ class WorldChecker(IWorldChecker):
                 record["proposedDirective"] = proposed
 
             def reject(code: str, message: str, invariant: str | None = None) -> dict[str, Any]:
+                rollback()
                 violation = {"code": code, "message": message, "shortestCounterexampleTrace": [copy.deepcopy(r) for r in original_history] + [copy.deepcopy(record)]}
                 if invariant is not None:
                     violation["violatedInvariant"] = invariant

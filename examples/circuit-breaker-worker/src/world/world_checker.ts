@@ -96,18 +96,18 @@ function sanitizeWorldPayload(raw: unknown, depth: number = 0, seen: Set<object>
 }
 
 export class WorldChecker implements IWorldChecker {
-  private state: WorldState = "IDLE" as WorldState;
-  private context: Record<string, number> = {"retry_count":0,"max_retries":3,"consecutive_failures":0,"backoff_seconds":0};
-  private history: StepRecord[] = [];
-  private busy: boolean = false;
+  #state: WorldState = "IDLE" as WorldState;
+  #context: Record<string, number> = {"retry_count":0,"max_retries":3,"consecutive_failures":0,"backoff_seconds":0};
+  #history: StepRecord[] = [];
+  #busy: boolean = false;
   constructor() {
-    const invalid = this.checkBounds(this.context);
+    const invalid = this.checkBounds(this.#context);
     if (invalid) throw new Error(`INVALID_BOUNDS: ${invalid}`);
-    const violated = this.checkInvariants("IDLE", this.context);
+    const violated = this.checkInvariants("IDLE", this.#context);
     if (violated) throw new Error(`INITIAL_INVARIANT_FAILED: ${violated}`);
   }
-  getState(): WorldState { return this.state; }
-  getContext(): WorldContext { return { ...this.context } as unknown as WorldContext; }
+  getState(): WorldState { return this.#state; }
+  getContext(): WorldContext { return { ...this.#context } as unknown as WorldContext; }
   private checkBounds(values: Record<string, number>): string | undefined {
     for (const [key, definition] of Object.entries(world.context)) {
       const value = values[key];
@@ -128,12 +128,12 @@ export class WorldChecker implements IWorldChecker {
     return undefined;
   }
   reset(initialContext: Partial<WorldContext> = {}): void {
-    if (this.busy) throw new Error("REENTRANCY_DETECTED: reset called during active evaluation");
-    this.busy = true;
-    const snapshotState = this.state;
-    const snapshotContext = { ...this.context };
-    const snapshotHistory = [...this.history];
-    const rollback = () => { this.state = snapshotState; this.context = { ...snapshotContext }; this.history = [...snapshotHistory]; };
+    if (this.#busy) throw new Error("REENTRANCY_DETECTED: reset called during active evaluation");
+    this.#busy = true;
+    const snapshotState = this.#state;
+    const snapshotContext = { ...this.#context };
+    const snapshotHistory = structuredClone(this.#history);
+    const rollback = () => { this.#state = snapshotState; this.#context = { ...snapshotContext }; this.#history = structuredClone(snapshotHistory); };
     try {
       const candidate: Record<string, number> = { ...{"retry_count":0,"max_retries":3,"consecutive_failures":0,"backoff_seconds":0} };
       for (const [name, value] of Object.entries(initialContext)) {
@@ -144,33 +144,34 @@ export class WorldChecker implements IWorldChecker {
       if (invalid) throw new Error(`INVALID_BOUNDS: ${invalid}`);
       const violated = this.checkInvariants("IDLE", candidate);
       if (violated) throw new Error(`INITIAL_INVARIANT_FAILED: ${violated}`);
-      this.state = "IDLE" as WorldState;
-      this.context = candidate;
-      this.history = [];
+      this.#state = "IDLE" as WorldState;
+      this.#context = candidate;
+      this.#history = [];
     } catch (e) {
       rollback();
       throw e;
-    } finally { this.busy = false; }
+    } finally { this.#busy = false; }
   }
   step(request: TransitionStepRequest): StepVerdict {
-    if (this.busy) throw new Error("REENTRANCY_DETECTED: step called during active evaluation");
-    this.busy = true;
-    const snapshotState = this.state;
-    const snapshotContext = { ...this.context };
-    const snapshotHistory = [...this.history];
-    const rollback = () => { this.state = snapshotState; this.context = { ...snapshotContext }; this.history = [...snapshotHistory]; };
+    if (this.#busy) throw new Error("REENTRANCY_DETECTED: step called during active evaluation");
+    this.#busy = true;
+    const snapshotState = this.#state;
+    const snapshotContext = { ...this.#context };
+    const snapshotHistory = structuredClone(this.#history);
+    const rollback = () => { this.#state = snapshotState; this.#context = { ...snapshotContext }; this.#history = structuredClone(snapshotHistory); };
     try {
-      const rejectRequest = (message: string): StepVerdict => ({ allowed: false, previousState: snapshotState, currentState: snapshotState, context: this.getContext(), directiveAllowed: null, violation: { code: "SECURITY_VIOLATION", message, shortestCounterexampleTrace: [...snapshotHistory, { step: snapshotHistory.length + 1, state: snapshotState, action: "<invalid>" }].map((r) => deepFreezeWorld(structuredClone(r))) } });
-      if (request === null || typeof request !== "object" || Array.isArray(request)) return rejectRequest("step request must be an object");
+      const rejectRequest = (message: string): StepVerdict => { rollback(); return { allowed: false, previousState: snapshotState, currentState: snapshotState, context: this.getContext(), directiveAllowed: null, violation: { code: "SECURITY_VIOLATION", message, shortestCounterexampleTrace: [...snapshotHistory, { step: snapshotHistory.length + 1, state: snapshotState, action: "<invalid>" }].map((r) => deepFreezeWorld(structuredClone(r))) } }; };
+      if (request === null || typeof request !== "object" || nodeTypes.isProxy(request) || Array.isArray(request)) return rejectRequest("step request must be an object");
       const descAction = Object.getOwnPropertyDescriptor(request, "transitionId");
       const descDirective = Object.getOwnPropertyDescriptor(request, "proposedDirective");
-      if (descAction?.get || descAction?.set || descDirective?.get || descDirective?.set) return rejectRequest("Accessor property not permitted on step request");
+      const descPayload = Object.getOwnPropertyDescriptor(request, "eventPayload");
+      if (descAction?.get || descAction?.set || descDirective?.get || descDirective?.set || descPayload?.get || descPayload?.set) return rejectRequest("Accessor property not permitted on step request");
       if (typeof descAction?.value !== "string") return rejectRequest("transitionId must be a string");
       if (descDirective?.value !== undefined && descDirective?.value !== null && typeof descDirective?.value !== "string") return rejectRequest("proposedDirective must be a string, null, or undefined");
       const snapshotAction: string = descAction.value;
       const snapshotDirective: string | null = descDirective?.value ?? null;
       let safePayload: Record<string, unknown> | undefined;
-      try { safePayload = sanitizeWorldPayload(request.eventPayload); } catch (e: unknown) {
+      try { safePayload = sanitizeWorldPayload(descPayload?.value); } catch (e: unknown) {
         rollback();
         return { allowed: false, previousState: snapshotState, currentState: snapshotState, context: this.getContext(), directiveAllowed: null, violation: { code: "SECURITY_VIOLATION", message: e instanceof Error ? e.message : "Invalid payload", shortestCounterexampleTrace: [...snapshotHistory, { step: snapshotHistory.length + 1, state: snapshotState, action: snapshotAction }].map((r) => deepFreezeWorld(structuredClone(r))) } };
       }
@@ -179,15 +180,15 @@ export class WorldChecker implements IWorldChecker {
         rollback();
         return { allowed: false, previousState: snapshotState, currentState: snapshotState, context: this.getContext(), directiveAllowed: null, violation: { code, message, ...(violatedInvariant === undefined ? {} : { violatedInvariant }), shortestCounterexampleTrace: [...snapshotHistory, record].map((r) => deepFreezeWorld(structuredClone(r))) } };
       };
-      const transition = world.transitions.find((item) => item.id === snapshotAction && item.from === this.state);
-      if (!transition) return reject("INVALID_TRANSITION", `Transition "${snapshotAction}" is not legal from state "${this.state}"`);
+      const transition = world.transitions.find((item) => item.id === snapshotAction && item.from === snapshotState);
+      if (!transition) return reject("INVALID_TRANSITION", `Transition "${snapshotAction}" is not legal from state "${snapshotState}"`);
       if ((snapshotDirective ?? null) !== transition.directive) return reject("UNAUTHORIZED_DIRECTIVE", "Directive does not match declared transition");
       const env = (at: string, values: Record<string, number>): Record<string, unknown> => ({ ...values, state: at, event: safePayload ?? {} });
       try {
-        const guardVal = evaluateWorld(transition.guard, env(this.state, this.context));
+        const guardVal = evaluateWorld(transition.guard, env(this.#state, this.#context));
         if (typeof guardVal !== "boolean" || !guardVal) return reject("GUARD_FAILED", "Guard condition failed");
       } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("GUARD_FAILED", "Guard evaluation failed"); }
-      const candidate = { ...this.context };
+      const candidate = { ...this.#context };
       try {
         for (const effect of transition.effects) {
           const match = /^([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.+)$/.exec(effect);
@@ -201,10 +202,10 @@ export class WorldChecker implements IWorldChecker {
       if (boundError) return reject("INVALID_BOUNDS", `Context bound failed on "${boundError}"`);
       const violatedInv = this.checkInvariants(transition.to, candidate, safePayload);
       if (violatedInv) return reject("INVARIANT_FAILED", `Invariant violation: "${violatedInv}"`, violatedInv);
-      this.state = transition.to as WorldState;
-      this.context = candidate;
-      this.history.push(deepFreezeWorld(record));
-      return { allowed: true, previousState: snapshotState, currentState: this.state, context: this.getContext(), directiveAllowed: transition.directive as StepVerdict["directiveAllowed"] };
-    } finally { this.busy = false; }
+      this.#state = transition.to as WorldState;
+      this.#context = candidate;
+      this.#history.push(deepFreezeWorld(record));
+      return { allowed: true, previousState: snapshotState, currentState: this.#state, context: this.getContext(), directiveAllowed: transition.directive as StepVerdict["directiveAllowed"] };
+    } finally { this.#busy = false; }
   }
 }

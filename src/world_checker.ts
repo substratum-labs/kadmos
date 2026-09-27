@@ -158,28 +158,32 @@ export function createWorldChecker(
 
       const snapshotState = state;
       const snapshotContext = { ...context };
-      const snapshotHistory = [...history];
+      const snapshotHistory = structuredClone(history);
 
       const rollback = () => {
         state = snapshotState;
         context = { ...snapshotContext };
-        history = [...snapshotHistory];
+        history = structuredClone(snapshotHistory);
       };
 
       try {
-        const rejectRequest = (message: string): StepVerdict => ({
-          allowed: false, previousState: snapshotState, currentState: snapshotState,
-          context: { ...snapshotContext }, directiveAllowed: null,
-          violation: { code: "SECURITY_VIOLATION", message,
-            shortestCounterexampleTrace: [...snapshotHistory, { step: snapshotHistory.length + 1, state: snapshotState, action: "<invalid>" }]
-              .map((r) => deepFreeze(structuredClone(r))) },
-        });
-        if (request === null || typeof request !== "object" || Array.isArray(request)) {
+        const rejectRequest = (message: string): StepVerdict => {
+          rollback();
+          return {
+            allowed: false, previousState: snapshotState, currentState: snapshotState,
+            context: { ...snapshotContext }, directiveAllowed: null,
+            violation: { code: "SECURITY_VIOLATION", message,
+              shortestCounterexampleTrace: [...snapshotHistory, { step: snapshotHistory.length + 1, state: snapshotState, action: "<invalid>" }]
+                .map((r) => deepFreeze(structuredClone(r))) },
+          };
+        };
+        if (request === null || typeof request !== "object" || nodeTypes.isProxy(request) || Array.isArray(request)) {
           return rejectRequest("step request must be an object");
         }
         const descAction = Object.getOwnPropertyDescriptor(request, "transitionId");
         const descDirective = Object.getOwnPropertyDescriptor(request, "proposedDirective");
-        if (descAction?.get || descAction?.set || descDirective?.get || descDirective?.set) {
+        const descPayload = Object.getOwnPropertyDescriptor(request, "eventPayload");
+        if (descAction?.get || descAction?.set || descDirective?.get || descDirective?.set || descPayload?.get || descPayload?.set) {
           return rejectRequest("Accessor property not permitted on step request");
         }
         if (typeof descAction?.value !== "string") return rejectRequest("transitionId must be a string");
@@ -190,7 +194,7 @@ export function createWorldChecker(
         const snapshotDirective: string | null = descDirective?.value ?? null;
         let safePayload: Record<string, unknown> | undefined;
         try {
-          safePayload = sanitizePayload(request.eventPayload);
+          safePayload = sanitizePayload(descPayload?.value);
         } catch (e: unknown) {
           rollback();
           return {
@@ -236,9 +240,9 @@ export function createWorldChecker(
           };
         };
 
-        const transition = spec.transitions.find((item) => item.id === snapshotAction && item.from === state);
+        const transition = spec.transitions.find((item) => item.id === snapshotAction && item.from === snapshotState);
         if (!transition) {
-          return reject("INVALID_TRANSITION", `Transition '${snapshotAction}' is not legal from state '${state}'`);
+          return reject("INVALID_TRANSITION", `Transition '${snapshotAction}' is not legal from state '${snapshotState}'`);
         }
 
         if ((snapshotDirective ?? null) !== transition.directive) {

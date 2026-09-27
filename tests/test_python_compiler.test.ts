@@ -12,6 +12,55 @@ const yaml = readFileSync(new URL("../../conformance/fixtures/order_settlement.w
 const world = parseWorldSpec(yaml);
 const run = (args: string[], cwd?: string) => spawnSync("python3", args, { cwd, encoding: "utf8" });
 
+test("Python rejects hostile request values and restores every machine field", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-py-hostile-"));
+  try {
+    const projection = compileWorldSpecPython(world);
+    writeFileSync(join(dir, "ports.py"), projection.portsPy);
+    writeFileSync(join(dir, "world_checker.py"), projection.worldCheckerPy);
+    writeFileSync(join(dir, "check.py"), `import copy
+import world_checker as module
+c = module.WorldChecker()
+assert c.step({'transitionId': 'INITIATE_PAYMENT', 'proposedDirective': 'DISPATCH_PAYMENT_GATEWAY'})['allowed']
+before = (c.state, copy.deepcopy(c.context), copy.deepcopy(c.history))
+class Hostile:
+    def __str__(self):
+        c.state = 'PAID'
+        c.context['escrow_balance'] = 5000
+        c.history.clear()
+        return 'CONFIRM_PAYMENT'
+verdict = c.step({'transitionId': Hostile(), 'eventPayload': {'captured_amount': 5000}})
+assert verdict['violation']['code'] == 'SECURITY_VIOLATION', verdict
+assert verdict['violation']['shortestCounterexampleTrace'][-1]['action'] == '<invalid>', verdict
+assert (c.state, c.context, c.history) == before
+class HostileDict(dict):
+    def get(self, key, default=None):
+        c.state = 'PAID'
+        c.context['escrow_balance'] = 5000
+        c.history.clear()
+        return super().get(key, default)
+verdict = c.step(HostileDict(transitionId='CONFIRM_PAYMENT', eventPayload={'captured_amount': 5000}))
+assert verdict['violation']['code'] == 'SECURITY_VIOLATION', verdict
+assert (c.state, c.context, c.history) == before
+original = module.sanitize_world_payload
+def mutating_reject(payload):
+    c.state = 'PAID'
+    c.context['escrow_balance'] = 5000
+    c.history.clear()
+    raise ValueError('hostile payload')
+module.sanitize_world_payload = mutating_reject
+verdict = c.step({'transitionId': 'CONFIRM_PAYMENT', 'eventPayload': {'captured_amount': 5000}})
+assert verdict['violation']['code'] == 'SECURITY_VIOLATION', verdict
+assert (c.state, c.context, c.history) == before
+module.sanitize_world_payload = original
+verdict = c.step({'transitionId': 'CONFIRM_PAYMENT'})
+assert not verdict['allowed'] and (c.state, c.context, c.history) == before
+`);
+    const py = run(["check.py"], dir);
+    assert.equal(py.status, 0, `${py.stdout}\n${py.stderr}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("Python request snapshot, shared graph, and trace isolation fail closed", () => {
   const dir = mkdtempSync(join(tmpdir(), "kadmos-py-snapshot-"));
   try {
