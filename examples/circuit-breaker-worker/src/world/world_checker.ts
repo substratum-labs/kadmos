@@ -2,6 +2,8 @@
 import { types as nodeTypes } from "node:util";
 import type { IWorldChecker, WorldContext, WorldState, TransitionStepRequest, StepVerdict, StepRecord } from "./ports.js";
 const world = {"version":"kadmos.world.v0","name":"TaskWorkerWorld","description":"Circuit-breaking asynchronous task worker finite state machine","states":[{"id":"IDLE","initial":true},{"id":"RUNNING"},{"id":"BACKOFF_WAIT"},{"id":"COMPLETED","terminal":true},{"id":"CIRCUIT_BROKEN","terminal":true}],"context":{"retry_count":{"type":"integer","unit":"count","min":0,"max":10,"default":0},"max_retries":{"type":"integer","unit":"count","min":1,"max":10,"default":3},"consecutive_failures":{"type":"integer","unit":"count","min":0,"max":10,"default":0},"backoff_seconds":{"type":"integer","unit":"seconds","min":0,"max":3600,"default":0}},"invariants":[{"id":"INV-01-RETRY-BOUND","description":"Retry count cannot exceed max retries","predicate":"retry_count <= max_retries"},{"id":"INV-02-NON-NEGATIVE","description":"Counters and durations cannot be negative","predicate":"retry_count >= 0 && consecutive_failures >= 0 && backoff_seconds >= 0"},{"id":"INV-03-CIRCUIT-BROKEN","description":"Circuit broken state must reach max retries","predicate":"state == 'CIRCUIT_BROKEN' => retry_count == max_retries"},{"id":"INV-04-COMPLETED-SAFETY","description":"Completed tasks have 0 consecutive failures","predicate":"state == 'COMPLETED' => consecutive_failures == 0"}],"transitions":[{"id":"START_TASK","from":"IDLE","to":"RUNNING","guard":true,"directive":"DISPATCH_EXECUTION_DISPATCHER","effects":[]},{"id":"FINISH_SUCCESS","from":"RUNNING","to":"COMPLETED","guard":true,"directive":"RECORD_METRICS_AND_CLEANUP","effects":["consecutive_failures = 0","backoff_seconds = 0"]},{"id":"RECORD_FAILURE","from":"RUNNING","to":"BACKOFF_WAIT","guard":"retry_count < max_retries","directive":"SCHEDULE_TIMER_WAKEUP","effects":["retry_count = retry_count + 1","consecutive_failures = consecutive_failures + 1","backoff_seconds = retry_count * 5"]},{"id":"RETRY_TASK","from":"BACKOFF_WAIT","to":"RUNNING","guard":"retry_count <= max_retries","directive":"DISPATCH_EXECUTION_DISPATCHER","effects":[]},{"id":"TRIP_CIRCUIT","from":"RUNNING","to":"CIRCUIT_BROKEN","guard":"retry_count == max_retries","directive":"TRIGGER_PAGER_ALERT","effects":[]}]} as const;
+const contextDefinitions: Record<string, { readonly type: "integer" | "string"; readonly min?: number; readonly max?: number }> = world.context;
+const stateDefinitions: readonly { readonly id: string; readonly terminal?: boolean }[] = world.states;
 
 function booleanWorld(value: unknown): boolean {
   if (typeof value !== "boolean") throw new Error("INVALID_EXPRESSION: expected boolean");
@@ -27,7 +29,7 @@ function evaluateWorld(expression: string | boolean, env: Record<string, unknown
     else if (/^\d/.test(token)) left = Number(token);
     else if (/^[A-Za-z_]/.test(token)) {
       left = env[token];
-      while (tokens[index] === ".") { index++; const property = tokens[index++]; if (!property || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(property)) throw new Error("INVALID_EXPRESSION"); left = left && typeof left === "object" && Object.hasOwn(left, property) ? (left as Record<string, unknown>)[property] : undefined; }
+      while (tokens[index] === ".") { index++; const property = tokens[index++]; if (!property || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(property)) throw new Error("INVALID_EXPRESSION"); left = left && typeof left === "object" && Object.hasOwn(left, property) ? (left as Record<string, unknown>)[property] : null; }
     } else throw new Error("INVALID_EXPRESSION");
     while (true) {
       const operator = tokens[index];
@@ -97,8 +99,9 @@ function sanitizeWorldPayload(raw: unknown, depth: number = 0, seen: Set<object>
 
 export class WorldChecker implements IWorldChecker {
   #state: WorldState = "IDLE" as WorldState;
-  #context: Record<string, number> = {"retry_count":0,"max_retries":3,"consecutive_failures":0,"backoff_seconds":0};
+  #context: Record<string, number | string> = {"retry_count":0,"max_retries":3,"consecutive_failures":0,"backoff_seconds":0};
   #history: StepRecord[] = [];
+  #undo: { state: WorldState; context: Record<string, number | string>; history: StepRecord[] } | null = null;
   #busy: boolean = false;
   constructor() {
     const invalid = this.checkBounds(this.#context);
@@ -108,17 +111,21 @@ export class WorldChecker implements IWorldChecker {
   }
   getState(): WorldState { return this.#state; }
   getContext(): WorldContext { return { ...this.#context } as unknown as WorldContext; }
-  private checkBounds(values: Record<string, number>): string | undefined {
-    for (const [key, definition] of Object.entries(world.context)) {
+  rollbackLastStep(): void {
+    if (!this.#undo || this.#busy) throw new Error("NO_CHECKER_SAVEPOINT");
+    this.#state = this.#undo.state; this.#context = { ...this.#undo.context }; this.#history = structuredClone(this.#undo.history); this.#undo = null;
+  }
+  private checkBounds(values: Record<string, number | string>): string | undefined {
+    for (const [key, definition] of Object.entries(contextDefinitions)) {
       const value = values[key];
-      if (value === undefined || !Number.isSafeInteger(value)) return key;
-      if ("min" in definition && typeof definition.min === "number" && value < definition.min) return key;
-      if ("max" in definition && typeof definition.max === "number" && value > definition.max) return key;
+      if (definition.type === "string" ? typeof value !== "string" : typeof value !== "number" || !Number.isSafeInteger(value)) return key;
+      if ("min" in definition && typeof definition.min === "number" && typeof value === "number" && value < definition.min) return key;
+      if ("max" in definition && typeof definition.max === "number" && typeof value === "number" && value > definition.max) return key;
     }
     return undefined;
   }
-  private checkInvariants(atState: string, values: Record<string, number>, event?: Readonly<Record<string, unknown>>): string | undefined {
-    const env: Record<string, unknown> = { ...values, state: atState, event: event ?? {} };
+  private checkInvariants(atState: string, values: Record<string, number | string>, event?: Readonly<Record<string, unknown>>): string | undefined {
+    const env: Record<string, unknown> = { ...values, state: atState, event: event ?? {}, request: event ?? {} };
     for (const invariant of world.invariants) {
       try {
         const res = evaluateWorld(invariant.predicate, env);
@@ -135,10 +142,10 @@ export class WorldChecker implements IWorldChecker {
     const snapshotHistory = structuredClone(this.#history);
     const rollback = () => { this.#state = snapshotState; this.#context = { ...snapshotContext }; this.#history = structuredClone(snapshotHistory); };
     try {
-      const candidate: Record<string, number> = { ...{"retry_count":0,"max_retries":3,"consecutive_failures":0,"backoff_seconds":0} };
+      const candidate: Record<string, number | string> = { ...{"retry_count":0,"max_retries":3,"consecutive_failures":0,"backoff_seconds":0} };
       for (const [name, value] of Object.entries(initialContext)) {
-        if (!Object.hasOwn(world.context, name) || typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`INVALID_BOUNDS: ${name}`);
-        candidate[name] = value;
+        if (!Object.hasOwn(world.context, name) || !(contextDefinitions[name]!.type === "string" ? typeof value === "string" : typeof value === "number" && Number.isSafeInteger(value))) throw new Error(`INVALID_BOUNDS: ${name}`);
+        candidate[name] = value as string | number;
       }
       const invalid = this.checkBounds(candidate);
       if (invalid) throw new Error(`INVALID_BOUNDS: ${invalid}`);
@@ -147,6 +154,7 @@ export class WorldChecker implements IWorldChecker {
       this.#state = "IDLE" as WorldState;
       this.#context = candidate;
       this.#history = [];
+      this.#undo = null;
     } catch (e) {
       rollback();
       throw e;
@@ -181,27 +189,28 @@ export class WorldChecker implements IWorldChecker {
         return { allowed: false, previousState: snapshotState, currentState: snapshotState, context: this.getContext(), directiveAllowed: null, violation: { code, message, ...(violatedInvariant === undefined ? {} : { violatedInvariant }), shortestCounterexampleTrace: [...snapshotHistory, record].map((r) => deepFreezeWorld(structuredClone(r))) } };
       };
       const transition = world.transitions.find((item) => item.id === snapshotAction && item.from === snapshotState);
-      if (!transition) return reject("INVALID_TRANSITION", `Transition "${snapshotAction}" is not legal from state "${snapshotState}"`);
+      if (!transition) return reject(stateDefinitions.some((item) => item.id === snapshotState && item.terminal === true) ? "ILLEGAL_TRANSITION" : "INVALID_TRANSITION", `Transition '${snapshotAction}' is not legal from state '${snapshotState}'`);
       if ((snapshotDirective ?? null) !== transition.directive) return reject("UNAUTHORIZED_DIRECTIVE", "Directive does not match declared transition");
-      const env = (at: string, values: Record<string, number>): Record<string, unknown> => ({ ...values, state: at, event: safePayload ?? {} });
+      const env = (at: string, values: Record<string, number | string>): Record<string, unknown> => ({ ...values, state: at, event: safePayload ?? {}, request: safePayload ?? {} });
       try {
         const guardVal = evaluateWorld(transition.guard, env(this.#state, this.#context));
         if (typeof guardVal !== "boolean" || !guardVal) return reject("GUARD_FAILED", "Guard condition failed");
-      } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("GUARD_FAILED", "Guard evaluation failed"); }
+      } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("GUARD_FAILED", "Guard expression evaluation failed"); }
       const candidate = { ...this.#context };
       try {
         for (const effect of transition.effects) {
           const match = /^([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.+)$/.exec(effect);
-          if (!match || !Object.hasOwn(world.context, match[1]!)) return reject("INVALID_EFFECT", "Invalid effect target");
+          if (!match || !Object.hasOwn(world.context, match[1]!)) return reject("INVALID_EFFECT", "Invalid effect assignment target");
           const value = evaluateWorld(match[2]!, env(transition.to, candidate));
-          if (typeof value !== "number" || !Number.isSafeInteger(value)) return reject("INVALID_EFFECT", "Invalid effect result");
-          candidate[match[1]!] = value;
+          if (contextDefinitions[match[1]!]!.type === "string" ? typeof value !== "string" : typeof value !== "number" || !Number.isSafeInteger(value)) return reject("INVALID_EFFECT", "Effect expression has wrong type");
+          candidate[match[1]!] = value as string | number;
         }
-      } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("INVALID_EFFECT", "Effect execution failed"); }
+      } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("INVALID_EFFECT", "Effect evaluation failed"); }
       const boundError = this.checkBounds(candidate);
-      if (boundError) return reject("INVALID_BOUNDS", `Context bound failed on "${boundError}"`);
+      if (boundError) return reject("INVALID_BOUNDS", `Context bound failed on '${boundError}'`);
       const violatedInv = this.checkInvariants(transition.to, candidate, safePayload);
-      if (violatedInv) return reject("INVARIANT_FAILED", `Invariant violation: "${violatedInv}"`, violatedInv);
+      if (violatedInv) return reject("INVARIANT_FAILED", `Invariant violation: '${violatedInv}'`, violatedInv);
+      this.#undo = { state: snapshotState, context: snapshotContext, history: snapshotHistory };
       this.#state = transition.to as WorldState;
       this.#context = candidate;
       this.#history.push(deepFreezeWorld(record));
