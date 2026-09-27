@@ -27,7 +27,7 @@ test("scaffold all languages builds executable gatekeepers and fuzzable World", 
     assert.equal(ts.status, 0, `${ts.stdout}\n${ts.stderr}`);
     const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
     assert.equal(manifest.scripts.graph, "kadmos graph world.yaml --format html --out state_machine.html");
-    assert.equal(manifest.dependencies.kadmos, "latest");
+    assert.equal(manifest.dependencies["@substratum-labs/kadmos"], "latest");
   } finally { rmSync(parent, { recursive: true, force: true }); }
 });
 

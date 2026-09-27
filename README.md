@@ -42,14 +42,15 @@ The gatekeepers are pure in-process decision engines. Physical enforcement of ne
 Requires Node.js 18+, Python 3.10+, and pnpm 10. From an npm-connected shell:
 
 ```bash
-npx kadmos init my-agent
+# Initialize a new governed project via npx:
+npx @substratum-labs/kadmos init my-agent
 cd my-agent
 pnpm install
 pnpm run compile
 pnpm run test
 ```
 
-The starter includes `world.yaml`, generated TypeScript and Python ports and checkers, example workers, tests, and CI. Open `world.yaml` first: its transitions and invariants are the rules the workers must obey. To visualize it, run `npx kadmos graph world.yaml --format html --out state_machine.html`.
+The starter includes `world.yaml`, generated TypeScript and Python ports and checkers, example workers, tests, and CI. Open `world.yaml` first: its transitions and invariants are the rules the workers must obey. To visualize it, run `npx @substratum-labs/kadmos graph world.yaml --format html --out state_machine.html`.
 
 ## CLI reference
 
@@ -75,7 +76,7 @@ Use this `mcpServers` entry in Claude Code or Cline's MCP settings, or in Cursor
   "mcpServers": {
     "kadmos": {
       "command": "npx",
-      "args": ["-y", "kadmos", "mcp"]
+      "args": ["-y", "@substratum-labs/kadmos", "mcp"]
     }
   }
 }

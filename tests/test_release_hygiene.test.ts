@@ -28,8 +28,9 @@ test("CI parses as YAML and covers the requested OS, Node, and Python matrix", (
 
 test("package metadata and publishing scripts are present", () => {
   const manifest = JSON.parse(read("package.json"));
-  assert.equal(manifest.name, "kadmos");
+  assert.equal(manifest.name, "@substratum-labs/kadmos");
   assert.equal(manifest.license, "MIT");
+  assert.deepEqual(manifest.publishConfig, { access: "public" });
   assert.equal(manifest.repository.url, "https://github.com/substratum-labs/kadmos.git");
   assert.deepEqual(manifest.bin, { kadmos: "./bin/kadmos.js", "kadmos-mcp": "./bin/kadmos-mcp.js" });
   assert.deepEqual(manifest.files, ["bin", "dist", "README.md", "LICENSE"]);
@@ -49,7 +50,8 @@ test("README explains all commands and contains parseable MCP configuration", ()
   assert.ok(blocks.some(([, content]) => {
     try {
       const config = JSON.parse(content!);
-      return config.mcpServers?.kadmos?.command === "npx";
+      return config.mcpServers?.kadmos?.command === "npx" &&
+        config.mcpServers?.kadmos?.args?.includes("@substratum-labs/kadmos");
     } catch { return false; }
   }), "MCP JSON configuration");
 });

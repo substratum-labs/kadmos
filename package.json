@@ -1,8 +1,11 @@
 {
-  "name": "kadmos",
+  "name": "@substratum-labs/kadmos",
   "version": "0.1.0",
   "description": "Constitutional state machines, verified runtime gatekeepers, and counterexample-guided self-healing for neuro-symbolic coding agents",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/substratum-labs/kadmos.git"
