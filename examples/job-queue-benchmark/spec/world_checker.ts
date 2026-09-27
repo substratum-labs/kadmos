@@ -101,6 +101,7 @@ export class WorldChecker implements IWorldChecker {
   #state: WorldState = "WAITING" as WorldState;
   #context: Record<string, number | string> = {"job_id":"","lock_token":"","lock_epoch":0,"retries":0,"max_retries":3,"result_digest":"","failed_reason":""};
   #history: StepRecord[] = [];
+  #undo: { state: WorldState; context: Record<string, number | string>; history: StepRecord[] } | null = null;
   #busy: boolean = false;
   constructor() {
     const invalid = this.checkBounds(this.#context);
@@ -110,6 +111,10 @@ export class WorldChecker implements IWorldChecker {
   }
   getState(): WorldState { return this.#state; }
   getContext(): WorldContext { return { ...this.#context } as unknown as WorldContext; }
+  rollbackLastStep(): void {
+    if (!this.#undo || this.#busy) throw new Error("NO_CHECKER_SAVEPOINT");
+    this.#state = this.#undo.state; this.#context = { ...this.#undo.context }; this.#history = structuredClone(this.#undo.history); this.#undo = null;
+  }
   private checkBounds(values: Record<string, number | string>): string | undefined {
     for (const [key, definition] of Object.entries(contextDefinitions)) {
       const value = values[key];
@@ -149,6 +154,7 @@ export class WorldChecker implements IWorldChecker {
       this.#state = "WAITING" as WorldState;
       this.#context = candidate;
       this.#history = [];
+      this.#undo = null;
     } catch (e) {
       rollback();
       throw e;
@@ -189,7 +195,7 @@ export class WorldChecker implements IWorldChecker {
       try {
         const guardVal = evaluateWorld(transition.guard, env(this.#state, this.#context));
         if (typeof guardVal !== "boolean" || !guardVal) return reject("GUARD_FAILED", "Guard condition failed");
-      } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("GUARD_FAILED", "Guard evaluation failed"); }
+      } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("GUARD_FAILED", "Guard expression evaluation failed"); }
       const candidate = { ...this.#context };
       try {
         for (const effect of transition.effects) {
@@ -201,9 +207,10 @@ export class WorldChecker implements IWorldChecker {
         }
       } catch (e: unknown) { if (e instanceof Error && e.message.includes("REENTRANCY_DETECTED")) throw e; return reject("INVALID_EFFECT", "Effect evaluation failed"); }
       const boundError = this.checkBounds(candidate);
-      if (boundError) return reject("INVALID_BOUNDS", `Context bound failed on "${boundError}"`);
+      if (boundError) return reject("INVALID_BOUNDS", `Context bound failed on '${boundError}'`);
       const violatedInv = this.checkInvariants(transition.to, candidate, safePayload);
-      if (violatedInv) return reject("INVARIANT_FAILED", `Invariant violation: "${violatedInv}"`, violatedInv);
+      if (violatedInv) return reject("INVARIANT_FAILED", `Invariant violation: '${violatedInv}'`, violatedInv);
+      this.#undo = { state: snapshotState, context: snapshotContext, history: snapshotHistory };
       this.#state = transition.to as WorldState;
       this.#context = candidate;
       this.#history.push(deepFreezeWorld(record));

@@ -71,6 +71,29 @@ export class JobWorker {
     this.lastRejection = null;
     return true;
   }
+  private async settle(transitionId: string, directive: WorldDirective, payload: Record<string, string>, effect: () => Promise<void>): Promise<boolean> {
+    const lock = await this.redis.get(this.lockKey);
+    const resultKey = `${this.jobId}:result`;
+    const result = await this.redis.get(resultKey);
+    if (!this.permit(transitionId, directive, payload)) return false;
+    try {
+      await effect();
+      return true;
+    } catch (error) {
+      // A command may throw after writing, so remove every possible partial destination.
+      await this.redis.lrem("jobs:wait", 0, this.jobId);
+      await this.redis.zrem("jobs:delayed", this.jobId);
+      await this.redis.lrem("jobs:dead", 0, this.jobId);
+      if (result === null) await this.redis.del(resultKey);
+      else await this.redis.set(resultKey, result);
+      if (lock === null) await this.redis.del(this.lockKey);
+      else await this.redis.set(this.lockKey, lock);
+      await this.redis.lrem("jobs:active", 0, this.jobId);
+      await this.redis.lpush("jobs:active", this.jobId);
+      this.checker.rollbackLastStep();
+      throw error;
+    }
+  }
   async enqueue(): Promise<void> { await this.redis.lpush("jobs:wait", this.jobId); }
   async begin(token: string): Promise<boolean> {
     const id = await this.redis.rpoplpush("jobs:wait", "jobs:active");
@@ -89,29 +112,29 @@ export class JobWorker {
     return true;
   }
   async recoverLease(supervisorToken: string): Promise<boolean> {
-    if (!this.permit("RECOVER_STALE_LEASE", "EVICT_STALE_WORKER", { supervisor_token: supervisorToken })) return false;
-    await this.redis.del(this.lockKey);
-    await this.redis.lrem("jobs:active", 1, this.jobId);
-    await this.enqueue();
-    return true;
+    return this.settle("RECOVER_STALE_LEASE", "EVICT_STALE_WORKER", { supervisor_token: supervisorToken }, async () => {
+      await this.redis.del(this.lockKey);
+      await this.redis.lrem("jobs:active", 1, this.jobId);
+      await this.enqueue();
+    });
   }
   async succeed(token: string, result_digest: string): Promise<boolean> {
-    if (!this.permit("REPORT_SUCCESS", "PERSIST_RESULT", { token, result_digest })) return false;
-    await this.redis.set(`${this.jobId}:result`, result_digest);
-    await this.redis.del(this.lockKey);
-    await this.redis.lrem("jobs:active", 1, this.jobId);
-    return true;
+    return this.settle("REPORT_SUCCESS", "PERSIST_RESULT", { token, result_digest }, async () => {
+      await this.redis.set(`${this.jobId}:result`, result_digest);
+      await this.redis.del(this.lockKey);
+      await this.redis.lrem("jobs:active", 1, this.jobId);
+    });
   }
   async fail(token: string, reason: string, dueAt: number, fatal = false): Promise<boolean> {
     const exhausted = this.checker.getContext().retries >= this.checker.getContext().max_retries;
     const transitionId = fatal ? "REPORT_FATAL_FAILURE" : exhausted ? "RETRY_EXHAUSTED" : "REPORT_RETRYABLE_FAILURE";
     const directive = fatal || exhausted ? "TRIGGER_DEAD_LETTER_ALERT" : "SCHEDULE_BACKOFF";
-    if (!this.permit(transitionId, directive, { token, reason })) return false;
-    await this.redis.del(this.lockKey);
-    await this.redis.lrem("jobs:active", 1, this.jobId);
-    if (directive === "SCHEDULE_BACKOFF") await this.redis.zadd("jobs:delayed", dueAt, this.jobId);
-    else await this.redis.lpush("jobs:dead", this.jobId);
-    return true;
+    return this.settle(transitionId, directive, { token, reason }, async () => {
+      await this.redis.del(this.lockKey);
+      await this.redis.lrem("jobs:active", 1, this.jobId);
+      if (directive === "SCHEDULE_BACKOFF") await this.redis.zadd("jobs:delayed", dueAt, this.jobId);
+      else await this.redis.lpush("jobs:dead", this.jobId);
+    });
   }
   async wakeDue(now: number): Promise<boolean> {
     const due = await this.redis.zrangebyscore("jobs:delayed", "-inf", now);

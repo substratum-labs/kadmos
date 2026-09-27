@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { compileWorldSpec, parseWorldSpec } from "../src/world_compiler.js";
+import { compileWorldSpec, compileWorldSpecPython, parseWorldSpec } from "../src/world_compiler.js";
 import { createWorldChecker } from "../src/world_checker.js";
 import { runDifferentialFuzzing } from "../src/fuzzer.js";
 
@@ -26,6 +26,46 @@ test("JobWorld parses and compiles the complete six-state contract", () => {
   assert.match(compiled.worldCheckerTs, /REPORT_RETRYABLE_FAILURE/);
   assert.match(compiled.worldCheckerTs, /Transition \'\$\{snapshotAction\}\' is not legal from state \'\$\{snapshotState\}\'/);
   for (const message of ["Invalid effect assignment target", "Effect expression has wrong type", "Effect evaluation failed"]) assert.ok(compiled.worldCheckerTs.includes(message));
+});
+
+test("compiled TS, runtime, and Python use identical guard, bound, and invariant errors", () => {
+  const cases = [
+    { kind: "guard", code: "GUARD_FAILED", message: "Guard expression evaluation failed" },
+    { kind: "bound", code: "INVALID_BOUNDS", message: "Context bound failed on 'lock_epoch'" },
+    { kind: "invariant", code: "INVARIANT_FAILED", message: "Invariant violation: 'INV-PARITY'" },
+  ] as const;
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "kadmos-parity-"));
+  try {
+    for (const { kind, code, message } of cases) {
+      const modified = structuredClone(spec);
+      const transition = modified.transitions.find((item) => item.id === "ACQUIRE_LOCK")!;
+      if (kind === "guard") (transition as { guard: string | boolean }).guard = "request.token * 3 > 0";
+      if (kind === "bound") (modified.context.lock_epoch as { max?: number }).max = 0;
+      if (kind === "invariant") (modified.invariants as { id: string; predicate: string }[]).push({ id: "INV-PARITY", predicate: "state != 'ACTIVE'" });
+      const request = { transitionId: "ACQUIRE_LOCK", proposedDirective: "DISPATCH_PAYLOAD", eventPayload: { token: "worker-a" } };
+      const runtime = createWorldChecker(modified).step(request);
+      assert.equal(runtime.violation?.code, code);
+      assert.equal(runtime.violation?.message, message);
+      const projection = compileWorldSpec(modified);
+      const generated = projection.worldCheckerTs;
+      assert.ok(generated.includes(kind === "guard" ? `"${message}"` : kind === "bound" ? "Context bound failed on '${boundError}'" : "Invariant violation: '${violatedInv}'"));
+      writeFileSync(join(dir, "ports.d.ts"), projection.portsDts);
+      writeFileSync(join(dir, "world_checker.ts"), generated);
+      const compile = spawnSync(join(process.cwd(), "node_modules/.bin/tsc"), ["--ignoreConfig", "--target", "es2022", "--module", "commonjs", "--types", "node", "--typeRoots", join(process.cwd(), "node_modules/@types"), "--outDir", join(dir, "js"), join(dir, "world_checker.ts")], { encoding: "utf8" });
+      assert.equal(compile.status, 0, compile.stderr || compile.stdout);
+      const tsRun = spawnSync(process.execPath, ["-e", "const {WorldChecker}=require('./js/world_checker.js'); console.log(JSON.stringify(new WorldChecker().step(JSON.parse(process.argv[1]))))", JSON.stringify(request)], { cwd: dir, encoding: "utf8" });
+      assert.equal(tsRun.status, 0, tsRun.stderr);
+      const tsVerdict = JSON.parse(tsRun.stdout) as { violation: { code: string; message: string } };
+      assert.deepEqual({ code: tsVerdict.violation.code, message: tsVerdict.violation.message }, { code, message });
+      const python = compileWorldSpecPython(modified);
+      writeFileSync(join(dir, "ports.py"), python.portsPy);
+      writeFileSync(join(dir, "world_checker.py"), python.worldCheckerPy);
+      const run = spawnSync("python3", ["-B", "-c", "import json,sys; from world_checker import WorldChecker; print(json.dumps(WorldChecker().step(json.load(sys.stdin))))"], { cwd: dir, input: JSON.stringify(request), encoding: "utf8" });
+      assert.equal(run.status, 0, run.stderr);
+      const verdict = JSON.parse(run.stdout) as { violation: { code: string; message: string } };
+      assert.deepEqual({ code: verdict.violation.code, message: verdict.violation.message }, { code, message });
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("kadmos graph emits Mermaid with states and directives", () => {

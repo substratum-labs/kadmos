@@ -87,6 +87,7 @@ test("Python worker exercises the offline lifecycles and Redis rollback", () => 
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(JSON.parse(run.stdout), {
     happy: "COMPLETED", recovery: "COMPLETED", exhausted: "FAILED", fencing: "COMPLETED", rollback: "DELAYED_RETRY",
+    recover_rollback: "ACTIVE", retry_rollback: "ACTIVE", fatal_rollback: "ACTIVE", succeed_rollback: "ACTIVE",
   });
 });
 
@@ -140,3 +141,45 @@ test("begin returns a rejected job to wait when the lock token is empty", async 
   assert.equal(await redis.lpop("jobs:active"), null);
   assert.equal(await redis.lpop("jobs:wait"), "job-42");
 });
+
+for (const operation of ["recover", "retry", "fatal", "succeed"] as const) {
+  test(`${operation} restores active lease and checker when Redis throws after writing`, async () => {
+    class ThrowingRedis extends MemoryRedis {
+      failKey: string | null = null;
+      private hit(key: string): void {
+        if (this.failKey === key) { this.failKey = null; throw new Error("injected Redis failure"); }
+      }
+      override async lpush(key: string, value: string): Promise<number> {
+        const result = await super.lpush(key, value); this.hit(key); return result;
+      }
+      override async zadd(key: string, score: number, value: string): Promise<number> {
+        const result = await super.zadd(key, score, value); this.hit(key); return result;
+      }
+      override async set(key: string, value: string): Promise<string> {
+        const result = await super.set(key, value); this.hit(key); return result;
+      }
+      override async lrem(key: string, count: number, value: string): Promise<number> {
+        const result = await super.lrem(key, count, value); this.hit(key); return result;
+      }
+    }
+    const redis = new ThrowingRedis();
+    const checker = new WorldChecker();
+    const worker = new JobWorker(redis, checker, "job-42");
+    await worker.enqueue();
+    assert.equal(await worker.begin("worker-a"), true);
+    const before = checker.getContext();
+    redis.failKey = operation === "recover" ? "jobs:wait" : operation === "retry" ? "jobs:delayed" : operation === "fatal" ? "jobs:dead" : "job-42:result";
+    const attempt = () => operation === "recover" ? worker.recoverLease("supervisor") : operation === "retry" ? worker.fail("worker-a", "503", 100) : operation === "fatal" ? worker.fail("worker-a", "fatal", 100, true) : worker.succeed("worker-a", "digest");
+    await assert.rejects(attempt(), /injected Redis failure/);
+    assert.equal(checker.getState(), "ACTIVE");
+    assert.deepEqual(checker.getContext(), before);
+    assert.equal(await redis.get("job-42:lock"), "worker-a");
+    assert.deepEqual(await redis.zrangebyscore("jobs:delayed", "-inf", "+inf"), []);
+    assert.equal(await redis.lpop("jobs:wait"), null);
+    assert.equal(await redis.lpop("jobs:dead"), null);
+    assert.equal(await redis.get("job-42:result"), null);
+    assert.equal(await redis.lpop("jobs:active"), "job-42");
+    await redis.lpush("jobs:active", "job-42");
+    assert.equal(await attempt(), true);
+  });
+}
