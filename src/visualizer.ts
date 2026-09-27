@@ -4,9 +4,14 @@ function htmlEscape(value: unknown): string {
   return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-function mermaidText(value: unknown): string {
+function sanitizeStateDescription(value: unknown): string {
   if (value === undefined || value === null) return "";
-  return String(value).replace(/"/g, "#quot;");
+  return String(value).replace(/[\r\n]+/g, " ").replace(/"/g, "#quot;").trim().replace(/\s+/g, " ");
+}
+
+function sanitizeEdgeText(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  return String(value).replace(/[\r\n]+/g, " ").replace(/:/g, " - ").replace(/;/g, " ").replace(/#/g, " ").replace(/"/g, "#quot;").trim().replace(/\s+/g, " ");
 }
 
 function edgeLabel(transition: WorldSpec["transitions"][number]): string {
@@ -19,11 +24,11 @@ function mermaid(spec: WorldSpec): string {
   const lines = ["stateDiagram-v2"];
   for (const state of spec.states) {
     const alias = aliases.get(state.id)!;
-    if (state.description != null || alias !== state.id) lines.push(`    state "${mermaidText(state.description ?? state.id)}" as ${alias}`);
+    if (state.description != null || alias !== state.id) lines.push(`    state "${sanitizeStateDescription(state.description ?? state.id)}" as ${alias}`);
   }
   const initial = spec.states.find((state) => state.initial);
   if (initial) lines.push(`    [*] --> ${aliases.get(initial.id)}`);
-  for (const transition of spec.transitions) lines.push(`    ${aliases.get(transition.from)} --> ${aliases.get(transition.to)} : ${mermaidText(edgeLabel(transition))}`);
+  for (const transition of spec.transitions) lines.push(`    ${aliases.get(transition.from)} --> ${aliases.get(transition.to)} : ${sanitizeEdgeText(edgeLabel(transition))}`);
   for (const state of spec.states) if (state.terminal) lines.push(`    ${aliases.get(state.id)} --> [*]`);
   return `${lines.join("\n")}\n`;
 }

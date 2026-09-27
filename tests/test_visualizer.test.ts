@@ -51,6 +51,19 @@ test("Mermaid quotes descriptions and backslashes without corrupting graph synta
   assert.match(renderWorldGraph(nonString, "mermaid"), /state "42" as CREATED/);
   const zero = { ...spec, states: spec.states.map((state) => state.id === "CREATED" ? { ...state, description: 0 as unknown as string } : state) };
   assert.match(renderWorldGraph(zero, "mermaid"), /state "0" as CREATED/);
+  assert.ok(descriptionLine('first\nsecond"line').includes('state "first second#quot;line" as CREATED'));
+});
+
+test("Mermaid transition labels cannot add another diagram statement", () => {
+  const hostile = { ...spec, transitions: [{ ...spec.transitions[0]!, id: 'PAY\n[*] --> INJECTED:;#"\\path' }] };
+  const graph = renderWorldGraph(hostile, "mermaid");
+  const transitionLines = graph.split("\n").filter((line) => /^    \S+ --> \S+ : /.test(line));
+  assert.equal(transitionLines.length, 1);
+  assert.doesNotMatch(graph, /^\s*\[\*\] --> INJECTED/m);
+  assert.match(transitionLines[0]!, /PAY \[\*\] --> INJECTED/);
+  assert.match(transitionLines[0]!, /#quot;\\path/);
+  const label = transitionLines[0]!.split(" : ")[1]!;
+  assert.doesNotMatch(label.replaceAll("#quot;", ""), /[\r:;#]/);
 });
 
 test("CLI graph writes selected format atomically", () => {

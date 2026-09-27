@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -26,7 +26,7 @@ test("infer and legislate print the candidate and a decision prompt", () => {
 });
 
 test("compile writes the two usable projections", () => {
-  const directory = mkdtempSync(join(tmpdir(), "kadmos-cli-"));
+  const directory = mkdtempSync(join(realpathSync(tmpdir()), "kadmos-cli-"));
   try {
     const input = join(process.cwd(), "conformance", "fixtures", "order_settlement.world.yaml");
     const out = join(directory, "generated");

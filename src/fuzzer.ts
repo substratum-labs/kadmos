@@ -25,13 +25,31 @@ export interface FuzzReport {
   transitionCoverage: { visited: string[]; total: string[]; ratio: number };
 }
 
+function mixWord(h1: number, k1: number): number {
+  k1 = Math.imul(k1, 0xcc9e2d51);
+  k1 = ((k1 << 15) | (k1 >>> 17)) >>> 0;
+  k1 = Math.imul(k1, 0x1b873593);
+  h1 = (h1 ^ k1) >>> 0;
+  h1 = ((h1 << 13) | (h1 >>> 19)) >>> 0;
+  return (Math.imul(h1, 5) + 0xe6546b64) >>> 0;
+}
+
+function fmix32(h: number): number {
+  h = (h ^ (h >>> 16)) >>> 0;
+  h = Math.imul(h, 0x85ebca6b);
+  h = (h ^ (h >>> 13)) >>> 0;
+  h = Math.imul(h, 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
 export function mulberry32(seed: number): () => number {
   const low = seed >>> 0;
   const high = Math.floor(seed / 0x100000000) >>> 0;
-  let s = (low ^ Math.imul(high, 0x9e3779b9)) >>> 0;
-  s = Math.imul(s ^ (s >>> 16), 0x21f0aaad);
-  s = Math.imul(s ^ (s >>> 15), 0x735a2d97);
-  let state = (s ^ (s >>> 15)) >>> 0;
+  let h = 0;
+  h = mixWord(h, low);
+  h = mixWord(h, high);
+  h = (h ^ 8) >>> 0;
+  let state = fmix32(h);
   return function () {
     state = (state + 0x6d2b79f5) >>> 0;
     let t = Math.imul(state ^ (state >>> 15), 1 | state);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -382,7 +382,7 @@ print(json.dumps(results))`;
 });
 
 test("CLI --lang all emits all four projections", () => {
-  const dir = mkdtempSync(join(tmpdir(), "kadmos-all-"));
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "kadmos-all-"));
   try {
     const input = join(dir, "world.yaml");
     writeFileSync(input, yaml);
@@ -393,7 +393,7 @@ test("CLI --lang all emits all four projections", () => {
 });
 
 test("CLI compile publishes a complete projection directory and preserves unrelated files", () => {
-  const dir = mkdtempSync(join(tmpdir(), "kadmos-publish-"));
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "kadmos-publish-"));
   try {
     const input = join(dir, "world.yaml");
     const out = join(dir, "projection");
@@ -410,7 +410,7 @@ test("CLI compile publishes a complete projection directory and preserves unrela
 });
 
 test("CLI compile replaces projection symlinks and removes projections from the other language", () => {
-  const dir = mkdtempSync(join(tmpdir(), "kadmos-publish-clean-"));
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "kadmos-publish-clean-"));
   try {
     const input = join(dir, "world.yaml");
     const out = join(dir, "projection");
@@ -442,8 +442,8 @@ test("CLI compile replaces projection symlinks and removes projections from the 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("CLI compile replaces a linked output directory without modifying its target", () => {
-  const dir = mkdtempSync(join(tmpdir(), "kadmos-publish-dir-link-"));
+test("CLI compile rejects a linked output directory without modifying its target", () => {
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "kadmos-publish-dir-link-"));
   try {
     const input = join(dir, "world.yaml");
     const project = join(dir, "project");
@@ -456,13 +456,36 @@ test("CLI compile replaces a linked output directory without modifying its targe
     writeFileSync(join(outside, "world_checker.ts"), "external TypeScript");
     symlinkSync(outside, out, "dir");
     const result = spawnSync(process.execPath, [join(process.cwd(), "bin/kadmos.js"), "compile", input, "--out", out, "--lang", "python"], { encoding: "utf8" });
-    assert.equal(result.status, 0, result.stderr);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Cannot compile into symlinked path:/);
     assert.equal(readFileSync(join(outside, "sentinel.txt"), "utf8"), "untouched");
     assert.equal(readFileSync(join(outside, "world_checker.ts"), "utf8"), "external TypeScript");
     assert.deepEqual(readdirSync(outside).sort(), ["sentinel.txt", "world_checker.ts"]);
-    assert.equal(lstatSync(out).isDirectory(), true);
-    assert.equal(lstatSync(out).isSymbolicLink(), false);
-    assert.deepEqual(readdirSync(out).sort(), ["ports.py", "world_checker.py"]);
+    assert.equal(lstatSync(out).isSymbolicLink(), true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("CLI compile rejects a symlinked ancestor before touching the external directory", () => {
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "kadmos-publish-parent-link-"));
+  try {
+    const input = join(dir, "world.yaml");
+    const outside = join(dir, "outside");
+    const out = join(outside, "out");
+    const linkparent = join(dir, "linkparent");
+    mkdirSync(out, { recursive: true });
+    writeFileSync(input, yaml);
+    const tsBytes = Buffer.from("external TypeScript");
+    const sentinelBytes = Buffer.from("untouched");
+    writeFileSync(join(out, "world_checker.ts"), tsBytes);
+    writeFileSync(join(out, "sentinel.txt"), sentinelBytes);
+    symlinkSync(outside, linkparent, "dir");
+    const result = spawnSync(process.execPath, [join(process.cwd(), "bin/kadmos.js"), "compile", input, "--out", join(linkparent, "out"), "--lang", "python"], { encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Cannot compile into symlinked path:/);
+    assert.deepEqual(readFileSync(join(out, "world_checker.ts")), tsBytes);
+    assert.deepEqual(readFileSync(join(out, "sentinel.txt")), sentinelBytes);
+    assert.deepEqual(readdirSync(out).sort(), ["sentinel.txt", "world_checker.ts"]);
+    assert.deepEqual(readdirSync(dir).sort(), ["linkparent", "outside", "world.yaml"]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -490,7 +513,7 @@ test("Python expression evaluator uses JavaScript double precision for numeric o
 });
 
 test("CLI compile leaves the published directory unchanged if staging fails", () => {
-  const dir = mkdtempSync(join(tmpdir(), "kadmos-stage-fail-"));
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "kadmos-stage-fail-"));
   try {
     const input = join(dir, "world.yaml");
     const out = join(dir, "projection");
@@ -530,7 +553,7 @@ test("Python gatekeeper rejects bound and invariant failures without committing 
 });
 
 test("CLI language selection writes only requested projections", () => {
-  const dir = mkdtempSync(join(tmpdir(), "kadmos-lang-"));
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "kadmos-lang-"));
   try {
     const input = join(dir, "world.yaml");
     writeFileSync(input, yaml);

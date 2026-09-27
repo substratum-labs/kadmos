@@ -20,6 +20,14 @@ function usage(): never {
 
 function publishProjectionDirectory(outDir: string, files: Record<string, string>): void {
   outDir = resolve(outDir);
+  const parts = outDir.split("/").filter(Boolean);
+  let current = "";
+  for (const part of parts) {
+    current += `/${part}`;
+    if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new Error(`Cannot compile into symlinked path: ${current}`);
+    }
+  }
   const parent = dirname(outDir);
   mkdirSync(parent, { recursive: true });
   const temporary = mkdtempSync(join(parent, `.${basename(outDir)}.compile-`));

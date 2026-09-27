@@ -17,6 +17,11 @@ test("seed high bits change the generated sequence", () => {
   assert.notDeepEqual(sequence(1), sequence(2 ** 32 + 1));
   assert.notEqual(mulberry32(0)(), mulberry32(2 ** 32 + 1)());
   assert.notEqual(mulberry32(1)(), mulberry32(2 ** 32 + 1)());
+  for (const [left, right] of [
+    [0x9e3779b9, 2 ** 32],
+    [Math.imul(2, 0x9e3779b9) >>> 0, 2 * 2 ** 32],
+    [0, 2 ** 32 + 1],
+  ] as const) assert.notDeepEqual(sequence(left), sequence(right), `seeds ${left} and ${right} collided`);
 });
 
 test("Python and TypeScript reject reserved payload keys and invalid directives identically", () => {
