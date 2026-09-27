@@ -33,6 +33,7 @@ export type * from "./types/world.js";
 export type * from "./types/ports.js";
 export type * from "./types/counterexample.js";
 export { createWorldChecker } from "./world_checker.js";
+export { runDifferentialFuzzing, mulberry32, type FuzzOptions, type FuzzReport } from "./fuzzer.js";
 export { runMcpServer } from "./mcp/server.js";
 export { parseWorldSpec, compileWorldSpec, type WorldProjection } from "./world_compiler.js";
 export { compileWorldSpecPython, type PythonWorldProjection } from "./python_compiler.js";

@@ -8,9 +8,10 @@ import { compileWorldSpec, compileWorldSpecPython, parseWorldSpec } from "./worl
 import { buildInitialPrompt, runKadmosAgent } from "./agent/runner.js";
 import { createLlmProvider } from "./agent/provider.js";
 import { runMcpServer } from "./mcp/server.js";
+import { runDifferentialFuzzing } from "./fuzzer.js";
 
 function usage(): never {
-  throw new Error("Usage: kadmos mcp | infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
+  throw new Error("Usage: kadmos mcp | test <world-file> [--runs <N>] [--steps <M>] [--seed <S>] [--coverage] [--json] | infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
 }
 
 function publishProjectionDirectory(outDir: string, files: Record<string, string>): void {
@@ -48,6 +49,43 @@ function publishProjectionDirectory(outDir: string, files: Record<string, string
 }
 
 export function runCli(args: readonly string[]): string | Promise<string> {
+  if (args[0] === "test") {
+    const file = args[1];
+    if (!file || file.startsWith("--")) usage();
+    const values = new Map<string, number>();
+    const flags = new Set<string>();
+    for (let i = 2; i < args.length; i++) {
+      const flag = args[i]!;
+      if (flag === "--coverage" || flag === "--json") {
+        if (flags.has(flag)) usage();
+        flags.add(flag);
+      } else if (["--runs", "--steps", "--seed"].includes(flag)) {
+        if (values.has(flag) || !args[i + 1]) usage();
+        const value = Number(args[++i]);
+        if (!Number.isSafeInteger(value) || flag !== "--seed" && value < 1) usage();
+        values.set(flag, value);
+      } else usage();
+    }
+    const spec = parseWorldSpec(readFileSync(file, "utf8"));
+    const runs = values.get("--runs") ?? 50;
+    const stepsPerRun = values.get("--steps") ?? 20;
+    const seed = values.get("--seed") ?? Date.now();
+    return runDifferentialFuzzing(spec, { runs, stepsPerRun, seed }).then((report) => {
+      if (flags.has("--json")) return `${JSON.stringify(report, null, 2)}\n`;
+      const percent = (ratio: number) => `${Math.round(ratio * 100)}%`;
+      const lines = [
+        "Kadmos Differential Bisimulation Fuzzer",
+        `World: ${file} (${spec.states.length} states, ${spec.transitions.length} transitions)`,
+        `Runs: ${runs} | Steps/Run: ${stepsPerRun} | Seed: ${seed}`,
+        "Executing lockstep verification (TypeScript vs Python)...",
+        `${report.passed ? "[OK]" : "[FAIL]"} ${report.totalSteps.toLocaleString("en-US")} steps executed across ${runs} runs.`,
+        `Bisimulation Verdict: ${report.passed ? "100% EQUIVALENCE" : "DIVERGENCE"} (${report.divergences.length} divergences)`,
+      ];
+      if (flags.has("--coverage")) lines.push("Coverage:", `  States: ${percent(report.stateCoverage.ratio)} (${report.stateCoverage.visited.length}/${report.stateCoverage.total.length})`, `  Transitions: ${percent(report.transitionCoverage.ratio)} (${report.transitionCoverage.visited.length}/${report.transitionCoverage.total.length})`);
+      for (const divergence of report.divergences.slice(0, 5)) lines.push(`Run ${divergence.run}, step ${divergence.step}: ${divergence.reason}\n  Request: ${JSON.stringify(divergence.request)}\n  TS: ${JSON.stringify(divergence.tsVerdict)}\n  Python: ${JSON.stringify(divergence.pyVerdict)}`);
+      return `${lines.join("\n")}\n`;
+    });
+  }
   if (args[0] === "mcp") {
     if (args.length !== 1) usage();
     runMcpServer();
