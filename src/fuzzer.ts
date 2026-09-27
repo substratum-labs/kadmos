@@ -138,7 +138,11 @@ function verdictDifference(ts: StepVerdict, py: StepVerdict | undefined): string
   const tsKeys = Object.keys(ts.context).sort();
   const pyKeys = Object.keys(py.context).sort();
   if (JSON.stringify(tsKeys) !== JSON.stringify(pyKeys)) return `context keys: TS=${JSON.stringify(tsKeys)}, Python=${JSON.stringify(pyKeys)}`;
-  for (const key of tsKeys) if (ts.context[key] !== py.context[key] || !Number.isSafeInteger(py.context[key])) return `context.${key}: TS=${ts.context[key]}, Python=${py.context[key]}`;
+  for (const key of tsKeys) {
+    if (ts.context[key] !== py.context[key] || (typeof py.context[key] === "number" && !Number.isSafeInteger(py.context[key]))) {
+      return `context.${key}: TS=${ts.context[key]}, Python=${py.context[key]}`;
+    }
+  }
   if (!ts.allowed) {
     if (ts.violation?.code !== py.violation?.code) return `violation.code: TS=${ts.violation?.code}, Python=${py.violation?.code}`;
     if (ts.violation?.message !== py.violation?.message) return `violation.message: TS=${ts.violation?.message}, Python=${py.violation?.message}`;

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { compileWorldSpec, parseWorldSpec } from "../src/world_compiler.js";
 import { createWorldChecker } from "../src/world_checker.js";
+import { runDifferentialFuzzing } from "../src/fuzzer.js";
 
 const fixture = join(process.cwd(), "conformance/fixtures/job_lifecycle.world.yaml");
 const source = readFileSync(fixture, "utf8");
@@ -100,3 +101,9 @@ for (const terminal of ["COMPLETED", "FAILED", "REVOKED"] as const) {
     }
   });
 }
+
+test("JobWorld passes cross-language differential fuzzing with zero divergences", async () => {
+  const report = await runDifferentialFuzzing(spec, { runs: 10, stepsPerRun: 25, seed: 42 });
+  assert.equal(report.passed, true);
+  assert.equal(report.divergences.length, 0);
+});
