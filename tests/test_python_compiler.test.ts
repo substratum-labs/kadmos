@@ -442,6 +442,30 @@ test("CLI compile replaces projection symlinks and removes projections from the 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("CLI compile replaces a linked output directory without modifying its target", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-publish-dir-link-"));
+  try {
+    const input = join(dir, "world.yaml");
+    const project = join(dir, "project");
+    const out = join(project, "out");
+    const outside = join(dir, "outside");
+    mkdirSync(project);
+    mkdirSync(outside);
+    writeFileSync(input, yaml);
+    writeFileSync(join(outside, "sentinel.txt"), "untouched");
+    writeFileSync(join(outside, "world_checker.ts"), "external TypeScript");
+    symlinkSync(outside, out, "dir");
+    const result = spawnSync(process.execPath, [join(process.cwd(), "bin/kadmos.js"), "compile", input, "--out", out, "--lang", "python"], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(join(outside, "sentinel.txt"), "utf8"), "untouched");
+    assert.equal(readFileSync(join(outside, "world_checker.ts"), "utf8"), "external TypeScript");
+    assert.deepEqual(readdirSync(outside).sort(), ["sentinel.txt", "world_checker.ts"]);
+    assert.equal(lstatSync(out).isDirectory(), true);
+    assert.equal(lstatSync(out).isSymbolicLink(), false);
+    assert.deepEqual(readdirSync(out).sort(), ["ports.py", "world_checker.py"]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("Python expression evaluator uses JavaScript double precision for numeric operations", () => {
   const dir = mkdtempSync(join(tmpdir(), "kadmos-py-numbers-"));
   try {

@@ -5,7 +5,8 @@ function htmlEscape(value: unknown): string {
 }
 
 function mermaidText(value: unknown): string {
-  return String(value).replace(/\r\n?|\n/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  if (value === undefined || value === null) return "";
+  return String(value).replace(/"/g, "#quot;");
 }
 
 function edgeLabel(transition: WorldSpec["transitions"][number]): string {

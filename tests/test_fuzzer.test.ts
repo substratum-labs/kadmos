@@ -15,6 +15,8 @@ const world = parseWorldSpec(readFileSync(file, "utf8"));
 test("seed high bits change the generated sequence", () => {
   const sequence = (seed: number) => Array.from({ length: 8 }, mulberry32(seed));
   assert.notDeepEqual(sequence(1), sequence(2 ** 32 + 1));
+  assert.notEqual(mulberry32(0)(), mulberry32(2 ** 32 + 1)());
+  assert.notEqual(mulberry32(1)(), mulberry32(2 ** 32 + 1)());
 });
 
 test("Python and TypeScript reject reserved payload keys and invalid directives identically", () => {

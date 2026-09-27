@@ -26,12 +26,17 @@ export interface FuzzReport {
 }
 
 export function mulberry32(seed: number): () => number {
-  let state = ((seed >>> 0) ^ Math.floor(seed / 0x100000000)) >>> 0;
-  return () => {
+  const low = seed >>> 0;
+  const high = Math.floor(seed / 0x100000000) >>> 0;
+  let s = (low ^ Math.imul(high, 0x9e3779b9)) >>> 0;
+  s = Math.imul(s ^ (s >>> 16), 0x21f0aaad);
+  s = Math.imul(s ^ (s >>> 15), 0x735a2d97);
+  let state = (s ^ (s >>> 15)) >>> 0;
+  return function () {
     state = (state + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(state ^ state >>> 15, state | 1);
-    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-    return ((t ^ t >>> 14) >>> 0) / 0x100000000;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
 

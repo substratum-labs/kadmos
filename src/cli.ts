@@ -1,4 +1,4 @@
-import { cpSync, existsSync, lstatSync, mkdtempSync, readFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, lstatSync, mkdtempSync, readFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -27,8 +27,9 @@ function publishProjectionDirectory(outDir: string, files: Record<string, string
   const previous = join(temporary, "previous");
   let movedPrevious = false;
   try {
-    if (existsSync(outDir)) cpSync(outDir, staged, { recursive: true });
-    else mkdirSync(staged);
+    mkdirSync(staged);
+    const stat = lstatSync(outDir, { throwIfNoEntry: false });
+    if (stat && !stat.isSymbolicLink() && stat.isDirectory()) cpSync(outDir, staged, { recursive: true });
     const tsFiles = ["ports.d.ts", "world_checker.ts"];
     const pythonFiles = ["ports.py", "world_checker.py"];
     const obsolete = Object.keys(files).length === 4 ? [] : tsFiles.every((name) => name in files) ? pythonFiles : tsFiles;
@@ -41,7 +42,7 @@ function publishProjectionDirectory(outDir: string, files: Record<string, string
       if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) rmSync(path);
       writeFileSync(path, content);
     }
-    if (existsSync(outDir)) { renameSync(outDir, previous); movedPrevious = true; }
+    if (stat) { renameSync(outDir, previous); movedPrevious = true; }
     try { renameSync(staged, outDir); }
     catch (error) {
       if (movedPrevious) renameSync(previous, outDir);

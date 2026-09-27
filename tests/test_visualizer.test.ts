@@ -43,9 +43,10 @@ test("HTML escapes untrusted text while retaining Mermaid module", () => {
 });
 
 test("Mermaid quotes descriptions and backslashes without corrupting graph syntax", () => {
-  const changed = { ...spec, states: spec.states.map((state) => state.id === "CREATED" ? { ...state, description: 'foo\\"bar' } : state) };
-  const graph = renderWorldGraph(changed, "mermaid");
-  assert.match(graph, /state "foo\\\\\\"bar" as CREATED/);
+  const descriptionLine = (description: string) => renderWorldGraph({ ...spec, states: spec.states.map((state) => state.id === "CREATED" ? { ...state, description } : state) }, "mermaid");
+  assert.ok(descriptionLine('foo"bar').includes('state "foo#quot;bar" as CREATED'));
+  assert.ok(descriptionLine('foo\\bar').includes('state "foo\\bar" as CREATED'));
+  assert.ok(descriptionLine('foo\\"bar').includes('state "foo\\#quot;bar" as CREATED'));
   const nonString = { ...spec, states: spec.states.map((state) => state.id === "CREATED" ? { ...state, description: 42 as unknown as string } : state) };
   assert.match(renderWorldGraph(nonString, "mermaid"), /state "42" as CREATED/);
   const zero = { ...spec, states: spec.states.map((state) => state.id === "CREATED" ? { ...state, description: 0 as unknown as string } : state) };
