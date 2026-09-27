@@ -274,15 +274,23 @@ class WorldChecker(IWorldChecker):
     def reset(self, initial_context: dict[str, int] | None = None) -> None:
         if self._busy:
             raise RuntimeError("REENTRANCY_DETECTED: reset called during active evaluation")
+        snapshot_state = self.state
+        snapshot_context = dict(self.context)
+        snapshot_history = copy.deepcopy(self.history)
+        def rollback() -> None:
+            self.state = snapshot_state
+            self.context = dict(snapshot_context)
+            self.history = copy.deepcopy(snapshot_history)
         self._busy = True
         try:
             candidate = dict(_DEFAULTS)
-            if initial_context is None:
-                initial_context = self._initial_context
-            if initial_context is not None:
-                if type(initial_context) is not dict:
-                    raise ValueError("INVALID_BOUNDS: initial context")
-                for name, value in initial_context.items():
+            ctx = initial_context if initial_context is not None else self._initial_context
+            if ctx is not None:
+                if type(ctx) is not dict:
+                    raise ValueError("INVALID_BOUNDS: initial context must be a dict")
+                for name, value in list(dict.items(ctx)):
+                    if type(name) is not str:
+                        raise ValueError("INVALID_BOUNDS: context key must be a string")
                     if name not in _WORLD["context"] or not _safe_integer(value):
                         raise ValueError(f"INVALID_BOUNDS: {name}")
                     candidate[name] = int(value)
@@ -295,6 +303,9 @@ class WorldChecker(IWorldChecker):
             self.state = _INITIAL
             self.context = candidate
             self.history = []
+        except Exception:
+            rollback()
+            raise
         finally:
             self._busy = False
 
@@ -316,15 +327,28 @@ class WorldChecker(IWorldChecker):
                 return {"allowed": False, "previousState": previous, "currentState": previous, "context": original_context, "directiveAllowed": None, "violation": {"code": "SECURITY_VIOLATION", "message": message, "shortestCounterexampleTrace": trace}}
             if type(request) is not dict:
                 return security_reject("step request must be a dict")
-            action_val = request.get("transitionId")
-            if type(action_val) is not str:
+            action_val = None
+            has_action = False
+            proposed_val = None
+            has_proposed = False
+            raw_payload = None
+            for key, value in list(dict.items(request)):
+                if type(key) is not str:
+                    return security_reject("request keys must be strings")
+                if key == "transitionId":
+                    action_val = value
+                    has_action = True
+                elif key == "proposedDirective":
+                    proposed_val = value
+                    has_proposed = True
+                elif key == "eventPayload":
+                    raw_payload = value
+            if not has_action or type(action_val) is not str:
                 return security_reject("transitionId must be a string")
             action = action_val
-            proposed_val = request.get("proposedDirective")
-            if proposed_val is not None and type(proposed_val) is not str:
+            if has_proposed and proposed_val is not None and type(proposed_val) is not str:
                 return security_reject("proposedDirective must be a string or None", action)
             proposed = proposed_val
-            raw_payload = request.get("eventPayload")
             try:
                 payload = sanitize_world_payload(raw_payload)
             except Exception as error:
@@ -332,7 +356,7 @@ class WorldChecker(IWorldChecker):
             record = {"step": len(original_history) + 1, "state": previous, "action": action}
             if payload is not None:
                 record["eventPayload"] = payload
-            if "proposedDirective" in request:
+            if has_proposed:
                 record["proposedDirective"] = proposed
 
             def reject(code: str, message: str, invariant: str | None = None) -> dict[str, Any]:
@@ -378,8 +402,11 @@ class WorldChecker(IWorldChecker):
                 return reject("INVARIANT_FAILED", f"Invariant violation: '{violated}'", violated)
             self.state = transition["to"]
             self.context = candidate
-            self.history.append(copy.deepcopy(record))
+            self.history = [copy.deepcopy(r) for r in original_history] + [copy.deepcopy(record)]
             return {"allowed": True, "previousState": previous, "currentState": self.state, "context": dict(candidate), "directiveAllowed": transition["directive"]}
+        except Exception:
+            rollback()
+            raise
         finally:
             self._busy = False
 `;

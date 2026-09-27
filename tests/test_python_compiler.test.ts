@@ -12,6 +12,90 @@ const yaml = readFileSync(new URL("../../conformance/fixtures/order_settlement.w
 const world = parseWorldSpec(yaml);
 const run = (args: string[], cwd?: string) => spawnSync("python3", args, { cwd, encoding: "utf8" });
 
+test("Python plain dict collision keys cannot mutate admission, reset, or history", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-py-collision-"));
+  try {
+    const projection = compileWorldSpecPython(world);
+    writeFileSync(join(dir, "ports.py"), projection.portsPy);
+    writeFileSync(join(dir, "world_checker.py"), projection.worldCheckerPy);
+    writeFileSync(join(dir, "check.py"), `import copy
+import world_checker as module
+from world_checker import WorldChecker
+c = WorldChecker()
+assert c.step({'transitionId': 'INITIATE_PAYMENT', 'proposedDirective': 'DISPATCH_PAYMENT_GATEWAY'})['allowed']
+before = (c.state, copy.deepcopy(c.context), copy.deepcopy(c.history))
+class Collision:
+    def __init__(self, target, raises=True):
+        self.target, self.raises, self.armed = target, raises, False
+        self.calls = 0
+    def __hash__(self):
+        return hash(self.target)
+    def __eq__(self, other):
+        if self.armed:
+            self.calls += 1
+            c.state = 'PAID'
+            c.context['escrow_balance'] = 5000
+            if self.raises:
+                c.history.clear()
+            else:
+                c.history.append({'step': 999, 'state': 'PAID', 'action': 'DISPATCH_GOODS'})
+            if self.raises:
+                raise RuntimeError('hostile equality')
+        return False
+def hostile_request(target, raises=True):
+    key = Collision(target, raises)
+    request = {key: 'ignored'}
+    request.update({'transitionId': 'CONFIRM_PAYMENT', 'proposedDirective': None, 'eventPayload': {'captured_amount': 5000}})
+    assert type(request) is dict
+    key.armed = True
+    return request, key
+for target in ('transitionId', 'proposedDirective', 'eventPayload'):
+    request, key = hostile_request(target)
+    try:
+        verdict = c.step(request)
+        assert verdict['violation']['code'] == 'SECURITY_VIOLATION', verdict
+    except RuntimeError as error:
+        assert 'hostile equality' in str(error), error
+    assert (c.state, c.context, c.history) == before, target
+    assert key.calls == 0, target
+    denied = c.step({'transitionId': 'DISPATCH_GOODS', 'proposedDirective': 'INVOKE_LOGISTICS_DISPATCH'})
+    assert not denied['allowed'] and (c.state, c.context, c.history) == before
+key = Collision('escrow_balance')
+initial_context = {key: 1}
+initial_context['escrow_balance'] = 5000
+key.armed = True
+try:
+    c.reset(initial_context)
+    assert False, 'reset accepted hostile key'
+except ValueError as error:
+    assert str(error).startswith('INVALID_BOUNDS:'), error
+except RuntimeError as error:
+    assert 'hostile equality' in str(error), error
+assert (c.state, c.context, c.history) == before
+assert key.calls == 0
+key = Collision('proposedDirective', False)
+probe = {key: None}
+key.armed = True
+original = module.evaluate_world
+def mutating_evaluation(expression, environment):
+    probe.get('proposedDirective')
+    return original(expression, environment)
+module.evaluate_world = mutating_evaluation
+verdict = c.step({'transitionId': 'CONFIRM_PAYMENT', 'eventPayload': {'captured_amount': 5000}})
+module.evaluate_world = original
+assert verdict['allowed'], verdict
+assert key.calls > 0
+assert len(c.history) == len(before[2]) + 1
+assert c.history[:-1] == before[2]
+assert c.history[-1]['action'] == 'CONFIRM_PAYMENT'
+trace = c.step({'transitionId': 'BAD'})['violation']['shortestCounterexampleTrace']
+assert trace[:-1] == c.history
+`);
+    const py = run(["check.py"], dir);
+    assert.equal(py.status, 0, `${py.stdout}\n${py.stderr}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("Python rejects hostile request values and restores every machine field", () => {
   const dir = mkdtempSync(join(tmpdir(), "kadmos-py-hostile-"));
   try {
