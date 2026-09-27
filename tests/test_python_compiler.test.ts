@@ -12,6 +12,40 @@ const yaml = readFileSync(new URL("../../conformance/fixtures/order_settlement.w
 const world = parseWorldSpec(yaml);
 const run = (args: string[], cwd?: string) => spawnSync("python3", args, { cwd, encoding: "utf8" });
 
+test("Python payload boundary rejects reserved keys and depth, and converts numbers to float64", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-py-boundary-"));
+  try {
+    const projection = compileWorldSpecPython(world);
+    writeFileSync(join(dir, "ports.py"), projection.portsPy);
+    writeFileSync(join(dir, "world_checker.py"), projection.worldCheckerPy);
+    writeFileSync(join(dir, "check.py"), `import math
+from world_checker import WorldChecker, evaluate_world, sanitize_world_payload
+c = WorldChecker()
+for key in ('__proto__', 'constructor', 'prototype'):
+    verdict = c.step({'transitionId': 'INITIATE_PAYMENT', 'eventPayload': {key: {'captured_amount': 5000}}, 'proposedDirective': 'DISPATCH_PAYMENT_GATEWAY'})
+    assert verdict['violation']['code'] == 'SECURITY_VIOLATION', (key, verdict)
+    assert verdict['currentState'] == 'CREATED' and c.get_state() == 'CREATED'
+assert evaluate_world('event.toString == event.valueOf', {'event': {}}) is True
+positive = sanitize_world_payload({'value': 10**400})['value']
+negative = sanitize_world_payload({'value': -(10**400)})['value']
+assert type(positive) is float and math.isinf(positive) and positive > 0
+assert type(negative) is float and math.isinf(negative) and negative < 0
+assert math.isnan(sanitize_world_payload({'value': float('nan')})['value'])
+deep = {}
+cursor = deep
+for _ in range(1200):
+    cursor['child'] = {}
+    cursor = cursor['child']
+verdict = c.step({'transitionId': 'INITIATE_PAYMENT', 'eventPayload': deep, 'proposedDirective': 'DISPATCH_PAYMENT_GATEWAY'})
+assert verdict['violation']['code'] == 'SECURITY_VIOLATION', verdict
+assert verdict['currentState'] == 'CREATED' and c.get_state() == 'CREATED'
+assert len(verdict['violation']['shortestCounterexampleTrace']) == 1
+`);
+    const py = run(["check.py"], dir);
+    assert.equal(py.status, 0, `${py.stdout}\n${py.stderr}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("Python compiler emits importable, syntax-valid, dependency-free gatekeeper", () => {
   const dir = mkdtempSync(join(tmpdir(), "kadmos-py-"));
   try {

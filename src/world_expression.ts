@@ -54,7 +54,7 @@ export function evaluate(expression: string | boolean, environment: Environment)
         take();
         const property = take();
         if (!property || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(property)) throw new Error("INVALID_EXPRESSION: property");
-        left = left && typeof left === "object" ? (left as Record<string, unknown>)[property] : undefined;
+        left = left && typeof left === "object" && Object.hasOwn(left, property) ? (left as Record<string, unknown>)[property] : undefined;
       }
     } else {
       throw new Error(`INVALID_EXPRESSION: ${first}`);

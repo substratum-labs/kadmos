@@ -140,7 +140,7 @@ def evaluate_world(expression: str | bool, environment: dict[str, Any]) -> Any:
                     raise ValueError("INVALID_EXPRESSION: property")
                 property_name = tokens[position]
                 position += 1
-                left = left.get(property_name, _UNDEFINED) if type(left) is dict else _UNDEFINED
+                left = left.get(property_name, _UNDEFINED) if type(left) is dict and property_name in left else _UNDEFINED
         else:
             raise ValueError("INVALID_EXPRESSION: invalid operand")
         while position < len(tokens):
@@ -196,13 +196,18 @@ def sanitize_world_payload(raw: Any) -> dict[str, Any] | None:
         return None
     seen: set[int] = set()
 
-    def copy(value: Any) -> Any:
+    def copy(value: Any, depth: int = 0) -> Any:
+        if depth > 128:
+            raise ValueError("SECURITY_VIOLATION: payload depth exceeded")
         if isinstance(value, (list, tuple, set)):
             raise ValueError("INVALID_EVENT_PAYLOAD: must be an object")
-        if value is None or type(value) in (str, bool, int):
+        if value is None or type(value) in (str, bool):
             return value
-        if type(value) is float and math.isfinite(value):
-            return value
+        if type(value) in (int, float):
+            try:
+                return float(value)
+            except OverflowError:
+                return float("inf") if value > 0 else float("-inf")
         if type(value) is not dict:
             raise ValueError("SECURITY_VIOLATION: invalid payload type")
         identity = id(value)
@@ -214,7 +219,7 @@ def sanitize_world_payload(raw: Any) -> dict[str, Any] | None:
             for key, item in value.items():
                 if type(key) is not str or key in ("__proto__", "constructor", "prototype"):
                     raise ValueError("SECURITY_VIOLATION: invalid payload key")
-                result[key] = copy(item)
+                result[key] = copy(item, depth + 1)
             return result
         finally:
             seen.remove(identity)
@@ -304,7 +309,7 @@ class WorldChecker(IWorldChecker):
             action = request.get("transitionId")
             try:
                 payload = sanitize_world_payload(request.get("eventPayload"))
-            except ValueError as error:
+            except Exception as error:
                 trace = original_history + [{"step": len(original_history) + 1, "state": previous, "action": action}]
                 return {"allowed": False, "previousState": previous, "currentState": previous, "context": original_context, "directiveAllowed": None, "violation": {"code": "SECURITY_VIOLATION", "message": str(error), "shortestCounterexampleTrace": trace}}
             record = {"step": len(original_history) + 1, "state": previous, "action": action}

@@ -41,6 +41,68 @@ const securityWorld: WorldSpec = {
   ],
 };
 
+test("reserved payload keys return security verdicts without changing state", async () => {
+  const projection = compileWorldSpec(securityWorld);
+  const directory = mkdtempSync(join(tmpdir(), "kadmos-reserved-"));
+  try {
+    writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
+    writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
+    const build = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+      "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
+      "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
+    ], { encoding: "utf8" });
+    assert.equal(build.status, 0, build.stderr);
+    const { WorldChecker } = await import(pathToFileURL(join(directory, "world_checker.js")).href);
+    for (const makeGate of [() => createWorldChecker(securityWorld), () => new WorldChecker() as IWorldChecker]) {
+      const gate = makeGate();
+      for (const key of ["__proto__", "constructor", "prototype"]) {
+        const payload = JSON.parse(`{"${key}":{"captured_amount":5000}}`) as Record<string, unknown>;
+        const verdict = gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY", eventPayload: payload });
+        assert.equal(verdict.allowed, false, key);
+        assert.equal(verdict.violation?.code, "SECURITY_VIOLATION", key);
+        assert.equal(verdict.currentState, "CREATED", key);
+        assert.equal(gate.getState(), "CREATED", key);
+      }
+      const deep: Record<string, unknown> = {};
+      let cursor = deep;
+      for (let level = 0; level < 12000; level++) {
+        const child: Record<string, unknown> = {};
+        cursor.child = child;
+        cursor = child;
+      }
+      const verdict = gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY", eventPayload: deep });
+      assert.equal(verdict.violation?.code, "SECURITY_VIOLATION");
+      assert.equal(gate.getState(), "CREATED");
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("event property evaluation ignores inherited object methods", async () => {
+  assert.equal(evaluate("event.toString == event.valueOf", { event: {} }), true);
+  const spec: WorldSpec = { ...securityWorld, transitions: [
+    { id: "CHECK", from: "CREATED", to: "PAYMENT_PENDING", guard: "event.toString == event.valueOf", directive: null, effects: [] },
+  ] };
+  const projection = compileWorldSpec(spec);
+  const directory = mkdtempSync(join(tmpdir(), "kadmos-own-property-"));
+  try {
+    writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
+    writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
+    const build = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+      "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
+      "--module", "NodeNext", "--moduleResolution", "NodeNext",
+      join(directory, "ports.d.ts"), join(directory, "world_checker.ts"),
+    ], { encoding: "utf8" });
+    assert.equal(build.status, 0, build.stderr);
+    const { WorldChecker } = await import(pathToFileURL(join(directory, "world_checker.js")).href);
+    for (const gate of [createWorldChecker(spec), new WorldChecker() as IWorldChecker]) {
+      const verdict = gate.step({ transitionId: "CHECK", eventPayload: {} });
+      assert.equal(verdict.allowed, true);
+      assert.equal(gate.getState(), "PAYMENT_PENDING");
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("P0-3 security: accessor getter in eventPayload is intercepted as a security violation", () => {
   const gate = createWorldChecker(securityWorld, { order_amount: 5000 });
   gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY" });

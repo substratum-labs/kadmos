@@ -263,15 +263,18 @@ const generatedSanitizer = `
 function sanitizeWorldPayload(raw: unknown): Record<string, unknown> | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("INVALID_EVENT_PAYLOAD: must be an object");
-  const result: Record<string, unknown> = {};
+  const result: Record<string, unknown> = Object.create(null);
   for (const key of Object.getOwnPropertyNames(raw)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") throw new Error(\`SECURITY_VIOLATION: '\${key}' not permitted in eventPayload\`);
     const desc = Object.getOwnPropertyDescriptor(raw, key);
     if (!desc) continue;
     if (desc.get || desc.set) throw new Error("SECURITY_VIOLATION: accessor property not permitted");
     const val = desc.value;
-    if (typeof val === "object" && val !== null) result[key] = sanitizeWorldPayload(val);
+    let copy: unknown;
+    if (typeof val === "object" && val !== null) copy = sanitizeWorldPayload(val);
     else if (typeof val === "function" || typeof val === "symbol") throw new Error("SECURITY_VIOLATION: invalid type");
-    else result[key] = val;
+    else copy = val;
+    Object.defineProperty(result, key, { value: copy, writable: true, enumerable: true, configurable: true });
   }
   return result;
 }
@@ -302,7 +305,7 @@ function evaluateWorld(expression: string | boolean, env: Record<string, unknown
     else if (/^\\d/.test(token)) left = Number(token);
     else if (/^[A-Za-z_]/.test(token)) {
       left = env[token];
-      while (tokens[index] === ".") { index++; const property = tokens[index++]; if (!property || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(property)) throw new Error("INVALID_EXPRESSION"); left = left && typeof left === "object" ? (left as Record<string, unknown>)[property] : undefined; }
+      while (tokens[index] === ".") { index++; const property = tokens[index++]; if (!property || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(property)) throw new Error("INVALID_EXPRESSION"); left = left && typeof left === "object" && Object.hasOwn(left, property) ? (left as Record<string, unknown>)[property] : undefined; }
     } else throw new Error("INVALID_EXPRESSION");
     while (true) {
       const operator = tokens[index];
