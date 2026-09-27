@@ -1,13 +1,18 @@
 {
-  "name": "@substratum-labs/kadmos",
-  "version": "0.0.0",
-  "description": "Evidence-native coding agent",
-  "private": true,
+  "name": "kadmos",
+  "version": "0.1.0",
+  "description": "Constitutional state machines, verified runtime gatekeepers, and counterexample-guided self-healing for neuro-symbolic coding agents",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/substratum-labs/kadmos.git"
+  },
+  "keywords": ["agent", "ai", "neuro-symbolic", "formal-verification", "state-machine", "mcp", "cegis", "guardrails", "gatekeeper"],
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=18"
   },
-  "packageManager": "pnpm@11.19.0",
+  "packageManager": "pnpm@10.32.1",
   "bin": {
     "kadmos": "./bin/kadmos.js",
     "kadmos-mcp": "./bin/kadmos-mcp.js"
@@ -18,16 +23,20 @@
       "default": "./dist/src/index.js"
     }
   },
+  "files": ["bin", "dist", "README.md", "LICENSE"],
   "scripts": {
     "clean": "node --eval \"import('node:fs').then(({ rmSync }) => rmSync('dist', { recursive: true, force: true }))\"",
     "build": "pnpm run clean && tsc -p tsconfig.json",
     "test": "pnpm run build && node --test dist/tests/**/*.test.js",
+    "test:fuzz": "pnpm run build && node bin/kadmos.js test conformance/fixtures/order_settlement.world.yaml --runs 30",
+    "prepack": "pnpm run build",
     "demo": "pnpm run build && node dist/examples/order_fabric_demo.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify": "pnpm run test && pnpm run typecheck"
   },
   "devDependencies": {
-    "@types/node": "^26.5.1"
+    "@types/node": "^26.5.1",
+    "yaml": "^2.8.1"
   },
   "dependencies": {
     "typescript": "^7.0.2"
