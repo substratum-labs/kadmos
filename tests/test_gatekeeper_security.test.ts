@@ -57,7 +57,7 @@ test("reserved payload keys return security verdicts without changing state", as
     for (const makeGate of [() => createWorldChecker(securityWorld), () => new WorldChecker() as IWorldChecker]) {
       const gate = makeGate();
       for (const key of ["__proto__", "constructor", "prototype"]) {
-        const payload = JSON.parse(`{"${key}":{"captured_amount":5000}}`) as Record<string, unknown>;
+        const payload = JSON.parse(key === "constructor" ? '{"constructor":1}' : `{"${key}":{"captured_amount":5000}}`) as Record<string, unknown>;
         const verdict = gate.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY", eventPayload: payload });
         assert.equal(verdict.allowed, false, key);
         assert.equal(verdict.violation?.code, "SECURITY_VIOLATION", key);
