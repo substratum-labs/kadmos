@@ -57,12 +57,21 @@ import copy
 import json
 import math
 import re
+import types
 from typing import Any
 from ports import IWorldChecker
 
-_WORLD = json.loads(${embedded})
+def _freeze(value: Any) -> Any:
+    if type(value) is dict:
+        return types.MappingProxyType({k: _freeze(v) for k, v in value.items()})
+    if type(value) is list:
+        return tuple(_freeze(v) for v in value)
+    return value
+
+
+_WORLD = _freeze(json.loads(${embedded}))
 _INITIAL = next(state["id"] for state in _WORLD["states"] if state.get("initial"))
-_DEFAULTS = {name: definition.get("default", 0) for name, definition in _WORLD["context"].items()}
+_DEFAULTS = types.MappingProxyType({name: definition.get("default", 0) for name, definition in _WORLD["context"].items()})
 _PRECEDENCE = {"=>": 1, "||": 2, "&&": 3, "==": 4, "!=": 4, ">": 5, ">=": 5, "<": 5, "<=": 5, "+": 6, "-": 6, "*": 7, "/": 7}
 _TOKEN = re.compile(r"\\s+|=>|==|!=|>=|<=|&&|\\|\\||[()+\\-*/<>!.]|\\d+(?:\\.\\d+)?|[A-Za-z_][A-Za-z_0-9]*|'(?:[^'\\\\]|\\\\.)*'")
 _NAME = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\\Z")
@@ -231,12 +240,15 @@ def sanitize_world_payload(raw: Any) -> dict[str, Any] | None:
 
 class WorldChecker(IWorldChecker):
     def __init__(self, initial_context: dict[str, int] | None = None):
-        self._initial_context = dict(initial_context) if initial_context is not None else None
+        if initial_context is not None and type(initial_context) is not dict:
+            raise ValueError("INVALID_BOUNDS: initial context must be a dict")
+        self._initial_context: dict[str, int] | None = None
         self.state = _INITIAL
         self.context: dict[str, int] = {}
         self.history: list[dict[str, Any]] = []
         self._busy = False
         self.reset(initial_context)
+        self._initial_context = dict(self.context)
 
     def get_state(self) -> str:
         return self.state
@@ -274,6 +286,7 @@ class WorldChecker(IWorldChecker):
     def reset(self, initial_context: dict[str, int] | None = None) -> None:
         if self._busy:
             raise RuntimeError("REENTRANCY_DETECTED: reset called during active evaluation")
+        self._busy = True
         snapshot_state = self.state
         snapshot_context = dict(self.context)
         snapshot_history = copy.deepcopy(self.history)
@@ -281,10 +294,9 @@ class WorldChecker(IWorldChecker):
             self.state = snapshot_state
             self.context = dict(snapshot_context)
             self.history = copy.deepcopy(snapshot_history)
-        self._busy = True
         try:
             candidate = dict(_DEFAULTS)
-            ctx = initial_context if initial_context is not None else self._initial_context
+            ctx = self._initial_context if initial_context is None else initial_context
             if ctx is not None:
                 if type(ctx) is not dict:
                     raise ValueError("INVALID_BOUNDS: initial context must be a dict")

@@ -12,6 +12,88 @@ const yaml = readFileSync(new URL("../../conformance/fixtures/order_settlement.w
 const world = parseWorldSpec(yaml);
 const run = (args: string[], cwd?: string) => spawnSync("python3", args, { cwd, encoding: "utf8" });
 
+test("Python constructor rejects pair iterables before collision hooks and keeps World tables frozen", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kadmos-py-constructor-collision-"));
+  try {
+    const projection = compileWorldSpecPython(world);
+    writeFileSync(join(dir, "ports.py"), projection.portsPy);
+    writeFileSync(join(dir, "world_checker.py"), projection.worldCheckerPy);
+    writeFileSync(join(dir, "check.py"), `import copy
+import world_checker as module
+from world_checker import WorldChecker
+
+class Collision:
+    def __init__(self):
+        self.calls = 0
+    def __hash__(self):
+        return hash('order_amount')
+    def __eq__(self, other):
+        self.calls += 1
+        try:
+            module._DEFAULTS['order_amount'] = 1
+        except TypeError:
+            pass
+        try:
+            module._WORLD['transitions'].append({'id': 'GIFT', 'from': 'CREATED', 'to': 'PAID', 'directive': None, 'guard': True, 'effects': []})
+        except AttributeError:
+            pass
+        return False
+
+key = Collision()
+try:
+    WorldChecker([(key, 0), ('order_amount', 5000)])
+    assert False, 'constructor accepted pair iterable'
+except ValueError as error:
+    assert 'INVALID_BOUNDS' in str(error), error
+assert key.calls == 0
+
+class Custom(dict):
+    pass
+try:
+    WorldChecker(Custom(order_amount=5000))
+    assert False, 'constructor accepted custom mapping'
+except ValueError as error:
+    assert 'INVALID_BOUNDS' in str(error), error
+
+assert module._DEFAULTS['order_amount'] == 5000
+assert all(t['id'] != 'GIFT' for t in module._WORLD['transitions'])
+try:
+    module._DEFAULTS['order_amount'] = 1
+    assert False, 'defaults are mutable'
+except TypeError:
+    pass
+try:
+    module._WORLD['transitions'].append({'id': 'GIFT'})
+    assert False, 'transitions are mutable'
+except AttributeError:
+    pass
+try:
+    module._WORLD['context']['order_amount']['default'] = 1
+    assert False, 'nested World definition is mutable'
+except TypeError:
+    pass
+checker = WorldChecker()
+assert checker.get_state() == 'CREATED'
+assert checker.get_context()['order_amount'] == 5000
+assert checker.step({'transitionId': 'GIFT'})['violation']['code'] == 'INVALID_TRANSITION'
+assert checker.step({'transitionId': 'INITIATE_PAYMENT', 'proposedDirective': 'DISPATCH_PAYMENT_GATEWAY'})['allowed']
+before = (checker.get_state(), checker.get_context(), copy.deepcopy(checker.history))
+reset_key = Collision()
+try:
+    checker.reset([(reset_key, 0)])
+    assert False, 'reset accepted pair iterable'
+except ValueError as error:
+    assert 'INVALID_BOUNDS' in str(error), error
+assert reset_key.calls == 0
+assert (checker.get_state(), checker.get_context(), checker.history) == before
+assert module._DEFAULTS['order_amount'] == 5000
+assert all(t['id'] != 'GIFT' for t in module._WORLD['transitions'])
+`);
+    const py = run(["check.py"], dir);
+    assert.equal(py.status, 0, `${py.stdout}\n${py.stderr}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("Python plain dict collision keys cannot mutate admission, reset, or history", () => {
   const dir = mkdtempSync(join(tmpdir(), "kadmos-py-collision-"));
   try {
