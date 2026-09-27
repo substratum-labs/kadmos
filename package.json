@@ -34,6 +34,7 @@
     "test:fuzz": "pnpm run build && node bin/kadmos.js test conformance/fixtures/order_settlement.world.yaml --runs 30",
     "prepack": "pnpm run build",
     "demo": "pnpm run build && node dist/examples/order_fabric_demo.js",
+    "demo:circuit": "pnpm run build && node dist/examples/circuit-breaker-worker/src/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify": "pnpm run test && pnpm run typecheck"
   },
