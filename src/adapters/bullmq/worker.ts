@@ -36,6 +36,7 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
       if (!this.paused) {
         const k = keys(this.prefix, this.name);
         if ((await this.redis.get(k.paused)) !== "1") {
+          await this.recoverStaleLeases();
           await this.wakeDue();
           while (!this.stopped && !this.paused && this.active.size < this.concurrency) {
             const id = await this.redis.rpoplpush(k.wait, k.active);
@@ -58,24 +59,43 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
     const k = keys(this.prefix, this.name);
     const due = await this.redis.zrangebyscore(k.delayed, "-inf", Date.now());
     for (const id of due) {
-      const raw = parseRaw(await this.redis.hgetall(k.job(id)));
-      if (!raw || raw.state !== "delayed") { await this.redis.zrem(k.delayed, id); continue; }
-      if (Number(raw.attemptsMade) === 0) {
-        await this.redis.zrem(k.delayed, id);
-        await this.redis.lpush(k.wait, id);
-        await this.redis.hset(k.job(id), "state", "waiting");
-      } else {
-        const checker = checkerFor(raw);
-        await settle(checker, "RETRY_DELAY_ELAPSED", "ENQUEUE_FOR_PICKUP", {}, async () => {
-          await this.redis.zrem(k.delayed, id);
-          await this.redis.lpush(k.wait, id);
-          await this.redis.hset(k.job(id), "state", "waiting");
-        }, async () => {
-          await this.redis.lrem(k.wait, 0, id);
-          await this.redis.zadd(k.delayed, Date.now(), id);
-          await this.redis.hset(k.job(id), raw as unknown as Record<string, string>);
-        });
+      if ((await this.redis.zrem(k.delayed, id)) === 0) continue;
+      try {
+        const raw = parseRaw(await this.redis.hgetall(k.job(id)));
+        if (!raw || raw.state !== "delayed") continue;
+        if (Number(raw.attemptsMade) === 0) {
+          await this.redis.transitionJob({ jobKey: k.job(id), id, expectedState: "delayed", changes: { state: "waiting" }, pushList: k.wait });
+        } else {
+          const checker = checkerFor(raw);
+          await settle(checker, "RETRY_DELAY_ELAPSED", "ENQUEUE_FOR_PICKUP", {}, async () => {
+            return this.redis.transitionJob({ jobKey: k.job(id), id, expectedState: "delayed", changes: { state: "waiting" }, pushList: k.wait });
+          });
+        }
+        this.draining = false;
+      } catch (error) {
+        await this.redis.transitionJob({ jobKey: k.job(id), id, expectedState: "delayed", changes: {}, addSet: { key: k.delayed, score: Date.now() } });
+        throw error;
       }
+    }
+  }
+  private async recoverStaleLeases(): Promise<void> {
+    const k = keys(this.prefix, this.name);
+    const duration = Math.max(1, this.opts.lockDuration ?? 30000);
+    for (const id of await this.redis.lrange(k.active, 0, -1)) {
+      const raw = parseRaw(await this.redis.hgetall(k.job(id)));
+      if (!raw) { await this.redis.lrem(k.active, 0, id); continue; }
+      if (raw.state === "waiting") {
+        await this.redis.transitionJob({ jobKey: k.job(id), id, expectedState: "waiting", expectedToken: raw.lockToken || "", changes: {}, removeList: k.active, pushList: k.wait });
+        continue;
+      }
+      if (raw.state !== "active") { await this.redis.lrem(k.active, 0, id); continue; }
+      if (raw.lockToken && Number(raw.lockAcquiredAt) > Date.now() - duration) continue;
+      const checker = raw.lockToken ? checkerFor(raw) : checkerFor({ ...raw, lockToken: "unclaimed-lease", lockEpoch: String(Math.max(1, Number(raw.lockEpoch || 0))) });
+      await settle(checker, "RECOVER_STALE_LEASE", "EVICT_STALE_WORKER", { supervisor_token: "lease-recovery" }, async () => {
+        return this.redis.transitionJob({ jobKey: k.job(id), id, expectedState: "active", expectedToken: raw.lockToken,
+          expectedLease: raw.lockAcquiredAt, changes: { state: "waiting", lockToken: "", lockEpoch: String(checker.getContext().lock_epoch), lockAcquiredAt: "" },
+          removeList: k.active, pushList: k.wait });
+      });
       this.draining = false;
     }
   }
@@ -85,19 +105,14 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
     if (!raw || raw.state !== "waiting") { await this.redis.lrem(k.active, 1, id); return; }
     const token = randomUUID();
     const checker = checkerFor(raw);
-    try {
-      await settle(checker, "ACQUIRE_LOCK", "DISPATCH_PAYLOAD", { token }, async () => {
-        await this.redis.hset(k.job(id), { state: "active", lockToken: token });
-      }, async () => {
-        await this.redis.hset(k.job(id), raw as unknown as Record<string, string>);
-      });
-    } catch (error) {
-      await this.redis.lrem(k.active, 1, id);
-      await this.redis.lpush(k.wait, id);
-      throw error;
-    }
+    const claimed = await settle(checker, "ACQUIRE_LOCK", "DISPATCH_PAYLOAD", { token }, async () => this.redis.transitionJob({
+      jobKey: k.job(id), id, expectedState: "waiting", expectedToken: raw.lockToken || "",
+      requireList: k.active,
+      changes: { state: "active", lockToken: token, lockEpoch: String(Number(raw.lockEpoch || 0) + 1), lockAcquiredAt: String(Date.now()) },
+    }));
+    if (!claimed) return;
     this.draining = false;
-    const job = new Job<DataType, ReturnType>({ ...raw, state: "active", lockToken: token }, this.redis, this.prefix, this.name);
+    const job = new Job<DataType, ReturnType>({ ...raw, state: "active", lockToken: token, lockEpoch: String(Number(raw.lockEpoch || 0) + 1) }, this.redis, this.prefix, this.name);
     // Forward job progress to the worker as well as QueueEvents.
     const onProgress = (message: string) => {
       try { const event = JSON.parse(message) as { event: string; jobId: string; data: unknown }; if (event.event === "progress" && event.jobId === id) this.emit("progress", job, event.data); }
@@ -110,16 +125,12 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
       catch (error) { await this.failJob(job, checker, token, error); return; }
       const fresh = parseRaw(await this.redis.hgetall(k.job(id)));
       if (!fresh || fresh.state !== "active" || fresh.lockToken !== token) return;
-      await settle(checker, "REPORT_SUCCESS", "PERSIST_RESULT", { token, result_digest: JSON.stringify(result) ?? "null" }, async () => {
-        await this.redis.hset(k.job(id), { state: "completed", returnvalue: JSON.stringify(result) ?? "null", lockToken: "" });
-        await this.redis.lrem(k.active, 1, id);
-        await this.redis.zadd(k.completed, Date.now(), id);
-      }, async () => {
-        await this.redis.zrem(k.completed, id);
-        await this.redis.lrem(k.active, 0, id);
-        await this.redis.lpush(k.active, id);
-        await this.redis.hset(k.job(id), fresh as unknown as Record<string, string>);
-      });
+      const settled = await settle(checker, "REPORT_SUCCESS", "PERSIST_RESULT", { token, result_digest: JSON.stringify(result) ?? "null" }, async () => this.redis.transitionJob({
+        jobKey: k.job(id), id, expectedState: "active", expectedToken: token,
+        changes: { state: "completed", returnvalue: JSON.stringify(result) ?? "null", failedReason: "", lockToken: "", lockAcquiredAt: "" },
+        removeList: k.active, addSet: { key: k.completed, score: Date.now() },
+      }));
+      if (!settled) return;
       job.returnvalue = result;
       this.emit("completed", job, result);
       await this.redis.publish(k.events, JSON.stringify({ event: "completed", jobId: id, returnvalue: result, prev: "active" }));
@@ -137,27 +148,18 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
         const backoff = typeof opts.backoff === "number" ? opts.backoff : opts.backoff?.delay ?? 0;
         const delay = opts.backoff && typeof opts.backoff !== "number" && opts.backoff.type === "exponential"
           ? backoff * 2 ** Number(fresh.attemptsMade) : backoff;
-        await settle(checker, "REPORT_RETRYABLE_FAILURE", "SCHEDULE_BACKOFF", { token, reason }, async () => {
-          await this.redis.hset(k.job(id), { state: "delayed", attemptsMade: String(Number(fresh.attemptsMade) + 1), failedReason: reason, lockToken: "" });
-          await this.redis.lrem(k.active, 1, id);
-          await this.redis.zadd(k.delayed, Date.now() + delay, id);
-        }, async () => {
-          await this.redis.zrem(k.delayed, id);
-          await this.redis.lrem(k.active, 0, id);
-          await this.redis.lpush(k.active, id);
-          await this.redis.hset(k.job(id), fresh as unknown as Record<string, string>);
-        });
+        await settle(checker, "REPORT_RETRYABLE_FAILURE", "SCHEDULE_BACKOFF", { token, reason }, async () => this.redis.transitionJob({
+          jobKey: k.job(id), id, expectedState: "active", expectedToken: token,
+          changes: { state: "delayed", attemptsMade: String(Number(fresh.attemptsMade) + 1), failedReason: reason, lockToken: "", lockAcquiredAt: "" },
+          removeList: k.active, addSet: { key: k.delayed, score: Date.now() + delay },
+        }));
       } else {
-        await settle(checker, "RETRY_EXHAUSTED", "TRIGGER_DEAD_LETTER_ALERT", { token, reason }, async () => {
-          await this.redis.hset(k.job(id), { state: "failed", attemptsMade: String(Number(fresh.attemptsMade) + 1), failedReason: reason, lockToken: "" });
-          await this.redis.lrem(k.active, 1, id);
-          await this.redis.zadd(k.failed, Date.now(), id);
-        }, async () => {
-          await this.redis.zrem(k.failed, id);
-          await this.redis.lrem(k.active, 0, id);
-          await this.redis.lpush(k.active, id);
-          await this.redis.hset(k.job(id), fresh as unknown as Record<string, string>);
-        });
+        const settled = await settle(checker, "RETRY_EXHAUSTED", "TRIGGER_DEAD_LETTER_ALERT", { token, reason }, async () => this.redis.transitionJob({
+          jobKey: k.job(id), id, expectedState: "active", expectedToken: token,
+          changes: { state: "failed", attemptsMade: String(Number(fresh.attemptsMade) + 1), failedReason: reason, lockToken: "", lockAcquiredAt: "" },
+          removeList: k.active, addSet: { key: k.failed, score: Date.now() },
+        }));
+        if (!settled) return;
         job.failedReason = reason;
         job.attemptsMade = Number(fresh.attemptsMade) + 1;
         this.emit("failed", job, error instanceof Error ? error : new Error(reason));

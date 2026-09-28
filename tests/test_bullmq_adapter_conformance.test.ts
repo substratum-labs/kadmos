@@ -196,8 +196,10 @@ test("conformance: worker emits drained after all queued work completes", async 
   const queue = new Queue("drained-conformance", { connection: redis });
   const worker = new Worker("drained-conformance", async () => true, { connection: redis });
   try {
-    const job = await queue.add("work", {});
+    await worker.pause();
     const drained = once(worker, "drained");
+    const job = await queue.add("work", {});
+    await worker.resume();
     await within(drained);
     assert.equal(await job.getState(), "completed");
     assert.equal(await queue.count(), 0);

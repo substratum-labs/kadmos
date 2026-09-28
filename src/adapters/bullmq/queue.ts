@@ -13,9 +13,9 @@ export class Queue<DataType = any, ReturnType = any> {
   }
   async add(jobName: string, data: DataType, opts: JobOptions = {}): Promise<Job<DataType, ReturnType>> {
     const id = opts.jobId ?? randomUUID(); const k = keys(this.prefix, this.name);
-    if (await this.getJob(id)) throw new Error(`Job ${id} already exists`);
+    if ((await this.redis.hsetnx(k.job(id), "id", id)) === 0) throw new Error(`Job ${id} already exists`);
     const delay = Math.max(0, opts.delay ?? 0);
-    const raw: RawJobData = { id, name: jobName, data: JSON.stringify(data), opts: JSON.stringify(opts), state: delay > 0 ? "delayed" : "waiting", returnvalue: "", failedReason: "", attemptsMade: "0", progress: "0", lockToken: "" };
+    const raw: RawJobData = { id, name: jobName, data: JSON.stringify(data), opts: JSON.stringify(opts), state: delay > 0 ? "delayed" : "waiting", returnvalue: "", failedReason: "", attemptsMade: "0", progress: "0", lockToken: "", lockEpoch: "0", lockAcquiredAt: "" };
     await this.redis.hset(k.job(id), raw as unknown as Record<string, string>);
     if (delay > 0) await this.redis.zadd(k.delayed, Date.now() + delay, id);
     else await this.redis.lpush(k.wait, id);

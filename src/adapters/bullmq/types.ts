@@ -16,7 +16,7 @@ export interface JobOptions {
   jobId?: string;
 }
 export type Processor<DataType = any, ReturnType = any> = (job: Job<DataType, ReturnType>) => Promise<ReturnType> | ReturnType;
-export type JobState = "waiting" | "active" | "delayed" | "completed" | "failed" | "unknown";
+export type JobState = "waiting" | "active" | "delayed" | "completed" | "failed" | "revoked" | "unknown";
 export interface RawJobData {
   id: string;
   name: string;
@@ -28,4 +28,6 @@ export interface RawJobData {
   attemptsMade: string;
   progress: string;
   lockToken: string;
+  lockEpoch: string;
+  lockAcquiredAt: string;
 }

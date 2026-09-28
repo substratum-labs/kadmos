@@ -30,7 +30,7 @@ export class Job<DataType = any, ReturnType = any> {
   }
   async updateProgress(progress: any): Promise<void> {
     const k = keys(this.prefix, this.queueName); const raw = await this.raw();
-    if (raw.state === "completed" || raw.state === "failed") throw new Error("Cannot update terminal job");
+    if (raw.state === "completed" || raw.state === "failed" || raw.state === "revoked") throw new Error("Cannot update terminal job");
     await this.redis.hset(k.job(this.id), "progress", JSON.stringify(progress));
     this.progress = progress;
     await this.redis.publish(k.events, JSON.stringify({ event: "progress", jobId: this.id, data: progress }));
@@ -39,29 +39,25 @@ export class Job<DataType = any, ReturnType = any> {
     const k = keys(this.prefix, this.queueName); const raw = await this.raw();
     if (raw.state !== "delayed") throw new Error("Only delayed retry jobs can be manually retried");
     const checker = checkerFor(raw);
-    await settle(checker, "RETRY_DELAY_ELAPSED", "ENQUEUE_FOR_PICKUP", {}, async () => {
-      await this.redis.zrem(k.delayed, this.id);
-      await this.redis.lpush(k.wait, this.id);
-      await this.redis.hset(k.job(this.id), "state", "waiting");
-    }, async () => {
-      await this.redis.lrem(k.wait, 0, this.id);
-      await this.redis.zadd(k.delayed, Date.now(), this.id);
-      await this.redis.hset(k.job(this.id), raw as unknown as Record<string, string>);
-    });
+    if ((await this.redis.zrem(k.delayed, this.id)) === 0) throw new Error("Delayed job already claimed");
+    const retried = await settle(checker, "RETRY_DELAY_ELAPSED", "ENQUEUE_FOR_PICKUP", {}, async () => this.redis.transitionJob({
+      jobKey: k.job(this.id), id: this.id, expectedState: "delayed", changes: { state: "waiting" }, pushList: k.wait,
+    }));
+    if (!retried) throw new Error("Job state changed during retry");
   }
   async discard(): Promise<void> {
     const k = keys(this.prefix, this.queueName); const raw = await this.raw();
-    if (raw.state === "completed" || raw.state === "failed") throw new Error("Cannot discard terminal job");
+    if (raw.state === "completed" || raw.state === "failed" || raw.state === "revoked") throw new Error("Cannot discard terminal job");
     const checker = checkerFor(raw);
     const transition = raw.state === "active" ? "CANCEL_FROM_ACTIVE" : raw.state === "delayed" && Number(raw.attemptsMade) > 0 ? "CANCEL_FROM_DELAYED" : "CANCEL_FROM_WAITING";
     const payload = raw.state === "active" ? { supervisor_token: "discard" } : {};
-    await settle(checker, transition, "NOTIFY_CANCELLATION", payload, async () => {
-      await this.redis.lrem(k.wait, 0, this.id);
-      await this.redis.lrem(k.active, 0, this.id);
-      await this.redis.zrem(k.delayed, this.id);
-      await this.redis.hset(k.job(this.id), { state: "failed", failedReason: "discarded", lockToken: "" });
-      await this.redis.zadd(k.failed, Date.now(), this.id);
-    });
+    const discarded = await settle(checker, transition, "NOTIFY_CANCELLATION", payload, async () => this.redis.transitionJob({
+      jobKey: k.job(this.id), id: this.id, expectedState: raw.state, expectedToken: raw.state === "active" ? raw.lockToken : undefined,
+      changes: { state: "failed", failedReason: "discarded", returnvalue: "", lockToken: "", lockAcquiredAt: "", lockEpoch: String(Math.max(1, Number(raw.lockEpoch || 0))) },
+      removeList: raw.state === "active" ? k.active : k.wait, removeSet: k.delayed,
+      addSet: { key: k.failed, score: Date.now() },
+    }));
+    if (!discarded) throw new Error("Job state changed during discard");
     this.failedReason = "discarded";
   }
 }

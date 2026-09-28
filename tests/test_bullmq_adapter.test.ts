@@ -118,15 +118,14 @@ test("graceful close waits for active job and leaves queued work", async () => {
 test("Redis settlement failure restores active job for later settlement", async () => {
   class FaultRedis extends MemoryRedis {
     failCompletion = true;
-    override async zadd(key: string, score: number, value: string): Promise<number> {
-      const result = await super.zadd(key, score, value);
-      if (key.endsWith(":completed") && this.failCompletion) { this.failCompletion = false; throw new Error("injected completion failure"); }
-      return result;
+    override async transitionJob(change: import("../src/adapters/bullmq/redis.js").JobTransition): Promise<boolean> {
+      if (change.changes.state === "completed" && this.failCompletion) { this.failCompletion = false; throw new Error("injected completion failure"); }
+      return super.transitionJob(change);
     }
   }
   const redis = new FaultRedis();
   const queue = new Queue("rollback", { connection: redis });
-  const worker = new Worker("rollback", async () => "ok", { connection: redis });
+  const worker = new Worker("rollback", async () => "ok", { connection: redis, lockDuration: 20 });
   try {
     const errors: Error[] = [];
     worker.on("error", error => errors.push(error));
@@ -134,8 +133,9 @@ test("Redis settlement failure restores active job for later settlement", async 
     await timeout(new Promise<void>(resolve => worker.on("error", () => resolve())));
     assert.match(errors[0]!.message, /injected completion failure/);
     assert.equal(await job.getState(), "active");
-    assert.equal(await redis.llen("kadmos:kadmos:rollback:active"), 1);
-    assert.deepEqual(await redis.zrangebyscore("kadmos:kadmos:rollback:completed", "-inf", "+inf"), []);
+    while (await job.getState() !== "completed") await new Promise(r => setTimeout(r, 5));
+    assert.equal(await redis.llen("kadmos:rollback:active"), 0);
+    assert.deepEqual(await redis.zrangebyscore("kadmos:rollback:completed", "-inf", "+inf"), [job.id]);
   } finally { await worker.close(); await queue.close(); }
 });
 

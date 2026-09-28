@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Job as BullJob } from "bullmq";
 import { WorldChecker } from "../examples/job-queue-benchmark/spec/world_checker.js";
-import { MemoryRedis, Queue } from "../src/adapters/bullmq/index.js";
+import { MemoryRedis, Queue, Worker } from "../src/adapters/bullmq/index.js";
 import { keys, settle } from "../src/adapters/bullmq/lifecycle.js";
 
 const request = (transitionId: string, proposedDirective: NonNullable<Parameters<WorldChecker["step"]>[0]["proposedDirective"]>, eventPayload: Record<string, string> = {}) =>
@@ -51,6 +51,22 @@ test("crash consistency: lost BullMQ retry acknowledgement splits job memory fro
   assert.deepEqual(await redis.hgetall(k.job("job-1")), persistedBefore);
   assert.equal(await redis.llen(k.active), 1);
   assert.equal(await redis.zcard(k.completed), 0);
+
+  // A failed worker settlement remains recoverable even if the worker dies here.
+  await redis.hset(k.job("job-1"), { ...persistedBefore, id: "job-1", name: "work", data: "{}", opts: "{}", attemptsMade: "0", progress: "0", failedReason: "", lockEpoch: "1", lockAcquiredAt: "1" });
+  const queue = new Queue("crash-flaw", { connection: redis });
+  const worker = new Worker("crash-flaw", async () => "recovered", { connection: redis, lockDuration: 5 });
+  try {
+    const deadline = Date.now() + 3000;
+    let state = await (await queue.getJob("job-1"))!.getState();
+    while (state !== "completed") {
+      if (Date.now() > deadline) throw new Error("stale lease was not recovered");
+      await new Promise(resolve => setTimeout(resolve, 5));
+      state = await (await queue.getJob("job-1"))!.getState();
+    }
+    assert.equal((await queue.getJob("job-1"))?.returnvalue, "recovered");
+    assert.equal(await redis.llen(k.active), 0);
+  } finally { await worker.close(); }
 });
 
 test("terminal resurrection: BullMQ retry requeues finished jobs; Kadmos rejects every terminal replay", async () => {
@@ -93,6 +109,17 @@ test("terminal resurrection: BullMQ retry requeues finished jobs; Kadmos rejects
     await assert.rejects(job.retry());
     assert.equal(await job.getState(), "failed");
     assert.equal((await queue.getJob(job.id))?.failedReason, "discarded");
+    const completed = await queue.add("work", {});
+    const worker = new Worker("terminal-flaw", async () => "done", { connection: redis });
+    try {
+      const deadline = Date.now() + 3000;
+      while (await completed.getState() !== "completed") {
+        if (Date.now() > deadline) throw new Error("completion timed out");
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      await assert.rejects(completed.retry(), /Only delayed retry jobs/);
+      assert.equal(await completed.getState(), "completed");
+    } finally { await worker.close(); }
   } finally { await queue.close(); }
 });
 
