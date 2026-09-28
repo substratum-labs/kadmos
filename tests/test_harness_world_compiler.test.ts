@@ -103,8 +103,8 @@ test("projects typecheckable ports.d.ts and world_checker.ts", () => {
   try {
     writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
     writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
-    const tsc = join(process.cwd(), "node_modules", ".bin", "tsc");
-    const result = spawnSync(tsc, [
+    const tsc = join(process.cwd(), "node_modules", "typescript", "bin", "tsc");
+    const result = spawnSync(process.execPath, [tsc,
       "--ignoreConfig",
       "--strict", "--noEmit", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
@@ -139,7 +139,7 @@ test("generated checker enforces payment guard, applies effects, and validates t
   try {
     writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
     writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
-    const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+    const result = spawnSync(process.execPath, [join(process.cwd(), "node_modules", "typescript", "bin", "tsc"),
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
       "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",

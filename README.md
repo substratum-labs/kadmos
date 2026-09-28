@@ -37,6 +37,25 @@ flowchart LR
 
 The gatekeepers are pure in-process decision engines. Physical enforcement of network, filesystem, or process effects requires a separate host or execution broker to honor their verdicts. Kadmos alone does not sandbox Fabric or prevent it from bypassing the checker in the same process.
 
+## BullMQ Drop-In Adapter (Developer Preview v0.x)
+
+For supported BullMQ lifecycle APIs, replace the BullMQ import with `@substratum-labs/kadmos/adapters/bullmq`. The adapter exposes `Queue`, `Worker`, `Job`, and `QueueEvents`; pass the same ioredis connection to queue and worker:
+
+```typescript
+import Redis from 'ioredis';
+import { Queue, Worker } from '@substratum-labs/kadmos/adapters/bullmq';
+
+const connection = new Redis();
+const queue = new Queue('emails', { connection });
+const worker = new Worker('emails', async job => {
+  console.log(job.data);
+  return { delivered: true };
+}, { connection });
+await queue.add('send', { to: 'user@example.com' });
+```
+
+The adapter uses **zero Lua scripts**. A formally verified World state-machine gatekeeper authorizes lifecycle transitions, and transactional settlement rolls back checker state when a Redis write fails. The same World compiles to TypeScript and Python gatekeepers for polyglot compatibility. This v0.x surface targets the tested BullMQ lifecycle subset; review the [industrial replacement whitepaper](https://github.com/substratum-labs/substratum-internal/blob/main/design/kadmos/2026-09-28_kadmos_bullmq_replacement_whitepaper.md) for architecture, benchmarks, and migration boundaries.
+
 ## Three-minute quickstart
 
 Requires Node.js 18+, Python 3.10+, and pnpm 10. From an npm-connected shell:

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import type { WorldChecker } from "../../../examples/job-queue-benchmark/spec/world_checker.js";
+import type { WorldChecker } from "./spec/world_checker.js";
 import { Job } from "./job.js";
 import { checkerFor, keys, parseRaw, settle } from "./lifecycle.js";
 import { resolveRedis, type RedisTransport } from "./redis.js";

@@ -126,11 +126,12 @@ function runPython(spec: WorldSpec, requests: TransitionStepRequest[][]): StepVe
     writeFileSync(join(directory, "ports.py"), projection.portsPy);
     writeFileSync(join(directory, "world_checker.py"), projection.worldCheckerPy);
     writeFileSync(join(directory, "runner.py"), PYTHON_RUNNER);
-    const process = spawnSync("python3", ["-B", "runner.py"], {
+    const python = process.platform === "win32" ? "python" : "python3";
+    const result = spawnSync(python, ["-B", "runner.py"], {
       cwd: directory, input: JSON.stringify(requests), encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
     });
-    if (process.error || process.status !== 0) throw new Error(`Python fuzzer runner failed: ${process.error?.message ?? process.stderr}`);
-    return JSON.parse(process.stdout) as StepVerdict[][];
+    if (result.error || result.status !== 0) throw new Error(`Python fuzzer runner failed: ${result.error?.message ?? result.stderr}`);
+    return JSON.parse(result.stdout) as StepVerdict[][];
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

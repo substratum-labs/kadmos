@@ -10,7 +10,7 @@ import { evaluate } from "../src/world_expression.js";
 
 const yaml = readFileSync(new URL("../../conformance/fixtures/order_settlement.world.yaml", import.meta.url), "utf8");
 const world = parseWorldSpec(yaml);
-const run = (args: string[], cwd?: string) => spawnSync("python3", args, { cwd, encoding: "utf8" });
+const run = (args: string[], cwd?: string) => spawnSync(process.platform === "win32" ? "python" : "python3", args, { cwd, encoding: "utf8" });
 
 test("Python constructor rejects pair iterables before collision hooks and keeps World tables frozen", () => {
   const dir = mkdtempSync(join(tmpdir(), "kadmos-py-constructor-collision-"));

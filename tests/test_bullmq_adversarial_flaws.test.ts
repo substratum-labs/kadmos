@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import test from "node:test";
 import { Job as BullJob } from "bullmq";
-import { WorldChecker } from "../examples/job-queue-benchmark/spec/world_checker.js";
+import { WorldChecker } from "../src/adapters/bullmq/spec/world_checker.js";
 import { MemoryRedis, Queue, Worker } from "../src/adapters/bullmq/index.js";
 import { keys, settle } from "../src/adapters/bullmq/lifecycle.js";
 
@@ -148,7 +148,7 @@ test("polyglot split-brain: unguarded external writes steal a lock; compiled TS/
   assert.equal(ts[3]?.token, "worker-b");
   assert.equal(ts[4]?.state, "COMPLETED");
 
-  const python = spawnSync("python3", ["-B", "-c", "import json,sys; from world_checker import WorldChecker\ng=WorldChecker()\nout=[]\nfor s in json.load(sys.stdin):\n v=g.step(s); c=g.get_context(); out.append({'allowed':v['allowed'],'state':g.get_state(),'epoch':c['lock_epoch'],'token':c['lock_token'],'code':(v.get('violation') or {}).get('code')})\nprint(json.dumps(out))"], {
+  const python = spawnSync(process.platform === "win32" ? "python" : "python3", ["-B", "-c", "import json,sys; from world_checker import WorldChecker\ng=WorldChecker()\nout=[]\nfor s in json.load(sys.stdin):\n v=g.step(s); c=g.get_context(); out.append({'allowed':v['allowed'],'state':g.get_state(),'epoch':c['lock_epoch'],'token':c['lock_token'],'code':(v.get('violation') or {}).get('code')})\nprint(json.dumps(out))"], {
     cwd: join(process.cwd(), "examples/job-queue-benchmark/spec"), input: JSON.stringify(steps), encoding: "utf8",
   });
   assert.equal(python.status, 0, python.stderr);

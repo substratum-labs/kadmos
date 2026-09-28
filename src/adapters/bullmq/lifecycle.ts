@@ -1,5 +1,5 @@
-import { WorldChecker } from "../../../examples/job-queue-benchmark/spec/world_checker.js";
-import type { WorldDirective } from "../../../examples/job-queue-benchmark/spec/ports.js";
+import { WorldChecker } from "./spec/world_checker.js";
+import type { WorldDirective } from "./spec/ports.js";
 import type { RawJobData } from "./types.js";
 
 export function keys(prefix: string, name: string) {

@@ -18,10 +18,10 @@ test("scaffold all languages builds executable gatekeepers and fuzzable World", 
     const world = parseWorldSpec(readFileSync(join(dir, "world.yaml"), "utf8"));
     const report = await runDifferentialFuzzing(world, { runs: 3, stepsPerRun: 5, seed: 42 });
     assert.equal(report.passed, true, JSON.stringify(report.divergences));
-    const py = spawnSync("python3", ["-m", "unittest", "discover", "-s", "tests"], { cwd: dir, encoding: "utf8" });
+    const py = spawnSync(process.platform === "win32" ? "python" : "python3", ["-m", "unittest", "discover", "-s", "tests"], { cwd: dir, encoding: "utf8" });
     assert.equal(py.status, 0, py.stderr);
-    symlinkSync(join(process.cwd(), "node_modules"), join(dir, "node_modules"));
-    const compile = spawnSync(join(process.cwd(), "node_modules/.bin/tsc"), ["-p", join(dir, "tsconfig.json")], { cwd: dir, encoding: "utf8" });
+    symlinkSync(join(process.cwd(), "node_modules"), join(dir, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+    const compile = spawnSync(process.execPath, [join(process.cwd(), "node_modules", "typescript", "bin", "tsc"), "-p", join(dir, "tsconfig.json")], { cwd: dir, encoding: "utf8" });
     assert.equal(compile.status, 0, `${compile.stdout}\n${compile.stderr}`);
     const ts = spawnSync(process.execPath, ["--test", join(dir, "dist/tests/test_gatekeeper.test.js")], { cwd: dir, encoding: "utf8" });
     assert.equal(ts.status, 0, `${ts.stdout}\n${ts.stderr}`);

@@ -35,7 +35,7 @@ test("Python and TypeScript reject reserved payload keys and invalid directives 
     const projection = compileWorldSpecPython(world);
     writeFileSync(join(dir, "world_checker.py"), projection.worldCheckerPy);
     writeFileSync(join(dir, "ports.py"), projection.portsPy);
-    const py = spawnSync("python3", ["-B", "-c", "import json,sys; from world_checker import WorldChecker; print(json.dumps([WorldChecker().step(r) for r in json.load(sys.stdin)]))"], { cwd: dir, input: JSON.stringify(requests), encoding: "utf8" });
+    const py = spawnSync(process.platform === "win32" ? "python" : "python3", ["-B", "-c", "import json,sys; from world_checker import WorldChecker; print(json.dumps([WorldChecker().step(r) for r in json.load(sys.stdin)]))"], { cwd: dir, input: JSON.stringify(requests), encoding: "utf8" });
     assert.equal(py.status, 0, py.stderr);
     const verdicts = JSON.parse(py.stdout) as StepVerdict[];
     for (let i = 0; i < requests.length; i++) {

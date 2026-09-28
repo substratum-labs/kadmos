@@ -34,18 +34,22 @@
     ".": {
       "types": "./dist/src/index.d.ts",
       "default": "./dist/src/index.js"
+    },
+    "./adapters/bullmq": {
+      "types": "./dist/src/adapters/bullmq/index.d.ts",
+      "default": "./dist/src/adapters/bullmq/index.js"
     }
   },
   "files": [
     "bin",
-    "dist",
+    "dist/src",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "clean": "node --eval \"import('node:fs').then(({ rmSync }) => rmSync('dist', { recursive: true, force: true }))\"",
     "build": "pnpm run clean && tsc -p tsconfig.json",
-    "test": "pnpm run build && node --test dist/tests/**/*.test.js",
+    "test": "pnpm run build && node scripts/run-tests.js",
     "test:fuzz": "pnpm run build && node bin/kadmos.js test conformance/fixtures/order_settlement.world.yaml --runs 30",
     "prepack": "pnpm run build",
     "demo": "pnpm run build && node dist/examples/order_fabric_demo.js",

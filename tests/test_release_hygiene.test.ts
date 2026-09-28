@@ -17,7 +17,7 @@ test("CI parses as YAML and covers the requested OS, Node, and Python matrix", (
   assert.deepEqual(workflow.on.push.branches, ["main"]);
   assert.deepEqual(workflow.on.pull_request.branches, ["main"]);
   const matrix = workflow.jobs.test.strategy.matrix;
-  assert.deepEqual(matrix.os, ["ubuntu-latest", "macos-latest"]);
+  assert.deepEqual(matrix.os, ["ubuntu-latest", "macos-latest", "windows-latest"]);
   assert.deepEqual(matrix.node, [18, 20, 22]);
   assert.deepEqual(matrix.python, ["3.10", "3.11", "3.12", "3.13"]);
   const steps = workflow.jobs.test.steps.map((step: any) => step.uses ?? step.run);
@@ -33,7 +33,11 @@ test("package metadata and publishing scripts are present", () => {
   assert.deepEqual(manifest.publishConfig, { access: "public" });
   assert.equal(manifest.repository.url, "https://github.com/substratum-labs/kadmos.git");
   assert.deepEqual(manifest.bin, { kadmos: "./bin/kadmos.js", "kadmos-mcp": "./bin/kadmos-mcp.js" });
-  assert.deepEqual(manifest.files, ["bin", "dist", "README.md", "LICENSE"]);
+  assert.deepEqual(manifest.files, ["bin", "dist/src", "README.md", "LICENSE"]);
+  assert.deepEqual(manifest.exports["./adapters/bullmq"], {
+    types: "./dist/src/adapters/bullmq/index.d.ts",
+    default: "./dist/src/adapters/bullmq/index.js",
+  });
   for (const script of ["build", "typecheck", "test", "test:fuzz", "prepack"]) {
     assert.equal(typeof manifest.scripts[script], "string", script);
   }

@@ -83,7 +83,7 @@ test("TypeScript worker routes a fatal failure directly to dead letter", async (
 
 test("Python worker exercises the offline lifecycles and Redis rollback", () => {
   const script = join(process.cwd(), "examples/job-queue-benchmark/python_worker.py");
-  const run = spawnSync("python3", ["-B", script, "--self-test"], { encoding: "utf8" });
+  const run = spawnSync(process.platform === "win32" ? "python" : "python3", ["-B", script, "--self-test"], { encoding: "utf8" });
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(JSON.parse(run.stdout), {
     happy: "COMPLETED", recovery: "COMPLETED", exhausted: "FAILED", fencing: "COMPLETED", rollback: "DELAYED_RETRY",

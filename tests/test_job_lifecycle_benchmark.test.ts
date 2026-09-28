@@ -51,7 +51,7 @@ test("compiled TS, runtime, and Python use identical guard, bound, and invariant
       assert.ok(generated.includes(kind === "guard" ? `"${message}"` : kind === "bound" ? "Context bound failed on '${boundError}'" : "Invariant violation: '${violatedInv}'"));
       writeFileSync(join(dir, "ports.d.ts"), projection.portsDts);
       writeFileSync(join(dir, "world_checker.ts"), generated);
-      const compile = spawnSync(join(process.cwd(), "node_modules/.bin/tsc"), ["--ignoreConfig", "--target", "es2022", "--module", "commonjs", "--types", "node", "--typeRoots", join(process.cwd(), "node_modules/@types"), "--outDir", join(dir, "js"), join(dir, "world_checker.ts")], { encoding: "utf8" });
+      const compile = spawnSync(process.execPath, [join(process.cwd(), "node_modules", "typescript", "bin", "tsc"), "--ignoreConfig", "--target", "es2022", "--module", "commonjs", "--types", "node", "--typeRoots", join(process.cwd(), "node_modules/@types"), "--outDir", join(dir, "js"), join(dir, "world_checker.ts")], { encoding: "utf8" });
       assert.equal(compile.status, 0, compile.stderr || compile.stdout);
       const tsRun = spawnSync(process.execPath, ["-e", "const {WorldChecker}=require('./js/world_checker.js'); console.log(JSON.stringify(new WorldChecker().step(JSON.parse(process.argv[1]))))", JSON.stringify(request)], { cwd: dir, encoding: "utf8" });
       assert.equal(tsRun.status, 0, tsRun.stderr);
@@ -60,7 +60,7 @@ test("compiled TS, runtime, and Python use identical guard, bound, and invariant
       const python = compileWorldSpecPython(modified);
       writeFileSync(join(dir, "ports.py"), python.portsPy);
       writeFileSync(join(dir, "world_checker.py"), python.worldCheckerPy);
-      const run = spawnSync("python3", ["-B", "-c", "import json,sys; from world_checker import WorldChecker; print(json.dumps(WorldChecker().step(json.load(sys.stdin))))"], { cwd: dir, input: JSON.stringify(request), encoding: "utf8" });
+      const run = spawnSync(process.platform === "win32" ? "python" : "python3", ["-B", "-c", "import json,sys; from world_checker import WorldChecker; print(json.dumps(WorldChecker().step(json.load(sys.stdin))))"], { cwd: dir, input: JSON.stringify(request), encoding: "utf8" });
       assert.equal(run.status, 0, run.stderr);
       const verdict = JSON.parse(run.stdout) as { violation: { code: string; message: string } };
       assert.deepEqual({ code: verdict.violation.code, message: verdict.violation.message }, { code, message });

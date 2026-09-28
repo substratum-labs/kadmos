@@ -47,7 +47,7 @@ test("reserved payload keys return security verdicts without changing state", as
   try {
     writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
     writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
-    const build = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+    const build = spawnSync(process.execPath, [join(process.cwd(), "node_modules", "typescript", "bin", "tsc"),
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
       "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
@@ -165,7 +165,7 @@ test("event property evaluation ignores inherited object methods", async () => {
   try {
     writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
     writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
-    const build = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+    const build = spawnSync(process.execPath, [join(process.cwd(), "node_modules", "typescript", "bin", "tsc"),
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
       "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
@@ -233,7 +233,7 @@ test("P0-3 reset atomicity (compiled): bad reset preserves PAID state and blocks
   try {
     writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
     writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
-    const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+    const result = spawnSync(process.execPath, [join(process.cwd(), "node_modules", "typescript", "bin", "tsc"),
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
       "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
@@ -329,7 +329,7 @@ test("P2 logical operators: require boolean operands without coercion on both br
   try {
     writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
     writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
-    const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+    const result = spawnSync(process.execPath, [join(process.cwd(), "node_modules", "typescript", "bin", "tsc"),
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
       "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
@@ -381,7 +381,7 @@ test("P1-1 initial invariant check: compiled checker constructor throws if defau
   try {
     writeFileSync(join(directory, "ports.d.ts"), projection.portsDts);
     writeFileSync(join(directory, "world_checker.ts"), projection.worldCheckerTs);
-    const result = spawnSync(join(process.cwd(), "node_modules", ".bin", "tsc"), [
+    const result = spawnSync(process.execPath, [join(process.cwd(), "node_modules", "typescript", "bin", "tsc"),
       "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022",
       "--module", "NodeNext", "--moduleResolution", "NodeNext",
       "--typeRoots", join(process.cwd(), "node_modules", "@types"), "--types", "node",
