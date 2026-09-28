@@ -153,3 +153,116 @@ test("MemoryRedis LREM zero removes adjacent duplicate ids", async () => {
   assert.equal(await redis.lrem("wait", 0, "same"), 2);
   assert.equal(await redis.llen("wait"), 0);
 });
+
+test("a long-running local job renews its lease without duplicate execution", async () => {
+  const redis = new MemoryRedis();
+  const queue = new Queue("heartbeat", { connection: redis });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let calls = 0;
+  const worker = new Worker("heartbeat", async () => { calls++; await held; return "ok"; }, { connection: redis, concurrency: 2, lockDuration: 20 });
+  try {
+    const job = await queue.add("work", {});
+    await until(async () => await job.getState() === "active");
+    const k = keys("kadmos", "heartbeat");
+    const initialLease = Number((await redis.hgetall(k.job(job.id))).lockAcquiredAt);
+    await new Promise(resolve => setTimeout(resolve, 70));
+    const raw = await redis.hgetall(k.job(job.id));
+    assert.equal(raw.state, "active");
+    assert.ok(Number(raw.lockAcquiredAt) > initialLease);
+    assert.equal(calls, 1);
+    release();
+    await until(async () => await job.getState() === "completed");
+    assert.equal(calls, 1);
+  } finally { release(); await worker.close(); }
+});
+
+test("manual retry promotes an initially delayed job without stepping retry IR", async () => {
+  const redis = new MemoryRedis();
+  const queue = new Queue("initial-delay-retry", { connection: redis });
+  const job = await queue.add("work", {}, { delay: 5000, attempts: 2 });
+  await job.retry();
+  const k = keys("kadmos", "initial-delay-retry");
+  assert.equal(await job.getState(), "waiting");
+  assert.deepEqual(await redis.lrange(k.wait, 0, -1), [job.id]);
+  assert.equal(await redis.zcard(k.delayed), 0);
+});
+
+test("failed manual retry restores the delayed index", async () => {
+  class FailingRedis extends MemoryRedis {
+    override async transitionJob(change: Parameters<MemoryRedis["transitionJob"]>[0]): Promise<boolean> {
+      if (change.expectedState === "delayed") throw new Error("injected transition failure");
+      return super.transitionJob(change);
+    }
+  }
+  const redis = new FailingRedis();
+  const queue = new Queue("retry-restore", { connection: redis });
+  const job = await queue.add("work", {}, { delay: 5000, attempts: 2 });
+  await assert.rejects(job.retry(), /injected transition failure/);
+  const k = keys("kadmos", "retry-restore");
+  assert.equal(await job.getState(), "delayed");
+  assert.deepEqual(await redis.zrangebyscore(k.delayed, "-inf", "+inf"), [job.id]);
+  assert.equal(await redis.llen(k.wait), 0);
+});
+
+test("failed due-job promotion restores the delayed index", async () => {
+  class FailingRedis extends MemoryRedis {
+    override async transitionJob(change: Parameters<MemoryRedis["transitionJob"]>[0]): Promise<boolean> {
+      if (change.expectedState === "delayed") throw new Error("injected promotion failure");
+      return super.transitionJob(change);
+    }
+  }
+  const redis = new FailingRedis();
+  const queue = new Queue("wake-restore", { connection: redis });
+  const worker = new Worker("wake-restore", async () => true, { connection: redis });
+  await worker.pause();
+  try {
+    const job = await queue.add("work", {}, { delay: 1 });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await assert.rejects((worker as any).wakeDue(), /injected promotion failure/);
+    const k = keys("kadmos", "wake-restore");
+    assert.equal(await job.getState(), "delayed");
+    assert.deepEqual(await redis.zrangebyscore(k.delayed, "-inf", "+inf"), [job.id]);
+    assert.equal(await redis.llen(k.wait), 0);
+  } finally { await worker.close(); }
+});
+
+test("discard during retryable processor failure remains revoked", async () => {
+  const redis = new MemoryRedis();
+  const queue = new Queue("discard-failure", { connection: redis });
+  let rejectWork!: (error: Error) => void;
+  const held = new Promise<never>((_, reject) => { rejectWork = reject; });
+  const worker = new Worker("discard-failure", async () => held, { connection: redis });
+  try {
+    const job = await queue.add("work", {}, { attempts: 2, backoff: 1000 });
+    await until(async () => await job.getState() === "active");
+    await job.discard();
+    rejectWork(new Error("retryable"));
+    await worker.close();
+    const k = keys("kadmos", "discard-failure");
+    const raw = await redis.hgetall(k.job(job.id));
+    assert.equal(raw.state, "revoked");
+    assert.equal(raw.failedReason, "discarded");
+    assert.equal(checkerFor(raw as any).getState(), "REVOKED");
+    assert.equal(await job.getState(), "failed");
+    assert.equal(await redis.zcard(k.delayed), 0);
+    assert.equal(await redis.zcard(k.failed), 1);
+    assert.equal(await redis.llen(k.active), 0);
+  } finally { rejectWork(new Error("cleanup")); await worker.close(); }
+});
+
+test("failed custom-ID enqueue releases its reservation", async () => {
+  class FailingRedis extends MemoryRedis {
+    fail = true;
+    override async lpush(key: string, value: string): Promise<number> {
+      if (this.fail) { this.fail = false; throw new Error("injected enqueue failure"); }
+      return super.lpush(key, value);
+    }
+  }
+  const redis = new FailingRedis();
+  const queue = new Queue("enqueue-rollback", { connection: redis });
+  await assert.rejects(queue.add("work", {}, { jobId: "same" }), /injected enqueue failure/);
+  const job = await queue.add("work", {}, { jobId: "same" });
+  assert.equal(job.id, "same");
+  assert.equal(await queue.count(), 1);
+});

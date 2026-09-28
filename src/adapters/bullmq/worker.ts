@@ -13,15 +13,18 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
   private readonly prefix: string;
   private readonly processor: Processor<DataType, ReturnType>;
   private readonly active = new Set<Promise<void>>();
+  private readonly localProcessing = new Set<string>();
   private stopped = false;
   private paused = false;
   private timer: NodeJS.Timeout | undefined;
   private readonly concurrency: number;
   private draining = false;
+  private readonly lockDuration: number;
   constructor(name: string, processor: Processor<DataType, ReturnType>, opts: WorkerOptions = {}) {
     super(); this.name = name; this.processor = processor; this.opts = opts;
     this.prefix = opts.prefix ?? "kadmos"; this.redis = resolveRedis(opts.connection);
     this.concurrency = Math.max(1, Math.floor(opts.concurrency ?? 1));
+    this.lockDuration = Math.max(1, opts.lockDuration ?? 30000);
     this.schedule();
   }
   private schedule(): void {
@@ -73,15 +76,15 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
         }
         this.draining = false;
       } catch (error) {
-        await this.redis.transitionJob({ jobKey: k.job(id), id, expectedState: "delayed", changes: {}, addSet: { key: k.delayed, score: Date.now() } });
+        await this.redis.zadd(k.delayed, Date.now(), id);
         throw error;
       }
     }
   }
   private async recoverStaleLeases(): Promise<void> {
     const k = keys(this.prefix, this.name);
-    const duration = Math.max(1, this.opts.lockDuration ?? 30000);
     for (const id of await this.redis.lrange(k.active, 0, -1)) {
+      if (this.localProcessing.has(id)) continue;
       const raw = parseRaw(await this.redis.hgetall(k.job(id)));
       if (!raw) { await this.redis.lrem(k.active, 0, id); continue; }
       if (raw.state === "waiting") {
@@ -89,7 +92,7 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
         continue;
       }
       if (raw.state !== "active") { await this.redis.lrem(k.active, 0, id); continue; }
-      if (raw.lockToken && Number(raw.lockAcquiredAt) > Date.now() - duration) continue;
+      if (raw.lockAcquiredAt && Date.now() - Number(raw.lockAcquiredAt) <= this.lockDuration) continue;
       const checker = raw.lockToken ? checkerFor(raw) : checkerFor({ ...raw, lockToken: "unclaimed-lease", lockEpoch: String(Math.max(1, Number(raw.lockEpoch || 0))) });
       await settle(checker, "RECOVER_STALE_LEASE", "EVICT_STALE_WORKER", { supervisor_token: "lease-recovery" }, async () => {
         return this.redis.transitionJob({ jobKey: k.job(id), id, expectedState: "active", expectedToken: raw.lockToken,
@@ -113,13 +116,18 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
     if (!claimed) return;
     this.draining = false;
     const job = new Job<DataType, ReturnType>({ ...raw, state: "active", lockToken: token, lockEpoch: String(Number(raw.lockEpoch || 0) + 1) }, this.redis, this.prefix, this.name);
+    this.localProcessing.add(id);
+    const heartbeat = setInterval(() => {
+      void this.redis.transitionJob({ jobKey: k.job(id), id, expectedState: "active", expectedToken: token,
+        changes: { lockAcquiredAt: String(Date.now()) } }).catch(error => this.report(error));
+    }, Math.max(10, Math.floor(this.lockDuration / 2)));
     // Forward job progress to the worker as well as QueueEvents.
     const onProgress = (message: string) => {
       try { const event = JSON.parse(message) as { event: string; jobId: string; data: unknown }; if (event.event === "progress" && event.jobId === id) this.emit("progress", job, event.data); }
       catch (error) { this.report(error); }
     };
-    await this.redis.subscribe(k.events, onProgress);
     try {
+      await this.redis.subscribe(k.events, onProgress);
       let result: ReturnType;
       try { result = await this.processor(job); }
       catch (error) { await this.failJob(job, checker, token, error); return; }
@@ -134,7 +142,11 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
       job.returnvalue = result;
       this.emit("completed", job, result);
       await this.redis.publish(k.events, JSON.stringify({ event: "completed", jobId: id, returnvalue: result, prev: "active" }));
-    } finally { await this.redis.unsubscribe(k.events, onProgress); }
+    } finally {
+      clearInterval(heartbeat);
+      this.localProcessing.delete(id);
+      await this.redis.unsubscribe(k.events, onProgress);
+    }
   }
   private async failJob(job: Job<DataType, ReturnType>, checker: WorldChecker, token: string, error: unknown): Promise<void> {
       const id = job.id; const k = keys(this.prefix, this.name);

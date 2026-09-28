@@ -26,7 +26,7 @@ export class Job<DataType = any, ReturnType = any> {
   }
   async getState(): Promise<JobState> {
     const raw = parseRaw(await this.redis.hgetall(keys(this.prefix, this.queueName).job(this.id)));
-    return raw?.state ?? "unknown";
+    return raw?.state === "revoked" ? "failed" : raw?.state ?? "unknown";
   }
   async updateProgress(progress: any): Promise<void> {
     const k = keys(this.prefix, this.queueName); const raw = await this.raw();
@@ -38,12 +38,18 @@ export class Job<DataType = any, ReturnType = any> {
   async retry(): Promise<void> {
     const k = keys(this.prefix, this.queueName); const raw = await this.raw();
     if (raw.state !== "delayed") throw new Error("Only delayed retry jobs can be manually retried");
-    const checker = checkerFor(raw);
     if ((await this.redis.zrem(k.delayed, this.id)) === 0) throw new Error("Delayed job already claimed");
-    const retried = await settle(checker, "RETRY_DELAY_ELAPSED", "ENQUEUE_FOR_PICKUP", {}, async () => this.redis.transitionJob({
-      jobKey: k.job(this.id), id: this.id, expectedState: "delayed", changes: { state: "waiting" }, pushList: k.wait,
-    }));
-    if (!retried) throw new Error("Job state changed during retry");
+    try {
+      const promote = () => this.redis.transitionJob({
+        jobKey: k.job(this.id), id: this.id, expectedState: "delayed", changes: { state: "waiting" }, pushList: k.wait,
+      });
+      const retried = Number(raw.attemptsMade) === 0 ? await promote()
+        : await settle(checkerFor(raw), "RETRY_DELAY_ELAPSED", "ENQUEUE_FOR_PICKUP", {}, promote);
+      if (!retried) throw new Error("Job state changed during retry");
+    } catch (error) {
+      await this.redis.zadd(k.delayed, Date.now(), this.id);
+      throw error;
+    }
   }
   async discard(): Promise<void> {
     const k = keys(this.prefix, this.queueName); const raw = await this.raw();
@@ -53,7 +59,7 @@ export class Job<DataType = any, ReturnType = any> {
     const payload = raw.state === "active" ? { supervisor_token: "discard" } : {};
     const discarded = await settle(checker, transition, "NOTIFY_CANCELLATION", payload, async () => this.redis.transitionJob({
       jobKey: k.job(this.id), id: this.id, expectedState: raw.state, expectedToken: raw.state === "active" ? raw.lockToken : undefined,
-      changes: { state: "failed", failedReason: "discarded", returnvalue: "", lockToken: "", lockAcquiredAt: "", lockEpoch: String(Math.max(1, Number(raw.lockEpoch || 0))) },
+      changes: { state: "revoked", failedReason: "discarded", returnvalue: "", lockToken: "", lockAcquiredAt: "", lockEpoch: String(Math.max(1, Number(raw.lockEpoch || 0))) },
       removeList: raw.state === "active" ? k.active : k.wait, removeSet: k.delayed,
       addSet: { key: k.failed, score: Date.now() },
     }));
