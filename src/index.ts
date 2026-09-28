@@ -49,3 +49,5 @@ export { OpenAiCompatibleProvider, AnthropicProvider, OllamaProvider, createLlmP
 export type { ProviderOptions } from "./agent/provider.js";
 export { buildInitialPrompt, runKadmosAgent } from "./agent/runner.js";
 export type { AgentRunOptions, AgentRunResult } from "./agent/runner.js";
+export { Queue, Worker, Job, QueueEvents, MemoryRedis, IoredisTransport } from "./adapters/bullmq/index.js";
+export type { QueueOptions, WorkerOptions, JobOptions, Processor, JobState, RawJobData, RedisTransport } from "./adapters/bullmq/index.js";
