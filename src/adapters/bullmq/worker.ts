@@ -92,7 +92,10 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
         continue;
       }
       if (raw.state !== "active") { await this.redis.lrem(k.active, 0, id); continue; }
-      if (raw.lockAcquiredAt && Date.now() - Number(raw.lockAcquiredAt) <= this.lockDuration) continue;
+      if (raw.lockAcquiredAt) {
+        const elapsed = Date.now() - Number(raw.lockAcquiredAt);
+        if (!(elapsed > this.lockDuration)) continue;
+      }
       const checker = raw.lockToken ? checkerFor(raw) : checkerFor({ ...raw, lockToken: "unclaimed-lease", lockEpoch: String(Math.max(1, Number(raw.lockEpoch || 0))) });
       await settle(checker, "RECOVER_STALE_LEASE", "EVICT_STALE_WORKER", { supervisor_token: "lease-recovery" }, async () => {
         return this.redis.transitionJob({ jobKey: k.job(id), id, expectedState: "active", expectedToken: raw.lockToken,
@@ -117,10 +120,11 @@ export class Worker<DataType = any, ReturnType = any> extends EventEmitter {
     this.draining = false;
     const job = new Job<DataType, ReturnType>({ ...raw, state: "active", lockToken: token, lockEpoch: String(Number(raw.lockEpoch || 0) + 1) }, this.redis, this.prefix, this.name);
     this.localProcessing.add(id);
+    const heartbeatInterval = Math.max(1, Math.min(Math.floor(this.lockDuration / 3), 5000));
     const heartbeat = setInterval(() => {
       void this.redis.transitionJob({ jobKey: k.job(id), id, expectedState: "active", expectedToken: token,
         changes: { lockAcquiredAt: String(Date.now()) } }).catch(error => this.report(error));
-    }, Math.max(10, Math.floor(this.lockDuration / 2)));
+    }, heartbeatInterval);
     // Forward job progress to the worker as well as QueueEvents.
     const onProgress = (message: string) => {
       try { const event = JSON.parse(message) as { event: string; jobId: string; data: unknown }; if (event.event === "progress" && event.jobId === id) this.emit("progress", job, event.data); }

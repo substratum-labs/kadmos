@@ -177,6 +177,26 @@ test("a long-running local job renews its lease without duplicate execution", as
   } finally { release(); await worker.close(); }
 });
 
+test("a phase-shifted worker cannot steal a live six-millisecond lease", async () => {
+  const redis = new MemoryRedis();
+  const queue = new Queue("tiny-lease", { connection: redis });
+  let calls = 0;
+  const processor = async () => { calls++; await new Promise(resolve => setTimeout(resolve, 40)); return "ok"; };
+  const first = new Worker("tiny-lease", processor, { connection: redis, lockDuration: 6 });
+  let second: Worker | undefined;
+  try {
+    const job = await queue.add("work", {});
+    await until(async () => await job.getState() === "active");
+    await new Promise(resolve => setTimeout(resolve, 7));
+    second = new Worker("tiny-lease", processor, { connection: redis, lockDuration: 6 });
+    await (second as any).recoverStaleLeases();
+    assert.equal(await job.getState(), "active");
+    assert.equal(calls, 1);
+    await until(async () => await job.getState() === "completed");
+    assert.equal(calls, 1);
+  } finally { await second?.close(); await first.close(); }
+});
+
 test("manual retry promotes an initially delayed job without stepping retry IR", async () => {
   const redis = new MemoryRedis();
   const queue = new Queue("initial-delay-retry", { connection: redis });
@@ -203,6 +223,32 @@ test("failed manual retry restores the delayed index", async () => {
   assert.equal(await job.getState(), "delayed");
   assert.deepEqual(await redis.zrangebyscore(k.delayed, "-inf", "+inf"), [job.id]);
   assert.equal(await redis.llen(k.wait), 0);
+});
+
+test("failed manual retry preserves a future delayed score", async () => {
+  class FailingRedis extends MemoryRedis {
+    override async transitionJob(change: Parameters<MemoryRedis["transitionJob"]>[0]): Promise<boolean> {
+      if (change.expectedState === "delayed") throw new Error("injected transition failure");
+      return super.transitionJob(change);
+    }
+  }
+  const redis = new FailingRedis();
+  const queue = new Queue("future-retry-restore", { connection: redis });
+  const job = await queue.add("work", {}, { delay: 60_000 });
+  const k = keys("kadmos", "future-retry-restore");
+  const originalScore = await redis.zscore(k.delayed, job.id);
+  assert.ok(originalScore !== null && originalScore > Date.now() + 50_000);
+  await assert.rejects(job.retry(), /injected transition failure/);
+  assert.equal(await redis.zscore(k.delayed, job.id), originalScore);
+  assert.deepEqual(await redis.zrangebyscore(k.delayed, "-inf", Date.now() + 50_000), []);
+  assert.deepEqual(await redis.zrangebyscore(k.delayed, Date.now() + 50_000, "+inf"), [job.id]);
+  let calls = 0;
+  const worker = new Worker("future-retry-restore", async () => { calls++; return "unexpected"; }, { connection: redis });
+  try {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(calls, 0);
+    assert.equal(await job.getState(), "delayed");
+  } finally { await worker.close(); }
 });
 
 test("failed due-job promotion restores the delayed index", async () => {

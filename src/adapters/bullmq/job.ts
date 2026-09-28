@@ -38,6 +38,7 @@ export class Job<DataType = any, ReturnType = any> {
   async retry(): Promise<void> {
     const k = keys(this.prefix, this.queueName); const raw = await this.raw();
     if (raw.state !== "delayed") throw new Error("Only delayed retry jobs can be manually retried");
+    const originalScore = await this.redis.zscore(k.delayed, this.id);
     if ((await this.redis.zrem(k.delayed, this.id)) === 0) throw new Error("Delayed job already claimed");
     try {
       const promote = () => this.redis.transitionJob({
@@ -47,7 +48,7 @@ export class Job<DataType = any, ReturnType = any> {
         : await settle(checkerFor(raw), "RETRY_DELAY_ELAPSED", "ENQUEUE_FOR_PICKUP", {}, promote);
       if (!retried) throw new Error("Job state changed during retry");
     } catch (error) {
-      await this.redis.zadd(k.delayed, Date.now(), this.id);
+      if (originalScore !== null) await this.redis.zadd(k.delayed, originalScore, this.id);
       throw error;
     }
   }

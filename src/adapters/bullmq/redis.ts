@@ -29,6 +29,7 @@ export interface RedisTransport {
   hgetall(key: string): Promise<Record<string, string>>;
   transitionJob(change: JobTransition): Promise<boolean>;
   zadd(key: string, score: number, value: string): Promise<number>;
+  zscore(key: string, value: string): Promise<number | null>;
   zrangebyscore(key: string, min: number | string, max: number | string): Promise<string[]>;
   zrem(key: string, value: string): Promise<number>;
   zcard(key: string): Promise<number>;
@@ -98,6 +99,7 @@ export class MemoryRedis implements RedisTransport {
     return true;
   }
   async zadd(key: string, score: number, value: string): Promise<number> { const set = this.sets.get(key) ?? new Map<string, number>(); const added = Number(!set.has(value)); set.set(value, score); this.sets.set(key, set); return added; }
+  async zscore(key: string, value: string): Promise<number | null> { return this.sets.get(key)?.get(value) ?? null; }
   async zrangebyscore(key: string, min: number | string, max: number | string): Promise<string[]> {
     const lo = min === "-inf" ? -Infinity : Number(min); const hi = max === "+inf" ? Infinity : Number(max);
     return [...(this.sets.get(key) ?? new Map()).entries()].filter(([, score]) => score >= lo && score <= hi).sort((a, b) => a[1] - b[1]).map(([id]) => id);
@@ -151,6 +153,7 @@ export class IoredisTransport implements RedisTransport {
     return (await this.client.eval(script, 1, change.jobKey, JSON.stringify(payload))) === 1;
   }
   zadd(key: string, score: number, value: string): Promise<number> { return this.client.zadd(key, score, value); }
+  async zscore(key: string, value: string): Promise<number | null> { const score = await this.client.zscore(key, value) as string | null; return score === null ? null : Number(score); }
   zrangebyscore(key: string, min: number | string, max: number | string): Promise<string[]> { return this.client.zrangebyscore(key, min, max); }
   zrem(key: string, value: string): Promise<number> { return this.client.zrem(key, value); }
   zcard(key: string): Promise<number> { return this.client.zcard(key); }
