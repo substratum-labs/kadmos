@@ -268,7 +268,7 @@ jobs:
           version: '11'
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm test
-${lang !== "python" ? "      - run: pnpm run test:worker\n" : ""}${lang !== "ts" ? "      - run: python3 -m unittest discover -s tests\n" : ""}`);
+${lang !== "python" ? "      - run: pnpm run test:worker\n" : ""}${lang !== "ts" ? `      - run: ${process.platform === "win32" ? "python" : "python3"} -m unittest discover -s tests\n` : ""}`);
     write("README.md", `# ${world.name}
 
 Kadmos separates **World** policy from **Fabric** implementation. \`world.yaml\` declares allowed states, transitions, bounded context, and invariants. The worker in \`src/\` is Fabric: it requests each step through the compiled gatekeeper and executes only allowed directives.
@@ -280,7 +280,7 @@ pnpm install
 pnpm run compile
 pnpm test
 pnpm run graph
-${lang !== "python" ? "pnpm run test:worker\n" : ""}${lang !== "ts" ? "python3 -m unittest discover -s tests\n" : ""}\`\`\`
+${lang !== "python" ? "pnpm run test:worker\n" : ""}${lang !== "ts" ? `${process.platform === "win32" ? "python" : "python3"} -m unittest discover -s tests\n` : ""}\`\`\`
 
 Open \`state_machine.html\` to inspect the graph. Edit \`world.yaml\` and run \`pnpm run compile\` before changing worker logic.
 `);

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/substratum-labs/kadmos/actions/workflows/ci.yml/badge.svg)](https://github.com/substratum-labs/kadmos/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Node 18+](https://img.shields.io/badge/Node-18%2B-brightgreen)
+![Node 20+](https://img.shields.io/badge/Node-20%2B-brightgreen)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple)
 
@@ -37,7 +37,7 @@ flowchart LR
 
 The gatekeepers are pure in-process decision engines. Physical enforcement of network, filesystem, or process effects requires a separate host or execution broker to honor their verdicts. Kadmos alone does not sandbox Fabric or prevent it from bypassing the checker in the same process.
 
-## BullMQ Drop-In Adapter (Developer Preview v0.x)
+## BullMQ Lifecycle Adapter (Developer Preview v0.x)
 
 For supported BullMQ lifecycle APIs, replace the BullMQ import with `@substratum-labs/kadmos/adapters/bullmq`. The adapter exposes `Queue`, `Worker`, `Job`, and `QueueEvents`; pass the same ioredis connection to queue and worker:
 
@@ -54,11 +54,11 @@ const worker = new Worker('emails', async job => {
 await queue.add('send', { to: 'user@example.com' });
 ```
 
-The adapter uses **zero Lua scripts**. A formally verified World state-machine gatekeeper authorizes lifecycle transitions, and transactional settlement rolls back checker state when a Redis write fails. The same World compiles to TypeScript and Python gatekeepers for polyglot compatibility. This v0.x surface targets the tested BullMQ lifecycle subset; review the [industrial replacement whitepaper](https://github.com/substratum-labs/substratum-internal/blob/main/design/kadmos/2026-09-28_kadmos_bullmq_replacement_whitepaper.md) for architecture, benchmarks, and migration boundaries.
+The adapter uses a single, minimal atomic compare-and-swap Lua script for Redis `transitionJob`, eliminating BullMQ's 30+ complex multi-file Lua scripts. A constitutional state-machine gatekeeper with cross-language differential bisimulation authorizes lifecycle transitions, and transactional settlement rolls back checker state when a Redis write fails. The same World compiles to TypeScript and Python gatekeepers for polyglot compatibility. This v0.x surface targets the core lifecycle subset: add, process, delay, retry, progress, pause, resume, events, and close. It does not cover the full BullMQ API (review the included benchmark documentation and specifications for architecture and migration boundaries).
 
 ## Three-minute quickstart
 
-Requires Node.js 18+, Python 3.10+, and pnpm 10. From an npm-connected shell:
+Requires Node.js 20+, Python 3.10+, and pnpm 10. From an npm-connected shell:
 
 ```bash
 # Initialize a new governed project via npx:

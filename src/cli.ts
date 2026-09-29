@@ -1,7 +1,7 @@
 import { cpSync, lstatSync, mkdtempSync, readFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, parse, resolve } from "node:path";
 import { atomicWrite } from "./atomic_write.js";
 import { inferBoundary, serializeWorldSpec } from "./boundary_inference.js";
 import { formatDilemmas, synthesizeDilemmas } from "./dilemma_synthesis.js";
@@ -20,13 +20,11 @@ function usage(): never {
 
 function publishProjectionDirectory(outDir: string, files: Record<string, string>): void {
   outDir = resolve(outDir);
-  const parts = outDir.split("/").filter(Boolean);
-  let current = "";
-  for (const part of parts) {
-    current += `/${part}`;
+  for (let current = outDir; ; current = dirname(current)) {
     if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) {
       throw new Error(`Cannot compile into symlinked path: ${current}`);
     }
+    if (current === parse(current).root) break;
   }
   const parent = dirname(outDir);
   mkdirSync(parent, { recursive: true });

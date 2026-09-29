@@ -15,6 +15,9 @@ test("scaffold all languages builds executable gatekeepers and fuzzable World", 
     const result = await initKadmosProject(dir, { lang: "all" });
     assert.equal(result.directory, dir);
     for (const path of ["world.yaml", "src/world/ports.d.ts", "src/world/world_checker.ts", "src/world/ports.py", "src/world/world_checker.py", "src/worker.ts", "src/worker.py", "tests/test_gatekeeper.test.ts", "tests/test_gatekeeper.py", "package.json", ".gitignore", ".github/workflows/ci.yml", "README.md"]) assert.ok(existsSync(join(dir, path)), path);
+    const pythonCommand = process.platform === "win32" ? "python" : "python3";
+    assert.match(readFileSync(join(dir, ".github/workflows/ci.yml"), "utf8"), new RegExp(`${pythonCommand} -m unittest`));
+    assert.match(readFileSync(join(dir, "README.md"), "utf8"), new RegExp(`${pythonCommand} -m unittest`));
     const world = parseWorldSpec(readFileSync(join(dir, "world.yaml"), "utf8"));
     const report = await runDifferentialFuzzing(world, { runs: 3, stepsPerRun: 5, seed: 42 });
     assert.equal(report.passed, true, JSON.stringify(report.divergences));

@@ -8,7 +8,7 @@ A **World** is reviewed constitutional policy: states, transitions, guards, inva
 
 ## Local setup and checks
 
-Use Node.js 18+, Python 3.10+, and pnpm 10. From the repository root:
+Use Node.js 20+, Python 3.10+, and pnpm 10. From the repository root:
 
 ```bash
 pnpm install

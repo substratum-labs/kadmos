@@ -150,7 +150,11 @@ async function validateServiceClass(javascript: string, worldSpec: WorldSpec, st
       if (typeof service.run !== "function") throw new Error("Candidate service must implement run()");
       await service.run();
     `;
-    const child = spawn(process.execPath, ["--permission", `--allow-fs-read=${directory}`, "--input-type=module", "--eval", script], {
+    const [nodeMajor = 0, nodeMinor = 0] = process.versions.node.split(".").map(Number);
+    const permissionFlag = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13)
+      ? "--permission"
+      : nodeMajor >= 20 ? "--experimental-permission" : undefined;
+    const child = spawn(process.execPath, [...(permissionFlag ? [permissionFlag, `--allow-fs-read=${directory}`] : []), "--input-type=module", "--eval", script], {
       stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"], timeout: 2000, killSignal: "SIGKILL",
     });
     let stderr = "";

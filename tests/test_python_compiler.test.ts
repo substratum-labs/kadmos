@@ -454,7 +454,7 @@ test("CLI compile rejects a linked output directory without modifying its target
     writeFileSync(input, yaml);
     writeFileSync(join(outside, "sentinel.txt"), "untouched");
     writeFileSync(join(outside, "world_checker.ts"), "external TypeScript");
-    symlinkSync(outside, out, "dir");
+    symlinkSync(outside, out, process.platform === "win32" ? "junction" : "dir");
     const result = spawnSync(process.execPath, [join(process.cwd(), "bin/kadmos.js"), "compile", input, "--out", out, "--lang", "python"], { encoding: "utf8" });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Cannot compile into symlinked path:/);
@@ -478,7 +478,7 @@ test("CLI compile rejects a symlinked ancestor before touching the external dire
     const sentinelBytes = Buffer.from("untouched");
     writeFileSync(join(out, "world_checker.ts"), tsBytes);
     writeFileSync(join(out, "sentinel.txt"), sentinelBytes);
-    symlinkSync(outside, linkparent, "dir");
+    symlinkSync(outside, linkparent, process.platform === "win32" ? "junction" : "dir");
     const result = spawnSync(process.execPath, [join(process.cwd(), "bin/kadmos.js"), "compile", input, "--out", join(linkparent, "out"), "--lang", "python"], { encoding: "utf8" });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Cannot compile into symlinked path:/);

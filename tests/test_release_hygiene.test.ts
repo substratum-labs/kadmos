@@ -18,12 +18,18 @@ test("CI parses as YAML and covers the requested OS, Node, and Python matrix", (
   assert.deepEqual(workflow.on.pull_request.branches, ["main"]);
   const matrix = workflow.jobs.test.strategy.matrix;
   assert.deepEqual(matrix.os, ["ubuntu-latest", "macos-latest", "windows-latest"]);
-  assert.deepEqual(matrix.node, [18, 20, 22]);
+  assert.deepEqual(matrix.node, [20, 22]);
   assert.deepEqual(matrix.python, ["3.10", "3.11", "3.12", "3.13"]);
   const steps = workflow.jobs.test.steps.map((step: any) => step.uses ?? step.run);
   for (const command of ["pnpm install", "pnpm run typecheck", "pnpm test", "node bin/kadmos.js test conformance/fixtures/order_settlement.world.yaml --runs 30"]) {
     assert.ok(steps.some((step: string) => step.includes(command)), command);
   }
+});
+
+test("publish workflow verifies on a supported Node version", () => {
+  const workflow = parse(read(".github/workflows/publish.yml")) as Record<string, any>;
+  const setupNode = workflow.jobs.publish.steps.find((step: any) => step.uses?.startsWith("actions/setup-node@"));
+  assert.ok([20, 22].includes(setupNode?.with?.["node-version"]));
 });
 
 test("package metadata and publishing scripts are present", () => {
@@ -41,7 +47,7 @@ test("package metadata and publishing scripts are present", () => {
   for (const script of ["build", "typecheck", "test", "test:fuzz", "prepack"]) {
     assert.equal(typeof manifest.scripts[script], "string", script);
   }
-  assert.match(manifest.engines.node, /18/);
+  assert.equal(manifest.engines.node, ">=20");
   assert.match(manifest.packageManager, /^pnpm@10\./);
 });
 
