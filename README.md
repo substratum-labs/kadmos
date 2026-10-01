@@ -103,6 +103,19 @@ Use this `mcpServers` entry in Claude Code or Cline's MCP settings, or in Cursor
 
 The server exposes `kadmos_infer`, `kadmos_legislate`, `kadmos_compile`, and `kadmos_step` over stdio JSON-RPC. The separate `kadmos-mcp` binary starts the same server after installation.
 
+## Agent Skill Integration
+
+Kadmos includes a plug-and-play **Skill** (`skills/kadmos/SKILL.md`) for Antigravity, Claude Code, Cursor, and modern agent frameworks.
+
+Equipping an agent with the Kadmos skill enforces the World-Fabric protocol:
+- **Phase 1**: Boundary & World Inference (`kadmos infer` / `kadmos_infer`)
+- **Phase 2**: Interactive Legislation & Dilemma Resolution (`kadmos legislate` / `kadmos_legislate`)
+- **Phase 3**: Disposable Seam Compilation (`kadmos compile` / `kadmos_compile`)
+- **Phase 4**: Fabric Implementation Under Gatekeeper (`WorldChecker.step()`, `rollbackLastStep()`)
+- **Phase 5**: Bisimulation Fuzzing & CEGIS Repair (`kadmos test`, `kadmos_step`)
+
+To equip your agent, copy or symlink `skills/kadmos/` to your project's `.agents/skills/kadmos/`, or reference `skills/kadmos/SKILL.md` in your agent rules.
+
 ## Security and non-bypass boundary
 
 - **Zero-Coercion:** Runtime inputs must have the expected primitive types; malformed values are refused instead of being coerced into legal transitions.

@@ -39,7 +39,7 @@ test("package metadata and publishing scripts are present", () => {
   assert.deepEqual(manifest.publishConfig, { access: "public" });
   assert.equal(manifest.repository.url, "https://github.com/substratum-labs/kadmos.git");
   assert.deepEqual(manifest.bin, { kadmos: "./bin/kadmos.js", "kadmos-mcp": "./bin/kadmos-mcp.js" });
-  assert.deepEqual(manifest.files, ["bin", "dist/src", "README.md", "LICENSE"]);
+  assert.deepEqual(manifest.files, ["bin", "dist/src", "skills", "README.md", "LICENSE"]);
   assert.deepEqual(manifest.exports["./adapters/bullmq"], {
     types: "./dist/src/adapters/bullmq/index.d.ts",
     default: "./dist/src/adapters/bullmq/index.js",
@@ -64,4 +64,11 @@ test("README explains all commands and contains parseable MCP configuration", ()
         config.mcpServers?.kadmos?.args?.includes("@substratum-labs/kadmos");
     } catch { return false; }
   }), "MCP JSON configuration");
+});
+
+test("packaged agent skill exists and is well-formed", () => {
+  const skill = read("skills/kadmos/SKILL.md");
+  assert.match(skill, /^---\nname:\s*kadmos\n/);
+  assert.match(skill, /description:\s*Use when/);
+  assert.match(skill, /# Kadmos: Evidence-Native Governed Coding/);
 });
