@@ -4,12 +4,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { mulberry32, runDifferentialFuzzing } from "../src/fuzzer.js";
 import { compileWorldSpecPython, parseWorldSpec } from "../src/world_compiler.js";
 import { createWorldChecker } from "../src/world_checker.js";
 import type { StepVerdict, TransitionStepRequest } from "../src/types/ports.js";
 
 const file = new URL("../../conformance/fixtures/order_settlement.world.yaml", import.meta.url);
+const filePath = fileURLToPath(file);
 const world = parseWorldSpec(readFileSync(file, "utf8"));
 
 test("seed high bits change the generated sequence", () => {
@@ -111,7 +113,7 @@ test("mutated Python verdict reports the exact run, step, request and reason", a
 });
 
 test("CLI test prints coverage and exits successfully", () => {
-  const result = spawnSync(process.execPath, ["bin/kadmos.js", "test", file.pathname, "--runs", "30", "--steps", "20", "--seed", "12345", "--coverage"], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, ["bin/kadmos.js", "test", filePath, "--runs", "30", "--steps", "20", "--seed", "12345", "--coverage"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Bisimulation Verdict: 100% EQUIVALENCE \(0 divergences\)/);
   assert.match(result.stdout, /States: 100% \(5\/5\)/);
