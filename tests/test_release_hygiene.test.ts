@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
 const root = new URL("../../", import.meta.url);
@@ -38,6 +40,9 @@ test("package metadata and publishing scripts are present", () => {
   assert.equal(manifest.license, "MIT");
   assert.deepEqual(manifest.publishConfig, { access: "public" });
   assert.equal(manifest.repository.url, "https://github.com/substratum-labs/kadmos.git");
+  assert.equal(manifest.homepage, "https://github.com/substratum-labs/kadmos#readme");
+  assert.deepEqual(manifest.bugs, { url: "https://github.com/substratum-labs/kadmos/issues" });
+  assert.equal(manifest.author, "Substratum Labs");
   assert.deepEqual(manifest.bin, { kadmos: "./bin/kadmos.js", "kadmos-mcp": "./bin/kadmos-mcp.js" });
   assert.deepEqual(manifest.files, ["bin", "dist/src", "skills", "README.md", "LICENSE"]);
   assert.deepEqual(manifest.exports["./adapters/bullmq"], {
@@ -71,4 +76,33 @@ test("packaged agent skill exists and is well-formed", () => {
   assert.match(skill, /^---\nname:\s*kadmos\n/);
   assert.match(skill, /description:\s*Use when/);
   assert.match(skill, /# Kadmos: Evidence-Native Governed Coding/);
+});
+
+test("release hygiene: design artifacts and internal monorepo leaks are prevented", () => {
+  assert.equal(existsSync(new URL("design", root)), false, "design directory must not exist");
+  assert.equal(existsSync(new URL("GEMINI_SPECIFIC.md", root)), false, "GEMINI_SPECIFIC.md must not exist");
+  assert.equal(existsSync(new URL(".editorconfig", root)), true, ".editorconfig must exist");
+  assert.equal(existsSync(new URL(".gitattributes", root)), true, ".gitattributes must exist");
+
+  const trackedOutput = execSync("git ls-files", { cwd: fileURLToPath(root), encoding: "utf8" });
+  const files = trackedOutput.trim().split("\n").filter(Boolean);
+  const targetForbidden = ["substratum", "internal"].join("-");
+  for (const file of files) {
+    if (file.endsWith("test_release_hygiene.test.ts")) continue;
+    const fileUrl = new URL(file, root);
+    if (existsSync(fileUrl)) {
+      const content = readFileSync(fileUrl, "utf8");
+      assert.ok(!content.includes(targetForbidden), `Tracked file ${file} contains reference to ${targetForbidden}`);
+    }
+  }
+});
+
+test("standalone agent instructions are present and self-contained", () => {
+  const agents = read("AGENTS.md");
+  assert.match(agents, /# Kadmos — Contributor & Coding Agent Instructions/);
+  assert.match(agents, /pnpm run verify/);
+  assert.ok(!agents.includes("substratum-internal"));
+
+  assert.equal(existsSync(new URL("CLAUDE.md", root)), true, "CLAUDE.md must exist");
+  assert.equal(existsSync(new URL("GEMINI.md", root)), true, "GEMINI.md must exist");
 });

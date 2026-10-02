@@ -142,3 +142,20 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 examples/circuit-breaker-worker/dist
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Python compilation and test caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# IDE directories
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+

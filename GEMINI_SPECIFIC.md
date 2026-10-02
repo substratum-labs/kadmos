@@ -1,1 +1,0 @@
-../substratum-internal/agent-md/kadmos.md
