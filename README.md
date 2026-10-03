@@ -133,18 +133,21 @@ If an agent attempts an illegal transition (e.g., dispatching goods directly fro
 
 ## Quick Start (Equipping Your Coding Agent)
 
-Get started in 3 minutes by initializing a governed project with built-in agent configurations:
+Get started in seconds by running the interactive demo or initializing a governed project:
 
 ```bash
-# 1. Initialize a governed starter project via npx
+# 1. Run the 10-second interactive hallucination & repair walkthrough
+npx @substratum-labs/kadmos demo
+
+# 2. Initialize a governed starter project via npx
 npx @substratum-labs/kadmos init my-agent --lang all
 cd my-agent
 pnpm install
 
-# 2. Compile the starter World into TypeScript and Python seams
+# 3. Compile the starter World into TypeScript and Python seams
 pnpm run compile
 
-# 3. Differentially fuzz the two gatekeepers for bisimulation
+# 4. Differentially fuzz the two gatekeepers for bisimulation
 pnpm run test
 ```
 
@@ -164,6 +167,7 @@ Kadmos ships with built-in configurations that turn your coding assistant into a
 
 | Command | Purpose | Example |
 | --- | --- | --- |
+| `kadmos demo` | Run an interactive 10-second walkthrough showing hallucination interception and CEGIS self-repair. | `kadmos demo` |
 | `kadmos infer` | Extract candidate World and Fabric boundaries from prose requirements or existing code. | `kadmos infer requirements.md` |
 | `kadmos legislate` | Resolve state-machine dilemmas with an interactive ANSI terminal TUI wizard. | `kadmos legislate requirements.md --interactive --out world.yaml` |
 | `kadmos compile` | Project a World model into zero-dependency TypeScript and Python gatekeepers. | `kadmos compile world.yaml --out generated --lang all` |

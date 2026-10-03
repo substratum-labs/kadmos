@@ -13,9 +13,42 @@ import { runMcpServer } from "./mcp/server.js";
 import { runDifferentialFuzzing } from "./fuzzer.js";
 import { renderWorldGraph } from "./visualizer.js";
 import { initKadmosProject, type ScaffoldOptions } from "./scaffold.js";
+import { runDemo } from "./demo.js";
+
+function formatHelp(): string {
+  const useColor = Boolean(process.stdout.isTTY || process.env.FORCE_COLOR);
+  const color = (code: string, text: string) => (useColor ? `\x1b[${code}m${text}\x1b[0m` : text);
+  const bold = (text: string) => color("1", text);
+  const cyan = (text: string) => color("36", text);
+  const dim = (text: string) => color("2", text);
+
+  return `
+${bold(cyan("  _  __          _                         "))}
+${bold(cyan(" | |/ /__ _   __| |_ __  ___  ___          "))}
+${bold(cyan(" | ' // _` | / _` | '  \\/ _ \\/ __|        "))}
+${bold(cyan(" |_|\\_\\__,_| \\__,_|_|_|_\\___/\\___/         "))}
+ ${dim("Evidence-native architecture for coding agents (v0.1.1)")}
+
+${bold("Commands:")}
+  ${cyan("demo")}                                Run 10-second interactive hallucination & repair walkthrough
+  ${cyan("init")} [dir] [--template <tpl>]       Scaffold a new governed project
+  ${cyan("compile")} <world.yaml> --out <dir>    Compile World model into TypeScript and Python seams
+  ${cyan("test")} <world.yaml> [--runs <N>]      Differentially fuzz gatekeepers for cross-language bisimulation
+  ${cyan("graph")} <world.yaml> [--format html]  Visualize state machine (Mermaid, Graphviz DOT, or HTML)
+  ${cyan("mcp")}                                 Start stdio Model Context Protocol server for Cursor / Claude
+  ${cyan("infer")} <file>                        Extract candidate World and Fabric boundaries from PRDs
+  ${cyan("legislate")} <file> [--interactive]    Resolve state-machine dilemmas via terminal TUI wizard
+  ${cyan("run")} --prd <file>                    Run bounded CEGIS agent self-repair loop
+
+${bold("Quickstart:")}
+  $ npx @substratum-labs/kadmos demo
+  $ npx @substratum-labs/kadmos init my-agent && cd my-agent
+  $ pnpm install && pnpm run compile && pnpm test
+\n`;
+}
 
 function usage(): never {
-  throw new Error("Usage: kadmos mcp | graph <world-file> [--format mermaid|dot|html] [--out <file>] [--open] | init [directory] [--template default|order-settlement|circuit-breaker] [--lang ts|python|all] [--force] | test <world-file> [--runs <N>] [--steps <M>] [--seed <S>] [--coverage] [--json] | infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
+  throw new Error("Usage: kadmos demo | mcp | graph <world-file> [--format mermaid|dot|html] [--out <file>] [--open] | init [directory] [--template default|order-settlement|circuit-breaker] [--lang ts|python|all] [--force] | test <world-file> [--runs <N>] [--steps <M>] [--seed <S>] [--coverage] [--json] | infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
 }
 
 function publishProjectionDirectory(outDir: string, files: Record<string, string>): void {
@@ -60,6 +93,13 @@ function publishProjectionDirectory(outDir: string, files: Record<string, string
 }
 
 export function runCli(args: readonly string[]): string | Promise<string> {
+  if (args.length === 0 || args[0] === "--help" || args[0] === "-h" || args[0] === "help") {
+    return formatHelp();
+  }
+  if (args[0] === "demo") {
+    if (args.length > 1) usage();
+    return runDemo();
+  }
   if (args[0] === "init") {
     let directory = ".";
     let index = 1;
