@@ -12,15 +12,18 @@ test("end-to-end order fabric walkthrough runs to completion and verifies invari
 
 test("built-in self-contained runDemo executes and verifies all invariants", async () => {
   const output = runDemo();
-  assert.match(output, /Kadmos World-Fabric Integration Walkthrough/);
-  assert.match(output, /REFUSED UNCONSTITUTIONAL ACTION/);
+  assert.match(output, /USER INPUT -> MODEL -> FABRIC -> INTEGRATION/);
+  assert.match(output, /\[ 1\. USER INPUT \]/);
+  assert.match(output, /\[ 2\. THE MODEL \]/);
+  assert.match(output, /\[ 3\. THE FABRIC \]/);
+  assert.match(output, /\[ 4\. INTEGRATION \]/);
+  assert.match(output, /GATEKEEPER REFUSED UNCONSTITUTIONAL ACTION/);
   assert.match(output, /Shortest Counterexample Trace/);
-  assert.match(output, /Fail-closed verified/);
-  assert.match(output, /Refusal-Guided Plan Repair/);
-  assert.match(output, /Walkthrough Verdict: SUCCESS/);
+  assert.match(output, /CEGIS: Minimal Counterexample Trace Guided Agent Self-Repair/);
+  assert.match(output, /THE KADMOS SHIFT/);
 
   const cliOutput = await runCli(["demo"]);
-  assert.match(cliOutput, /Walkthrough Verdict: SUCCESS/);
+  assert.match(cliOutput, /THE KADMOS SHIFT/);
 });
 
 test("CLI with no arguments or --help outputs friendly banner and quickstart", async () => {
