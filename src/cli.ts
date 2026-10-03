@@ -27,7 +27,7 @@ ${bold(cyan("  _  __          _                         "))}
 ${bold(cyan(" | |/ /__ _   __| |_ __  ___  ___          "))}
 ${bold(cyan(" | ' // _` | / _` | '  \\/ _ \\/ __|        "))}
 ${bold(cyan(" |_|\\_\\__,_| \\__,_|_|_|_\\___/\\___/         "))}
- ${dim("Evidence-native architecture for coding agents (v0.1.1)")}
+ ${dim("Evidence-native architecture for coding agents (v0.1.2)")}
 
 ${bold("Commands:")}
   ${cyan("demo")}                                Run 10-second interactive hallucination & repair walkthrough
