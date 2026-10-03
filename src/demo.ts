@@ -189,10 +189,10 @@ export function runDemo(): string {
 
   log("");
   log(bold(cyan("================================================================================")));
-  log(bold("  💡 核心收获 (THE KADMOS SHIFT):"));
-  log(`  1. ${bold("人类不用审代码")}：工程师只需审批 15 行领域法度，无需逐行审查 AI 的海量 diff；`);
-  log(`  2. ${bold("Agent 拥有自由")}：应用代码可以随意重构、替换，但绝无可能破坏系统的核心不变量；`);
-  log(`  3. ${bold("反例精准自愈")}：报错不再是一坨模糊的栈追踪，而是最短代数反例（CEGIS），单轮闭环自愈！`);
+  log(bold("  💡 KEY TAKEAWAYS (THE KADMOS SHIFT):"));
+  log(`  1. ${bold("Review Models, Not Code")}     : Engineers review 15 lines of domain law, not 500 lines of AI diff;`);
+  log(`  2. ${bold("Autonomous Freedom with Safety")}: Agent writes messy glue code, but cannot breach invariants;`);
+  log(`  3. ${bold("Minimal Counterexample Repair")}: Errors are exact algebraic traces (CEGIS), healing in 1 turn!`);
   log(bold(cyan("================================================================================")));
   log("");
 
