@@ -24,7 +24,7 @@ Kadmos rejects the academic trap of attempting to formally model 100% of an appl
 
 - **World (Constitutional Law)**: The critical core state machine. Contains explicit states, transitions, invariant predicates, bounded numeric contexts, and authorized directives. Humans review this policy; runtime checks enforce it for requests that pass through the gatekeeper.
 - **Fabric (Replaceable Execution)**: Untrusted, disposable application code written by coding agents or humans (e.g., HTTP controllers, database queries, Redis workers).
-- **Seam (The Membrane)**: Compiled, zero-dependency gatekeepers (`WorldChecker`) and typed ports (`ports.d.ts` / `ports.py`). Before Fabric commits any physical side effect, it must request authorization from the gatekeeper. Refusals return algebraic counterexample traces that guide the agent's self-repair loop.
+- **Seam (The Membrane)**: Compiled, zero-dependency gatekeepers (`WorldChecker`) and typed ports (`ports.d.ts` / `ports.py`). Before a modeled physical effect, Fabric should request authorization from the gatekeeper. A refusal returns the accepted step history plus the refused attempt to guide diagnosis and repair.
 
 ```mermaid
 flowchart LR

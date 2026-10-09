@@ -95,7 +95,7 @@ Implement the physical glue code (HTTP controllers, database persistence, Redis 
 
 1. **Zero Silent Mutation**: If a business test fails because of a World invariant, the agent is strictly forbidden from editing `world.yaml` to weaken the rule without explicit human operator instruction.
 2. **Checker Rollback**: In generated TypeScript, after an allowed `step()`, a physical failure must immediately call `checker.rollbackLastStep()` before any other successful step can replace the savepoint. Do not call it after a refused step. Serialize all asynchronous users of the checker. This restores checker memory only; coordinate external effects separately. Generated Python currently has no matching public post-success method.
-3. **Seam Immutability**: All type definitions in `ports.d.ts` / `ports.py` are ground truth. If the types do not fit the requirement, re-run `infer` and `compile`, never hand-edit.
+3. **Seam Immutability**: `ports.d.ts` and `ports.py` are generated projections; never hand-edit them. If generated types and checker behavior differ, record the defect and change the compiler only through a separately reviewed behavior change. The current generated TypeScript port interface omits the checker's post-success rollback method.
 4. **Clean Verification**: Before declaring any coding task complete, execute:
    - `pnpm test` (or `pytest`)
    - `tsc --noEmit`
