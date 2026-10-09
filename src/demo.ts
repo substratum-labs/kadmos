@@ -115,11 +115,11 @@ export function runDemo(): string {
   log(`   ${yellow("payment is captured. Total funds must be strictly conserved.")}${dim('"')}`);
   log("");
   log(dim("      │"));
-  log(dim("      ▼ (kadmos infer / legislate: synthesized into constitutional law, not 500 lines of code)"));
+  log(dim("      ▼ (kadmos infer / legislate: propose a World for human review)"));
   log("");
 
   // 2. THE MODEL
-  log(bold(cyan("[ 2. THE MODEL ] (The World — The ONLY 15 lines human engineers review!)")));
+  log(bold(cyan("[ 2. THE MODEL ] (The World — a reviewed domain model)")));
   log(cyan("   ┌────────────────────────────────────────────────────────────────────────────┐"));
   log(`   │ ${bold("States:")}      CREATED ──(CONFIRM_PAYMENT)──> PAID ──(DISPATCH_GOODS)──> FULFILLED │`);
   log(`   │ ${bold("Invariant:")}   escrow_balance + settled_amount <= order_amount (Conservation)       │`);
@@ -128,17 +128,17 @@ export function runDemo(): string {
   log(cyan("   └────────────────────────────────────────────────────────────────────────────┘"));
   log("");
   log(dim("      │"));
-  log(dim("      ▼ (Coding Agent is free to write messy application logic / Fabric in any framework)"));
+  log(dim("      ▼ (Fabric requests authorization before the modeled physical operation)"));
   log("");
 
   // 3. THE FABRIC
   log(bold(yellow("[ 3. THE FABRIC ] (Coding Agent writes code, but attempts a hallucinated shortcut)")));
-  log("   Agent drafts 200 lines of glue logic, but hallucinated an unconstitutional shortcut:");
+  log("   An illustrative Fabric request attempts an illegal shortcut:");
   log(`   ${red("-> Proposing step:")} { transition: ${bold("DISPATCH_GOODS")}, directive: ${bold("INVOKE_LOGISTICS_DISPATCH")} }`);
   log(`      ${dim("(Attempting to fulfill and ship goods immediately from 'CREATED' before payment!)")}`);
   log("");
   log(dim("      │"));
-  log(dim("      ▼ (Mandatory Runtime Gatekeeper: No side-effect touches DB or APIs without a pass)"));
+  log(dim("      ▼ (This demo checks the request; it performs no DB or API operation)"));
   log("");
 
   // 4. INTEGRATION
@@ -153,18 +153,18 @@ export function runDemo(): string {
   if (!unconstitutionalVerdict.allowed) {
     log(`   ${bold(red("🛑 [GATEKEEPER REFUSED UNCONSTITUTIONAL ACTION!]"))}`);
     log(`      Reason: Transition 'DISPATCH_GOODS' is illegal from state 'CREATED'!`);
-    log(`      Shortest Counterexample Trace:`);
+    log(`      Refusal trace: accepted prefix and refused attempt`);
     for (const step of unconstitutionalVerdict.violation?.shortestCounterexampleTrace ?? []) {
       log(`        Step ${step.step}: State=${bold(step.state)}, Action=${bold(step.action)}, Directive=${step.proposedDirective ?? "none"}`);
     }
-    log(`      ${green("Result: Side-effect hard-blocked. Zero database mutation. Escrow: $0.00.")}`);
+    log(`      ${green("Result: checker state remains CREATED; this demo attempted no physical effect.")}`);
   } else {
     throw new Error("FATAL: Gatekeeper permitted unconstitutional transition!");
   }
 
   log("");
-  log(bold(green("   🔄 [CEGIS: Minimal Counterexample Trace Guided Agent Self-Repair]")));
-  log("      Agent receives the deterministic trace and self-heals in 1 turn:");
+  log(bold(green("   🔄 [A legal candidate path checked against the same World]")));
+  log("      The following candidate steps are accepted in sequence:");
 
   // Execute legal repaired steps
   const step1 = gatekeeper.step({ transitionId: "INITIATE_PAYMENT", proposedDirective: "DISPATCH_PAYMENT_GATEWAY" });
@@ -190,9 +190,9 @@ export function runDemo(): string {
   log("");
   log(bold(cyan("================================================================================")));
   log(bold("  💡 KEY TAKEAWAYS (THE KADMOS SHIFT):"));
-  log(`  1. ${bold("Review Models, Not Code")}     : Engineers review 15 lines of domain law, not 500 lines of AI diff;`);
-  log(`  2. ${bold("Autonomous Freedom with Safety")}: Agent writes messy glue code, but cannot breach invariants;`);
-  log(`  3. ${bold("Minimal Counterexample Repair")}: Errors are exact algebraic traces (CEGIS), healing in 1 turn!`);
+  log(`  1. ${bold("Review the World")}            : Check that the declared policy matches domain intent;`);
+  log(`  2. ${bold("Route Fabric through the checker")}: Each modeled request must be checked before its physical effect;`);
+  log(`  3. ${bold("Use refusal evidence")}       : The accepted prefix and refused attempt guide a candidate repair.`);
   log(bold(cyan("================================================================================")));
   log("");
 

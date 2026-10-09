@@ -115,7 +115,7 @@ test("mutated Python verdict reports the exact run, step, request and reason", a
 test("CLI test prints coverage and exits successfully", () => {
   const result = spawnSync(process.execPath, ["bin/kadmos.js", "test", filePath, "--runs", "30", "--steps", "20", "--seed", "12345", "--coverage"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Bisimulation Verdict: 100% EQUIVALENCE \(0 divergences\)/);
+  assert.match(result.stdout, /Observed: 30 runs, 600 sampled steps, 0 divergences/);
   assert.match(result.stdout, /States: 100% \(5\/5\)/);
   assert.match(result.stdout, /Transitions: 100% \(5\/5\)/);
 });

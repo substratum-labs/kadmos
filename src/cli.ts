@@ -33,7 +33,7 @@ ${bold("Commands:")}
   ${cyan("demo")}                                Run 10-second interactive hallucination & repair walkthrough
   ${cyan("init")} [dir] [--template <tpl>]       Scaffold a new governed project
   ${cyan("compile")} <world.yaml> --out <dir>    Compile World model into TypeScript and Python seams
-  ${cyan("test")} <world.yaml> [--runs <N>]      Differentially fuzz gatekeepers for cross-language bisimulation
+  ${cyan("test")} <world.yaml> [--runs <N>]      Compare sampled TypeScript and Python checker verdicts
   ${cyan("graph")} <world.yaml> [--format html]  Visualize state machine (Mermaid, Graphviz DOT, or HTML)
   ${cyan("mcp")}                                 Start stdio Model Context Protocol server for Cursor / Claude
   ${cyan("infer")} <file>                        Extract candidate World and Fabric boundaries from PRDs
@@ -165,12 +165,12 @@ export function runCli(args: readonly string[]): string | Promise<string> {
       if (flags.has("--json")) return `${JSON.stringify(report, null, 2)}\n`;
       const percent = (ratio: number) => `${Math.round(ratio * 100)}%`;
       const lines = [
-        "Kadmos Differential Bisimulation Fuzzer",
+        "Kadmos Seeded Differential Check",
         `World: ${file} (${spec.states.length} states, ${spec.transitions.length} transitions)`,
         `Runs: ${runs} | Steps/Run: ${stepsPerRun} | Seed: ${seed}`,
-        "Executing lockstep verification (TypeScript vs Python)...",
-        `${report.passed ? "[OK]" : "[FAIL]"} ${report.totalSteps.toLocaleString("en-US")} steps executed across ${runs} runs.`,
-        `Bisimulation Verdict: ${report.passed ? "100% EQUIVALENCE" : "DIVERGENCE"} (${report.divergences.length} divergences)`,
+        "Comparing sampled TypeScript interpreter and generated Python verdicts...",
+        `Observed: ${runs} runs, ${report.totalSteps.toLocaleString("en-US")} sampled steps, ${report.divergences.length} divergences`,
+        `Result: ${report.passed ? "sampled verdicts matched" : "sampled verdicts differed"}`,
       ];
       if (flags.has("--coverage")) lines.push("Coverage:", `  States: ${percent(report.stateCoverage.ratio)} (${report.stateCoverage.visited.length}/${report.stateCoverage.total.length})`, `  Transitions: ${percent(report.transitionCoverage.ratio)} (${report.transitionCoverage.visited.length}/${report.transitionCoverage.total.length})`);
       for (const divergence of report.divergences.slice(0, 5)) lines.push(`Run ${divergence.run}, step ${divergence.step}: ${divergence.reason}\n  Request: ${JSON.stringify(divergence.request)}\n  TS: ${JSON.stringify(divergence.tsVerdict)}\n  Python: ${JSON.stringify(divergence.pyVerdict)}`);
