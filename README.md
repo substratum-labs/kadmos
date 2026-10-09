@@ -114,6 +114,10 @@ Compile the model into zero-dependency TypeScript and Python gatekeepers:
 kadmos compile world.yaml --out src/world --lang all
 ```
 
+The `kadmos.compiler.k02.v1` contract accepts an omitted World `directive`, `directive:`, or `directive: null` as no authorized directive. An explicit directive must be a nonempty string. Explicit empty context, invariant, and transition collections are valid. The generated TypeScript and Python seams typecheck/import for those Worlds; an empty invariant list adds no invented rule.
+
+Each checker can take an optional initial context. Omitted or null/None uses World defaults; an object overlays them and becomes the remembered constructor seed. Bare or null/None `reset` restores that seed. Explicit `reset({})` restores World defaults, and any explicit object overlays those defaults without changing the seed. Malformed non-null context shapes and values fail `INVALID_BOUNDS`. Successful reset clears the one-step rollback savepoint; failed reset preserves it.
+
 ### 3. Fabric Under Governance
 The coding agent writes application code constrained by the gatekeeper:
 
@@ -149,6 +153,8 @@ export function processPayment(
 ```
 
 This checker represents one order lifecycle; Fabric must associate each order with its own governed lifecycle. Calls using one checker must pass through the queue above so another step cannot replace its rollback savepoint during `await persist(...)`. Rejection leaves checker state unchanged and needs no rollback. On a physical failure after an allowed step, rollback restores only checker memory. If persistence committed before reporting failure, the caller needs a transaction, idempotency, or compensation; this example does not make database/API effects atomic with the checker.
+
+Interpreted and generated TypeScript expose `rollbackLastStep()`; generated Python exposes `rollback_last_step()`. Each restores and consumes the pre-success checker snapshot. A refusal or failed reset leaves an earlier savepoint available, so call rollback only for a physical failure following an allowed step. Python's public state, context, and history are readable views; context/history reads return copies and assignments are rejected. Python introspection is outside this isolation boundary.
 
 If an agent attempts an illegal transition (e.g., dispatching goods directly from `CREATED` without payment), the gatekeeper refuses that request and returns the accepted history plus the refused attempt as a diagnostic trace.
 

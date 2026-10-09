@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import copy
 import sys
 from pathlib import Path
 from typing import Any
@@ -87,15 +86,13 @@ class JobWorker:
         lock_key = f"{self.job_id}:lock"
         result_key = f"{self.job_id}:result"
         lock, result = self.redis.get(lock_key), self.redis.get(result_key)
-        state = self.checker.get_state()
-        context = self.checker.get_context()
-        history = copy.deepcopy(self.checker.history)
         if not self.permit(transition, directive, **payload):
             return False
         try:
             effect()
             return True
         except Exception:
+            self.checker.rollback_last_step()
             self.redis.lrem("jobs:wait", 0, self.job_id)
             self.redis.zrem("jobs:delayed", self.job_id)
             self.redis.lrem("jobs:dead", 0, self.job_id)
@@ -109,9 +106,6 @@ class JobWorker:
                 self.redis.set(lock_key, lock)
             self.redis.lrem("jobs:active", 0, self.job_id)
             self.redis.lpush("jobs:active", self.job_id)
-            self.checker.state = state
-            self.checker.context = context
-            self.checker.history = history
             raise
 
     def enqueue(self) -> None:

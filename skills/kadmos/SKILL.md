@@ -111,7 +111,7 @@ This checker represents one order lifecycle; Fabric must associate each order wi
    if not verdict["allowed"]:
        raise RuntimeError(f"Gatekeeper rejected: {verdict['violation']}")
    ```
-   This request matches the default scaffold World. For a transition with no directive, its World definition must explicitly say `directive: null`, and the request may omit `proposedDirective`. Generated Python has no public post-success rollback method; plan persistence failure handling separately before using it for physical effects.
+   This request matches the default scaffold World. An omitted World `directive`, `directive:`, or `directive: null` authorizes no directive, and the request may omit `proposedDirective`; an explicit directive string must be nonempty. After an allowed Python step, immediately call `checker.rollback_last_step()` if the physical effect fails. Do not call it after a refusal. Serialize all users of that checker across asynchronous physical work. Python's state, context, and history remain readable; writes are rejected and context/history reads are copies.
 
 ### Phase 5: Differential Testing & CEGIS Self-Repair
 1. Run the differential fuzzer:
@@ -128,8 +128,8 @@ This checker represents one order lifecycle; Fabric must associate each order wi
 ## Agent Operational Rules (Non-Bypassable Invariants)
 
 1. **Zero Silent Mutation**: If a business test fails because of a World invariant, the agent is strictly forbidden from editing `world.yaml` to weaken the rule without explicit human operator instruction.
-2. **Checker Rollback**: In generated TypeScript, after an allowed `step()`, a physical failure must immediately call `checker.rollbackLastStep()` before any other successful step can replace the savepoint. Do not call it after a refused step. Serialize all asynchronous users of the checker. This restores checker memory only; coordinate external effects separately. Generated Python currently has no matching public post-success method.
-3. **Seam Immutability**: `ports.d.ts` and `ports.py` are generated projections; never hand-edit them. If generated types and checker behavior differ, record the defect and change the compiler only through a separately reviewed behavior change. The current generated TypeScript port interface omits the checker's post-success rollback method.
+2. **Checker Rollback**: After an allowed `step()`, a physical failure must immediately call TypeScript `checker.rollbackLastStep()` or Python `checker.rollback_last_step()` before another success replaces the savepoint. Do not call it after a refused step. Serialize all asynchronous users of the checker. This restores checker memory only; coordinate external effects separately. Bare or null/None reset restores the resolved constructor seed; explicit object reset overlays World defaults and leaves that seed unchanged. Successful reset clears the savepoint; failed reset preserves it.
+3. **Seam Immutability**: `ports.d.ts` and `ports.py` are generated projections; never hand-edit them. The TypeScript interface and Python Protocol expose the respective rollback methods. Change the compiler and regenerate the seam when the contract changes.
 4. **Clean Verification**: Before declaring any coding task complete, execute:
    - `pnpm test` (or `pytest`)
    - `tsc --noEmit`

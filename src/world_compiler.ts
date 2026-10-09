@@ -1,5 +1,7 @@
-import type { WorldSpec } from "./types/world.js";
-import { identifiers } from "./world_expression.js";
+import type { WorldSpec, WorldSpecInput } from "./types/world.js";
+import { admitWorldSpec } from "./world_admission.js";
+import { KADMOS_COMPILER_CONTRACT_VERSION } from "./world_admission.js";
+export { admitWorldSpec, KADMOS_COMPILER_CONTRACT_VERSION } from "./world_admission.js";
 export { compileWorldSpecPython, type PythonWorldProjection } from "./python_compiler.js";
 
 export interface WorldProjection {
@@ -58,8 +60,9 @@ function parseYaml(source: string): unknown {
         if (Object.hasOwn(result, key)) throw new Error(`YAML syntax: duplicate key ${key}`);
         cursor++;
         const value = match[2];
-        (result as Record<string, unknown>)[key] = value !== undefined ? scalar(value) :
+        const parsedValue = value !== undefined ? scalar(value) :
           lines[cursor] && lines[cursor]!.indent > level ? block(lines[cursor]!.indent) : null;
+        Object.defineProperty(result, key, { value: parsedValue, enumerable: true, writable: true, configurable: true });
       }
       if (lines[cursor] && lines[cursor]!.indent > level) throw new Error("YAML syntax: indentation");
     }
@@ -71,78 +74,27 @@ function parseYaml(source: string): unknown {
   return result;
 }
 
-function object(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`INVALID_WORLD: ${label}`);
-  return value as Record<string, unknown>;
-}
-
 export function parseWorldSpec(source: string): WorldSpec {
-  const raw = object(parseYaml(source), "root");
-  if (raw.version !== "kadmos.world.v0") throw new Error("INVALID_VERSION: expected kadmos.world.v0");
-  if (typeof raw.name !== "string") throw new Error("INVALID_WORLD: name");
-  if (!Array.isArray(raw.states) || !Array.isArray(raw.invariants) || !Array.isArray(raw.transitions)) throw new Error("INVALID_WORLD: lists");
-  const context = object(raw.context, "context");
-  const states = raw.states.map((item) => object(item, "state"));
-  const invariants = raw.invariants.map((item) => object(item, "invariant"));
-  const transitions = raw.transitions.map((item) => object(item, "transition"));
-  if (states.filter((state) => state.initial === true).length !== 1) throw new Error("INITIAL_STATE: exactly one required");
-  const stateIds = new Set(states.map((state) => state.id));
-  if (stateIds.size !== states.length || [...stateIds].some((id) => typeof id !== "string")) throw new Error("INVALID_WORLD: duplicate state");
-
-  for (const [name, definition] of Object.entries(context)) {
-    const variable = object(definition, name);
-    if (variable.type === "string") {
-      if (typeof variable.default !== "string" || variable.min !== undefined || variable.max !== undefined) throw new Error(`INVALID_BOUNDS: ${name}`);
-      continue;
-    }
-    if (variable.type !== "integer" || [variable.min, variable.max, variable.default].some((n) => n !== undefined && (typeof n !== "number" || !Number.isSafeInteger(n)))) throw new Error(`INVALID_BOUNDS: ${name}`);
-    if (typeof variable.min === "number" && variable.min < 0 || typeof variable.max === "number" && variable.max < (typeof variable.min === "number" ? variable.min : 0)) throw new Error(`INVALID_BOUNDS: ${name}`);
-    const defaultValue = typeof variable.default === "number" ? variable.default : 0;
-    if (typeof variable.min === "number" && defaultValue < variable.min) throw new Error(`INVALID_BOUNDS: default ${name}`);
-    if (typeof variable.max === "number" && defaultValue > variable.max) throw new Error(`INVALID_BOUNDS: default ${name}`);
-  }
-
-  const transitionIds = new Set<string>();
-  for (const transition of transitions) {
-    if (typeof transition.id !== "string" || !transition.id) throw new Error("INVALID_WORLD: transition id");
-    if (transitionIds.has(transition.id)) throw new Error(`DUPLICATE_TRANSITION_ID: ${transition.id}`);
-    transitionIds.add(transition.id);
-    if (!stateIds.has(transition.from) || !stateIds.has(transition.to)) throw new Error(`UNDECLARED_STATE: ${String(transition.from)} -> ${String(transition.to)}`);
-    if (states.some((state) => state.id === transition.from && state.terminal === true)) throw new Error(`TERMINAL_STATE: ${String(transition.from)}`);
-    if (!Array.isArray(transition.effects) || !transition.effects.every((effect) => typeof effect === "string")) throw new Error("INVALID_WORLD: effects");
-  }
-
-  const allowed = new Set([...Object.keys(context), "state", "event", "request"]);
-  for (const invariant of invariants) {
-    if (typeof invariant.predicate !== "string") throw new Error("INVALID_WORLD: predicate");
-    for (const id of identifiers(invariant.predicate)) if (!allowed.has(id)) throw new Error(`UNDECLARED_IDENTIFIER: ${id}`);
-  }
-  for (const transition of transitions) {
-    if (typeof transition.guard !== "string" && typeof transition.guard !== "boolean") throw new Error("INVALID_WORLD: guard");
-    if (typeof transition.guard === "string") for (const id of identifiers(transition.guard)) if (!allowed.has(id)) throw new Error(`UNDECLARED_IDENTIFIER: ${id}`);
-    for (const effect of transition.effects as string[]) {
-      const match = /^([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.+)$/.exec(effect);
-      if (!match || !Object.hasOwn(context, match[1]!)) throw new Error(`UNDECLARED_IDENTIFIER: ${effect}`);
-      for (const id of identifiers(match[2]!)) if (!allowed.has(id)) throw new Error(`UNDECLARED_IDENTIFIER: ${id}`);
-    }
-  }
-  return raw as unknown as WorldSpec;
+  if (typeof source !== "string") throw new Error("INVALID_WORLD: source");
+  return admitWorldSpec(parseYaml(source));
 }
 
-export function compileWorldSpec(spec: WorldSpec): WorldProjection {
+export function compileWorldSpec(input: WorldSpecInput): WorldProjection {
+  const spec = admitWorldSpec(input);
   const stateUnion = spec.states.map((state) => JSON.stringify(state.id)).join(" | ") || "never";
   const directives = [...new Set(spec.transitions.map((transition) => transition.directive).filter((value): value is string => value !== null))];
   const directiveUnion = directives.map((directive) => JSON.stringify(directive)).join(" | ") || "never";
   const fields = Object.keys(spec.context).map((name) => `  readonly ${JSON.stringify(name)}: ${spec.context[name]!.type === "string" ? "string" : "number"};`).join("\n");
   const portsDts = [
     "// AUTO-GENERATED BY KADMOS.",
+    `// Compiler contract: ${KADMOS_COMPILER_CONTRACT_VERSION}`,
     `export type WorldState = ${stateUnion};`,
     `export type WorldDirective = ${directiveUnion};`,
     `export interface WorldContext {\n${fields}\n}`,
     "export interface StepRecord { readonly step: number; readonly state: WorldState; readonly action: string; readonly eventPayload?: Readonly<Record<string, unknown>>; readonly proposedDirective?: WorldDirective | null; }",
     "export interface TransitionStepRequest { readonly transitionId: string; readonly eventPayload?: Readonly<Record<string, unknown>>; readonly proposedDirective?: WorldDirective | null; }",
     "export interface StepVerdict { readonly allowed: boolean; readonly previousState: WorldState; readonly currentState: WorldState; readonly context: WorldContext; readonly directiveAllowed: WorldDirective | null; readonly violation?: { readonly code: string; readonly message: string; readonly violatedInvariant?: string; readonly shortestCounterexampleTrace: readonly StepRecord[]; }; }",
-    "export interface IWorldChecker { getState(): WorldState; getContext(): WorldContext; step(request: TransitionStepRequest): StepVerdict; reset(initialContext?: Partial<WorldContext>): void; }",
+    "export interface IWorldChecker { getState(): WorldState; getContext(): WorldContext; step(request: TransitionStepRequest): StepVerdict; reset(initialContext?: Partial<WorldContext> | null): void; rollbackLastStep(): void; }",
   ].join("\n");
 
   const initial = JSON.stringify(spec.states.find((state) => state.initial)?.id);
@@ -150,24 +102,28 @@ export function compileWorldSpec(spec: WorldSpec): WorldProjection {
 
   const worldCheckerTs = [
     "// AUTO-GENERATED BY KADMOS.",
+    `// Compiler contract: ${KADMOS_COMPILER_CONTRACT_VERSION}`,
     'import { types as nodeTypes } from "node:util";',
     'import type { IWorldChecker, WorldContext, WorldState, TransitionStepRequest, StepVerdict, StepRecord } from "./ports.js";',
-    `const world = ${JSON.stringify(spec)} as const;`,
+    'type WorldData = { readonly context: Readonly<Record<string, { readonly type: "integer" | "string"; readonly min?: number; readonly max?: number }>>; readonly states: readonly { readonly id: string; readonly terminal?: boolean }[]; readonly invariants: readonly { readonly id: string; readonly predicate: string }[]; readonly transitions: readonly { readonly id: string; readonly from: string; readonly to: string; readonly guard: string | boolean; readonly directive: string | null; readonly effects: readonly string[] }[] };',
+    `const world: WorldData = JSON.parse(${JSON.stringify(JSON.stringify(spec))});`,
+    `const contextDefaults: Readonly<Record<string, number | string>> = JSON.parse(${JSON.stringify(defaults)});`,
     'const contextDefinitions: Record<string, { readonly type: "integer" | "string"; readonly min?: number; readonly max?: number }> = world.context;',
     'const stateDefinitions: readonly { readonly id: string; readonly terminal?: boolean }[] = world.states;',
+    'const invariantDefinitions: readonly { readonly id: string; readonly predicate: string }[] = world.invariants;',
+    'const transitionDefinitions: readonly { readonly id: string; readonly from: string; readonly to: string; readonly guard: string | boolean; readonly directive: string | null; readonly effects: readonly string[] }[] = world.transitions;',
     generatedEvaluator,
     generatedSanitizer,
     "export class WorldChecker implements IWorldChecker {",
     `  #state: WorldState = ${initial} as WorldState;`,
-    `  #context: Record<string, number | string> = ${defaults};`,
+    "  #context: Record<string, number | string> = { ...contextDefaults };",
     "  #history: StepRecord[] = [];",
+    "  #constructorSeed: Record<string, number | string> | null = null;",
     "  #undo: { state: WorldState; context: Record<string, number | string>; history: StepRecord[] } | null = null;",
     "  #busy: boolean = false;",
-    "  constructor() {",
-    "    const invalid = this.checkBounds(this.#context);",
-    '    if (invalid) throw new Error(`INVALID_BOUNDS: ${invalid}`);',
-    `    const violated = this.checkInvariants(${initial}, this.#context);`,
-    '    if (violated) throw new Error(`INITIAL_INVARIANT_FAILED: ${violated}`);',
+    "  constructor(initialContext: Partial<WorldContext> | null = null) {",
+    "    this.reset(initialContext);",
+    "    this.#constructorSeed = { ...this.#context };",
     "  }",
     "  getState(): WorldState { return this.#state; }",
     "  getContext(): WorldContext { return { ...this.#context } as unknown as WorldContext; }",
@@ -186,7 +142,7 @@ export function compileWorldSpec(spec: WorldSpec): WorldProjection {
     "  }",
     "  private checkInvariants(atState: string, values: Record<string, number | string>, event?: Readonly<Record<string, unknown>>): string | undefined {",
     "    const env: Record<string, unknown> = { ...values, state: atState, event: event ?? {}, request: event ?? {} };",
-    "    for (const invariant of world.invariants) {",
+    "    for (const invariant of invariantDefinitions) {",
     "      try {",
     "        const res = evaluateWorld(invariant.predicate, env);",
     '        if (typeof res !== "boolean" || !res) return invariant.id;',
@@ -194,7 +150,7 @@ export function compileWorldSpec(spec: WorldSpec): WorldProjection {
     "    }",
     "    return undefined;",
     "  }",
-    "  reset(initialContext: Partial<WorldContext> = {}): void {",
+    "  reset(initialContext: Partial<WorldContext> | null = null): void {",
     '    if (this.#busy) throw new Error("REENTRANCY_DETECTED: reset called during active evaluation");',
     "    this.#busy = true;",
     "    const snapshotState = this.#state;",
@@ -202,8 +158,21 @@ export function compileWorldSpec(spec: WorldSpec): WorldProjection {
     "    const snapshotHistory = structuredClone(this.#history);",
     "    const rollback = () => { this.#state = snapshotState; this.#context = { ...snapshotContext }; this.#history = structuredClone(snapshotHistory); };",
     "    try {",
-    `      const candidate: Record<string, number | string> = { ...${defaults} };`,
-    "      for (const [name, value] of Object.entries(initialContext)) {",
+    "      const candidate: Record<string, number | string> = { ...contextDefaults };",
+    "      let overrides: Record<string, unknown>;",
+    "      if (initialContext === null || initialContext === undefined) overrides = this.#constructorSeed === null ? {} : { ...this.#constructorSeed };",
+    "      else {",
+    '        if (typeof initialContext !== "object" || Array.isArray(initialContext) || nodeTypes.isProxy(initialContext)) throw new Error("INVALID_BOUNDS: initial context must be a plain object");',
+    "        const proto = Object.getPrototypeOf(initialContext);",
+    '        if (proto !== Object.prototype && proto !== null) throw new Error("INVALID_BOUNDS: initial context must be a plain object");',
+    "        const descriptors = Object.getOwnPropertyDescriptors(initialContext);",
+    "        overrides = {};",
+    "        for (const [name, descriptor] of Object.entries(descriptors)) {",
+    '          if (!("value" in descriptor)) throw new Error("INVALID_BOUNDS: accessor");',
+    "          Object.defineProperty(overrides, name, { value: descriptor.value, enumerable: true, writable: true, configurable: true });",
+    "        }",
+    "      }",
+    "      for (const [name, value] of Object.entries(overrides)) {",
     '        if (!Object.hasOwn(world.context, name) || !(contextDefinitions[name]!.type === "string" ? typeof value === "string" : typeof value === "number" && Number.isSafeInteger(value))) throw new Error(`INVALID_BOUNDS: ${name}`);',
     "        candidate[name] = value as string | number;",
     "      }",
@@ -248,7 +217,7 @@ export function compileWorldSpec(spec: WorldSpec): WorldProjection {
     "        rollback();",
     "        return { allowed: false, previousState: snapshotState, currentState: snapshotState, context: this.getContext(), directiveAllowed: null, violation: { code, message, ...(violatedInvariant === undefined ? {} : { violatedInvariant }), shortestCounterexampleTrace: [...snapshotHistory, record].map((r) => deepFreezeWorld(structuredClone(r))) } };",
     "      };",
-    "      const transition = world.transitions.find((item) => item.id === snapshotAction && item.from === snapshotState);",
+    "      const transition = transitionDefinitions.find((item) => item.id === snapshotAction && item.from === snapshotState);",
     '      if (!transition) return reject(stateDefinitions.some((item) => item.id === snapshotState && item.terminal === true) ? "ILLEGAL_TRANSITION" : "INVALID_TRANSITION", `Transition \'${snapshotAction}\' is not legal from state \'${snapshotState}\'`);',
     '      if ((snapshotDirective ?? null) !== transition.directive) return reject("UNAUTHORIZED_DIRECTIVE", "Directive does not match declared transition");',
     "      const env = (at: string, values: Record<string, number | string>): Record<string, unknown> => ({ ...values, state: at, event: safePayload ?? {}, request: safePayload ?? {} });",
