@@ -58,10 +58,9 @@ export function sanitizePayload(raw: unknown, depth: number = 0, seen: Set<objec
 
 export function createWorldChecker(
   rawSpec: WorldSpecInput,
-  rawInitialContext: Partial<WorldContext> = {},
+  rawInitialContext: Partial<WorldContext> | null = null,
 ): IWorldChecker {
   const spec = deepFreeze(admitWorldSpec(rawSpec));
-  const frozenDefaultContext = Object.freeze(structuredClone(rawInitialContext));
   const initial = spec.states.find((state) => state.initial)?.id;
   if (!initial) throw new Error("INITIAL_STATE: exactly one required");
 
@@ -69,6 +68,8 @@ export function createWorldChecker(
   let context: Record<string, number | string> = {};
   let history: StepRecord[] = [];
   let busy = false;
+  let constructorSeed: Record<string, number | string> | null = null;
+  let undo: { state: string; context: Record<string, number | string>; history: StepRecord[] } | null = null;
 
   const env = (atState: string, values: Record<string, number | string>, eventPayload?: Readonly<Record<string, unknown>>) => ({
     ...values,
@@ -102,7 +103,7 @@ export function createWorldChecker(
     return undefined;
   };
 
-  const reset = (next: Partial<WorldContext> = frozenDefaultContext): void => {
+  const reset = (next: Partial<WorldContext> | null = null): void => {
     if (busy) throw new Error("REENTRANCY_DETECTED: reset called during active evaluation");
     busy = true;
 
@@ -120,7 +121,20 @@ export function createWorldChecker(
       const candidateContext: Record<string, number | string> = Object.fromEntries(
         Object.entries(spec.context).map(([name, definition]) => [name, definition.default ?? 0]),
       );
-      for (const [name, value] of Object.entries(next)) {
+      let overrides: Record<string, unknown>;
+      if (next === null || next === undefined) overrides = constructorSeed === null ? {} : { ...constructorSeed };
+      else {
+        if (typeof next !== "object" || Array.isArray(next) || nodeTypes.isProxy(next)) throw new Error("INVALID_BOUNDS: initial context must be a plain object");
+        const proto = Object.getPrototypeOf(next);
+        if (proto !== Object.prototype && proto !== null) throw new Error("INVALID_BOUNDS: initial context must be a plain object");
+        const descriptors = Object.getOwnPropertyDescriptors(next);
+        overrides = {};
+        for (const [name, descriptor] of Object.entries(descriptors)) {
+          if (!("value" in descriptor)) throw new Error("INVALID_BOUNDS: accessor");
+          Object.defineProperty(overrides, name, { value: descriptor.value, enumerable: true, configurable: true, writable: true });
+        }
+      }
+      for (const [name, value] of Object.entries(overrides)) {
         if (!Object.hasOwn(spec.context, name) || (spec.context[name]!.type === "string" ? typeof value !== "string" : typeof value !== "number" || !Number.isSafeInteger(value))) {
           throw new Error(`INVALID_BOUNDS: ${name}`);
         }
@@ -140,6 +154,7 @@ export function createWorldChecker(
       state = initial;
       context = candidateContext;
       history = [];
+      undo = null;
     } catch (err) {
       rollback();
       throw err;
@@ -148,12 +163,21 @@ export function createWorldChecker(
     }
   };
 
-  reset();
+  reset(rawInitialContext);
+  constructorSeed = { ...context };
 
   return {
     getState: () => state,
     getContext: () => ({ ...context }),
     reset,
+    rollbackLastStep(): void {
+      if (busy || undo === null) throw new Error("NO_CHECKER_SAVEPOINT");
+      const saved = undo;
+      undo = null;
+      state = saved.state;
+      context = { ...saved.context };
+      history = structuredClone(saved.history);
+    },
     step(request: TransitionStepRequest): StepVerdict {
       if (busy) throw new Error("REENTRANCY_DETECTED: step called during active evaluation");
       busy = true;
@@ -161,6 +185,7 @@ export function createWorldChecker(
       const snapshotState = state;
       const snapshotContext = { ...context };
       const snapshotHistory = structuredClone(history);
+      const priorUndo = undo;
 
       const rollback = () => {
         state = snapshotState;
@@ -294,6 +319,7 @@ export function createWorldChecker(
         }
 
         // Commit state transition atomically
+        undo = { state: snapshotState, context: { ...snapshotContext }, history: structuredClone(snapshotHistory) };
         state = transition.to;
         context = candidateContext;
         history.push(deepFreeze(record));
@@ -305,6 +331,10 @@ export function createWorldChecker(
           context: { ...context },
           directiveAllowed: transition.directive as StepVerdict["directiveAllowed"],
         };
+      } catch (error) {
+        rollback();
+        undo = priorUndo;
+        throw error;
       } finally {
         busy = false;
       }

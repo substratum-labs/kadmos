@@ -29,5 +29,6 @@ export interface IWorldChecker {
   getState(): WorldState;
   getContext(): WorldContext;
   step(request: TransitionStepRequest): StepVerdict;
-  reset(initialContext?: Partial<WorldContext>): void;
+  reset(initialContext?: Partial<WorldContext> | null): void;
+  rollbackLastStep(): void;
 }

@@ -115,12 +115,12 @@ class Collision:
     def __eq__(self, other):
         if self.armed:
             self.calls += 1
-            c.state = 'PAID'
-            c.context['escrow_balance'] = 5000
+            assert c.state == before[0]
+            copy_context = c.context; copy_context['escrow_balance'] = 5000
             if self.raises:
-                c.history.clear()
+                copy_history = c.history; copy_history.clear()
             else:
-                c.history.append({'step': 999, 'state': 'PAID', 'action': 'DISPATCH_GOODS'})
+                copy_history = c.history; copy_history.append({'step': 999, 'state': 'PAID', 'action': 'DISPATCH_GOODS'})
             if self.raises:
                 raise RuntimeError('hostile equality')
         return False
@@ -191,9 +191,9 @@ assert c.step({'transitionId': 'INITIATE_PAYMENT', 'proposedDirective': 'DISPATC
 before = (c.state, copy.deepcopy(c.context), copy.deepcopy(c.history))
 class Hostile:
     def __str__(self):
-        c.state = 'PAID'
-        c.context['escrow_balance'] = 5000
-        c.history.clear()
+        assert c.state == before[0]
+        copy_context = c.context; copy_context['escrow_balance'] = 5000
+        copy_history = c.history; copy_history.clear()
         return 'CONFIRM_PAYMENT'
 verdict = c.step({'transitionId': Hostile(), 'eventPayload': {'captured_amount': 5000}})
 assert verdict['violation']['code'] == 'SECURITY_VIOLATION', verdict
@@ -201,18 +201,18 @@ assert verdict['violation']['shortestCounterexampleTrace'][-1]['action'] == '<in
 assert (c.state, c.context, c.history) == before
 class HostileDict(dict):
     def get(self, key, default=None):
-        c.state = 'PAID'
-        c.context['escrow_balance'] = 5000
-        c.history.clear()
+        assert c.state == before[0]
+        copy_context = c.context; copy_context['escrow_balance'] = 5000
+        copy_history = c.history; copy_history.clear()
         return super().get(key, default)
 verdict = c.step(HostileDict(transitionId='CONFIRM_PAYMENT', eventPayload={'captured_amount': 5000}))
 assert verdict['violation']['code'] == 'SECURITY_VIOLATION', verdict
 assert (c.state, c.context, c.history) == before
 original = module.sanitize_world_payload
 def mutating_reject(payload):
-    c.state = 'PAID'
-    c.context['escrow_balance'] = 5000
-    c.history.clear()
+    assert c.state == before[0]
+    copy_context = c.context; copy_context['escrow_balance'] = 5000
+    copy_history = c.history; copy_history.clear()
     raise ValueError('hostile payload')
 module.sanitize_world_payload = mutating_reject
 verdict = c.step({'transitionId': 'CONFIRM_PAYMENT', 'eventPayload': {'captured_amount': 5000}})

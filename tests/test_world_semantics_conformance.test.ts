@@ -7,16 +7,17 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import type { WorldSpec } from "../src/types/world.js";
 import { compileWorldSpec, compileWorldSpecPython } from "../src/world_compiler.js";
+import { createWorldChecker } from "../src/world_checker.js";
 
 type Checker = {
   getState(): string;
   getContext(): Record<string, number | string>;
   step(request: unknown): { allowed: boolean; currentState: string; context: Record<string, number | string>; directiveAllowed: string | null; violation?: { code: string; shortestCounterexampleTrace: readonly unknown[] } };
-  reset(context?: Record<string, unknown>): void;
+  reset(context?: Record<string, unknown> | null): void;
   rollbackLastStep(): void;
 };
 
-async function runGenerated<T>(world: WorldSpec, check: (CheckerType: new () => Checker, python: (script: string) => unknown) => T | Promise<T>): Promise<T> {
+async function runGenerated<T>(world: WorldSpec, check: (CheckerType: new (context?: Record<string, unknown> | null) => Checker, python: (script: string) => unknown) => T | Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), "kadmos-semantics-"));
   try {
     const ts = compileWorldSpec(world);
@@ -39,11 +40,78 @@ async function runGenerated<T>(world: WorldSpec, check: (CheckerType: new () => 
       assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
       return JSON.parse(result.stdout) as unknown;
     };
-    return await check(WorldChecker as new () => Checker, python);
+    return await check(WorldChecker as new (context?: Record<string, unknown> | null) => Checker, python);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+test("three checker constructors and resets preserve resolved seed and one savepoint", async () => {
+  const world: WorldSpec = {
+    version: "kadmos.world.v0", name: "ResetSeed", states: [{ id: "START", initial: true }],
+    context: { n: { type: "integer", default: 0, min: 0, max: 10 } }, invariants: [],
+    transitions: [{ id: "INC", from: "START", to: "START", guard: true, directive: null, effects: ["n = n + 1"] }],
+  };
+  const exercise = (gate: Checker): void => {
+    assert.deepEqual(gate.getContext(), { n: 2 });
+    assert.throws(() => gate.rollbackLastStep(), /NO_CHECKER_SAVEPOINT/);
+    assert.equal(gate.step({ transitionId: "INC" }).context.n, 3);
+    const refused = gate.step({ transitionId: "BAD" });
+    assert.equal(refused.violation?.code, "INVALID_TRANSITION");
+    assert.equal(refused.violation?.shortestCounterexampleTrace.length, 2);
+    assert.throws(() => gate.reset({ n: "bad" }), /INVALID_BOUNDS/);
+    assert.equal(gate.getContext().n, 3);
+    gate.rollbackLastStep();
+    assert.equal(gate.getContext().n, 2);
+    assert.throws(() => gate.rollbackLastStep(), /NO_CHECKER_SAVEPOINT/);
+    assert.equal(gate.step({ transitionId: "INC" }).allowed, true);
+    gate.reset({ n: 4 });
+    assert.equal(gate.getContext().n, 4);
+    gate.reset({});
+    assert.equal(gate.getContext().n, 0);
+    gate.reset();
+    assert.equal(gate.getContext().n, 2);
+    gate.reset(null);
+    assert.equal(gate.getContext().n, 2);
+    assert.throws(() => gate.rollbackLastStep(), /NO_CHECKER_SAVEPOINT/);
+  };
+  exercise(createWorldChecker(world, { n: 2 }) as Checker);
+  await runGenerated(world, (WorldChecker, python) => {
+    exercise(new WorldChecker({ n: 2 }));
+    assert.deepEqual(python("import json\nfrom world_checker import WorldChecker\nc=WorldChecker({'n':2})\nvalues=[c.get_context()['n']]\ntry: c.rollback_last_step()\nexcept RuntimeError as e: values.append(str(e))\nc.step({'transitionId':'INC'})\ntry: c.reset({'n':'bad'})\nexcept ValueError as e: values.append(str(e).split(':')[0])\nvalues.append(c.get_context()['n'])\nc.rollback_last_step(); values.append(c.get_context()['n'])\nc.step({'transitionId':'INC'}); c.reset({'n':4}); values.append(c.get_context()['n'])\nc.reset({}); values.append(c.get_context()['n'])\nc.reset(); values.append(c.get_context()['n'])\nc.reset(None); values.append(c.get_context()['n'])\nprint(json.dumps(values))"), [2, "NO_CHECKER_SAVEPOINT", "INVALID_BOUNDS", 3, 2, 4, 0, 2, 2]);
+  });
+});
+
+test("constructor and reset reject malformed top-level contexts without consuming undo", async () => {
+  const world: WorldSpec = {
+    version: "kadmos.world.v0", name: "ContextAdmission", states: [{ id: "START", initial: true }],
+    context: { n: { type: "integer", default: 0, min: 0, max: 10 } }, invariants: [],
+    transitions: [{ id: "INC", from: "START", to: "START", guard: true, directive: null, effects: ["n = n + 1"] }],
+  };
+  const probes = [true, 1, "bad", [], new Date(), new Proxy({}, {})];
+  const exercise = (construct: (arg?: unknown) => Checker) => {
+    for (const bad of probes) assert.throws(() => construct(bad), /INVALID_BOUNDS/);
+    assert.deepEqual(construct(null).getContext(), { n: 0 });
+    const gate = construct({ n: 2 });
+    gate.step({ transitionId: "INC" });
+    for (const bad of probes) {
+      assert.throws(() => gate.reset(bad as never), /INVALID_BOUNDS/);
+      assert.equal(gate.getContext().n, 3);
+    }
+    let reads = 0;
+    const accessor = Object.defineProperty({}, "n", { get() { reads++; return 4; }, enumerable: true });
+    assert.throws(() => gate.reset(accessor), /INVALID_BOUNDS/);
+    assert.equal(reads, 0);
+    gate.rollbackLastStep();
+    assert.equal(gate.getContext().n, 2);
+  };
+  exercise((arg) => createWorldChecker(world, arg as never) as Checker);
+  await runGenerated(world, (WorldChecker, python) => {
+    exercise((arg) => new WorldChecker(arg as never));
+    assert.deepEqual(python("import json\nfrom world_checker import WorldChecker\ncodes=[]\nfor bad in [True,1,'bad',[],{'n':True}]:\n  try: WorldChecker(bad)\n  except ValueError as e: codes.append(str(e).split(':')[0])\nc=WorldChecker({'n':2}); c.step({'transitionId':'INC'})\nfor bad in [True,1,'bad',[],{'n':True}]:\n  try: c.reset(bad)\n  except ValueError as e: codes.append(str(e).split(':')[0])\nclass Sub(dict): pass\ntry: c.reset(Sub())\nexcept ValueError as e: codes.append(str(e).split(':')[0])\nc.rollback_last_step(); print(json.dumps([codes,c.get_context()['n']]))"), [Array(11).fill("INVALID_BOUNDS"), 2]);
+    assert.deepEqual(python("import json\nfrom world_checker import WorldChecker\nc=WorldChecker({'n':2}); c.step({'transitionId':'INC'})\na=c.context; a['n']=9\nh=c.history; h.clear()\nblocked=[]\nfor name,value in [('state','FORGED'),('context',{}),('history',[])]:\n  try: setattr(c,name,value)\n  except AttributeError: blocked.append(name)\nbefore=[c.state,c.context['n'],len(c.history)]\nc.rollback_last_step()\nprint(json.dumps([blocked,before,[c.state,c.context['n'],len(c.history)]]))"), [["state", "context", "history"], ["START", 3, 1], ["START", 2, 0]]);
+  });
+});
 
 const sequentialWorld: WorldSpec = {
   version: "kadmos.world.v0", name: "SequentialEffects",
@@ -88,7 +156,7 @@ except ValueError as e:
     reset_error = str(e).split(":")[0]
 print(json.dumps({"allowed":yes["allowed"],"context":yes["context"],"directive":yes["directiveAllowed"],"refusal":no["violation"]["code"],"trace":len(no["violation"]["shortestCounterexampleTrace"]),"state":c.get_state(),"reset_error":reset_error,"public_rollback":hasattr(c,"rollback_last_step")}))`), {
       allowed: true, context: { a: 3, b: 4, label: "DONE" }, directive: null,
-      refusal: "ILLEGAL_TRANSITION", trace: 2, state: "DONE", reset_error: "INVALID_BOUNDS", public_rollback: false,
+      refusal: "ILLEGAL_TRANSITION", trace: 2, state: "DONE", reset_error: "INVALID_BOUNDS", public_rollback: true,
     });
   });
 });
