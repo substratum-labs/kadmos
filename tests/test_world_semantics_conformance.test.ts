@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import type { WorldSpec } from "../src/types/world.js";
-import { compileWorldSpec, compileWorldSpecPython } from "../src/world_compiler.js";
+import { compileWorldSpec, compileWorldSpecPython, parseWorldSpec } from "../src/world_compiler.js";
 import { createWorldChecker } from "../src/world_checker.js";
 import { runThreePaths, type ThreePathCommand, type ThreePathOutcome } from "./world_three_path_runner.js";
 
@@ -234,6 +234,45 @@ test("three-path runner preserves invalid constructor and empty-World outcomes",
     assert.deepEqual(outcome.emittedTs, refused);
     assert.deepEqual(outcome.emittedPy, refused);
   }
+});
+
+test("own __proto__ context survives direct and YAML Worlds in all three paths", async () => {
+  const context: Record<string, { type: "integer"; default: number; min: number; max: number }> = {};
+  Object.defineProperty(context, "__proto__", { value: { type: "integer", default: 0, min: 0, max: 10 }, enumerable: true, writable: true, configurable: true });
+  const direct: WorldSpec = {
+    version: "kadmos.world.v0", name: "ProtoContext",
+    states: [{ id: "S", initial: true }], context, invariants: [],
+    transitions: [{ id: "INC", from: "S", to: "S", guard: true, directive: null, effects: ["__proto__ = __proto__ + 1"] }],
+  };
+  const yaml = `version: "kadmos.world.v0"\nname: ProtoContext\nstates:\n  - id: S\n    initial: true\ncontext:\n  __proto__:\n    type: integer\n    default: 0\n    min: 0\n    max: 10\ninvariants: []\ntransitions:\n  - id: INC\n    from: S\n    to: S\n    guard: true\n    directive: null\n    effects:\n      - "__proto__ = __proto__ + 1"\n`;
+  const parsed = parseWorldSpec(yaml);
+  assert.equal(Object.hasOwn(parsed.context, "__proto__"), true);
+  const before = JSON.parse('{"__proto__":0}') as Record<string, number>;
+  const after = JSON.parse('{"__proto__":1}') as Record<string, number>;
+  const expected: ThreePathOutcome["interpreted"] = { observations: [
+    { kind: "getContext", state: "S", context: before },
+    { kind: "step", state: "S", context: after, verdict: { allowed: true, previousState: "S", currentState: "S", context: after, directiveAllowed: null } },
+  ] };
+  for (const world of [direct, parsed]) {
+    const actual = await runThreePaths(world, [{ kind: "getContext" }, { kind: "step", request: { transitionId: "INC" } }]);
+    assert.deepEqual(actual.interpreted, expected);
+    assert.deepEqual(actual.emittedTs, expected);
+    assert.deepEqual(actual.emittedPy, expected);
+  }
+});
+
+test("ordinary contextual keyword field remains a valid three-path context", async () => {
+  const world: WorldSpec = {
+    version: "kadmos.world.v0", name: "KeywordContext",
+    states: [{ id: "S", initial: true }],
+    context: { class: { type: "integer", default: 0, min: 0, max: 10 } },
+    invariants: [], transitions: [],
+  };
+  const expected = { observations: [{ kind: "getContext", state: "S", context: { class: 0 } }] };
+  const actual = await runThreePaths(world, [{ kind: "getContext" }]);
+  assert.deepEqual(actual.interpreted, expected);
+  assert.deepEqual(actual.emittedTs, expected);
+  assert.deepEqual(actual.emittedPy, expected);
 });
 
 const sequentialWorld: WorldSpec = {

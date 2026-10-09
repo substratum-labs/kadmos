@@ -60,8 +60,9 @@ function parseYaml(source: string): unknown {
         if (Object.hasOwn(result, key)) throw new Error(`YAML syntax: duplicate key ${key}`);
         cursor++;
         const value = match[2];
-        (result as Record<string, unknown>)[key] = value !== undefined ? scalar(value) :
+        const parsedValue = value !== undefined ? scalar(value) :
           lines[cursor] && lines[cursor]!.indent > level ? block(lines[cursor]!.indent) : null;
+        Object.defineProperty(result, key, { value: parsedValue, enumerable: true, writable: true, configurable: true });
       }
       if (lines[cursor] && lines[cursor]!.indent > level) throw new Error("YAML syntax: indentation");
     }
@@ -104,7 +105,9 @@ export function compileWorldSpec(input: WorldSpecInput): WorldProjection {
     `// Compiler contract: ${KADMOS_COMPILER_CONTRACT_VERSION}`,
     'import { types as nodeTypes } from "node:util";',
     'import type { IWorldChecker, WorldContext, WorldState, TransitionStepRequest, StepVerdict, StepRecord } from "./ports.js";',
-    `const world = ${JSON.stringify(spec)} as const;`,
+    'type WorldData = { readonly context: Readonly<Record<string, { readonly type: "integer" | "string"; readonly min?: number; readonly max?: number }>>; readonly states: readonly { readonly id: string; readonly terminal?: boolean }[]; readonly invariants: readonly { readonly id: string; readonly predicate: string }[]; readonly transitions: readonly { readonly id: string; readonly from: string; readonly to: string; readonly guard: string | boolean; readonly directive: string | null; readonly effects: readonly string[] }[] };',
+    `const world: WorldData = JSON.parse(${JSON.stringify(JSON.stringify(spec))});`,
+    `const contextDefaults: Readonly<Record<string, number | string>> = JSON.parse(${JSON.stringify(defaults)});`,
     'const contextDefinitions: Record<string, { readonly type: "integer" | "string"; readonly min?: number; readonly max?: number }> = world.context;',
     'const stateDefinitions: readonly { readonly id: string; readonly terminal?: boolean }[] = world.states;',
     'const invariantDefinitions: readonly { readonly id: string; readonly predicate: string }[] = world.invariants;',
@@ -113,7 +116,7 @@ export function compileWorldSpec(input: WorldSpecInput): WorldProjection {
     generatedSanitizer,
     "export class WorldChecker implements IWorldChecker {",
     `  #state: WorldState = ${initial} as WorldState;`,
-    `  #context: Record<string, number | string> = ${defaults};`,
+    "  #context: Record<string, number | string> = { ...contextDefaults };",
     "  #history: StepRecord[] = [];",
     "  #constructorSeed: Record<string, number | string> | null = null;",
     "  #undo: { state: WorldState; context: Record<string, number | string>; history: StepRecord[] } | null = null;",
@@ -155,7 +158,7 @@ export function compileWorldSpec(input: WorldSpecInput): WorldProjection {
     "    const snapshotHistory = structuredClone(this.#history);",
     "    const rollback = () => { this.#state = snapshotState; this.#context = { ...snapshotContext }; this.#history = structuredClone(snapshotHistory); };",
     "    try {",
-    `      const candidate: Record<string, number | string> = { ...${defaults} };`,
+    "      const candidate: Record<string, number | string> = { ...contextDefaults };",
     "      let overrides: Record<string, unknown>;",
     "      if (initialContext === null || initialContext === undefined) overrides = this.#constructorSeed === null ? {} : { ...this.#constructorSeed };",
     "      else {",

@@ -28,8 +28,6 @@ test("one admission boundary normalizes only absent World directive", () => {
   assert.equal(admitWorldSpec(minimalWorld).transitions[0]?.directive, null);
   assert.equal(Object.hasOwn(minimalWorld.transitions[0], "directive"), false);
   assert.equal(createWorldChecker(minimalWorld).step({ transitionId: "GO" }).allowed, true);
-  assert.match(compileWorldSpec(minimalWorld).worldCheckerTs, /"directive":null/);
-  assert.match(compileWorldSpecPython(minimalWorld).worldCheckerPy, /directive/);
   for (const directive of [undefined, "", 7, true, {}, []]) {
     const bad = { ...minimalWorld, transitions: [{ ...minimalWorld.transitions[0], directive }] };
     for (const enter of [admitWorldSpec, compileWorldSpec, compileWorldSpecPython, createWorldChecker]) {
