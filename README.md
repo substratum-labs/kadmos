@@ -148,7 +148,7 @@ export function processPayment(
 }
 ```
 
-Calls using this checker must pass through the queue above so another step cannot replace its rollback savepoint during `await persist(...)`. Rejection leaves checker state unchanged and needs no rollback. On a physical failure after an allowed step, rollback restores only checker memory. If persistence committed before reporting failure, the caller needs a transaction, idempotency, or compensation; this example does not make database/API effects atomic with the checker.
+This checker represents one order lifecycle; Fabric must associate each order with its own governed lifecycle. Calls using one checker must pass through the queue above so another step cannot replace its rollback savepoint during `await persist(...)`. Rejection leaves checker state unchanged and needs no rollback. On a physical failure after an allowed step, rollback restores only checker memory. If persistence committed before reporting failure, the caller needs a transaction, idempotency, or compensation; this example does not make database/API effects atomic with the checker.
 
 If an agent attempts an illegal transition (e.g., dispatching goods directly from `CREATED` without payment), the gatekeeper refuses that request and returns the accepted history plus the refused attempt as a diagnostic trace.
 
@@ -173,6 +173,8 @@ pnpm run compile
 # 4. Run seeded differential checks on TypeScript and Python behavior
 pnpm run test
 ```
+
+`npx` uses the latest published package, which may differ from this source checkout. The local tarball verification described in this repository exercises the source package without publishing it.
 
 ### Equipping Your Agent (Claude Code / Cursor / Cline)
 Kadmos ships with built-in configurations that turn your coding assistant into a governed agent:

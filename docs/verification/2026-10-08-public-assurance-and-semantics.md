@@ -1,0 +1,29 @@
+# Public Assurance and Semantics Verification — 2026-10-08
+
+## Scope and versions
+
+This record covers the isolated source worktree on `plan/public-assurance-semantics-2026-10-08`, package manifest version **0.1.2**. Host: macOS arm64, Node **v26.0.0**, Python **3.14.4**, pnpm **10.32.1** via `/private/tmp/kadmos-pnpm-bin` shim. These host versions are outside parts of the repository CI matrix; this is not an all-platform pass. The parent reported GitHub latest Release **v0.1.1** on 2026-10-08. A read-only `npm view @substratum-labs/kadmos version --json` on this date returned **`"0.1.1"`**. This work did not publish, tag, push, or modify those public versions.
+
+Root CI in `.github/workflows/ci.yml` specifies Ubuntu, macOS, Windows; Node 20/22; Python 3.10–3.13. The generated scaffold CI in `src/scaffold.ts` separately requests Node 24 and pnpm 11. The clean-consumer probe ran on the host above only; no CI matrix jobs were run here. The scaffold CI version difference was observed but not changed because the local Quick Start did not reproduce a failure from it.
+
+## Executed gates
+
+| Command / probe | Observed result |
+| --- | --- |
+| `PATH=/private/tmp/kadmos-pnpm-bin:$PATH pnpm run verify` with loopback access | **248 tests, 248 pass, 0 fail**; packed NodeNext consumer typecheck 0 diagnostics; root strict TypeScript typecheck exit 0. The existing HTTP-provider tests require binding `127.0.0.1`, so this gate ran with the sandbox loopback escalation. |
+| `PATH=/private/tmp/kadmos-pnpm-bin:$PATH pnpm run test:fuzz` | Final seed **1791507639018**, 30 runs × 20 steps = **600 sampled steps**, **0 observed divergences** between interpreted TypeScript and generated Python for the order-settlement fixture. This is sampled agreement, not bisimulation proof. |
+| `PATH=/private/tmp/kadmos-pnpm-bin:$PATH pnpm pack --dry-run` | Exit 0; prepack rebuilt `dist`; package contents restricted to production `bin/`, `dist/src/`, `skills/kadmos/SKILL.md`, `README.md`, `LICENSE`, plus npm's `package.json`. A script-free npm dry-run JSON inventory counted **68 files**. No `tests/`, `examples/`, `docs/`, or `conformance/` shipped. |
+| Focused README example test | The displayed README YAML was first observed failing parser admission (`YAML syntax: invalid scalar`) due to inline maps. After correction, the displayed TypeScript compiled against the emitted checker and both tests passed. One checker retained `PAID` after a refusal; a held-then-rejected persistence callback rolled it back before a queued second call committed, while the first caller received its error. |
+| Emitted-checker conformance | **4 tests passed**: ordered effects/destination state, integer effect/reset boundaries and sanitizer stage, omitted-World-directive defect witness, and falsy property/nonfinite/eager logical expression behavior. Both generated languages were executed against literal expectations where their generated files were importable. |
+| Packed clean-consumer test | **1 test passed** using `npm pack --ignore-scripts` (no recursive build/test), local tarball install into two temporary projects, and `pnpm install --prefer-offline --ignore-scripts`. The tarball was unpacked to check every README/skill relative link against packed paths, including `LICENSE`; `docs/world-semantics-v0.md` was excluded and not linked from packed docs. Installed `kadmos demo`, `init --lang all`, starter `compile`, starter `test`, `test:worker`, and Python `unittest` exited 0. Direct TS and Python worker calls each returned `PAYMENT_PENDING`. Both installed `kadmos mcp` and `kadmos-mcp` returned JSON-RPC initialize, four tools on `tools/list`, and an allowed `kadmos_step` to `DONE`. |
+| `git diff --check` | Exit 0 before the final commit. |
+
+The first offline clean install failed because the local pnpm metadata mirror lacked `typescript` registry metadata despite cached package content. The final probe uses a local Kadmos tarball and `--prefer-offline` for dependency resolution; it does not claim a network-free install. The host npm cache had a permission issue, so the test supplies its own temporary npm cache for `npm pack`. Neither workaround links the consumer to the repository's `node_modules`.
+
+## Current behavior and known deficiencies
+
+The generated-checker tests use explicit `directive: null` for ordinary no-directive Worlds. The deliberately omitted-directive case exposed more than a runtime verdict difference: emitted TypeScript fails strict typecheck on `.directive`; emitted JavaScript, when produced despite that diagnostic, refuses a no-directive request with `UNAUTHORIZED_DIRECTIVE`; generated Python `ports.py` contains invalid `Literal[]` syntax and fails import before its checker body can raise the latent `KeyError`. An empty invariant list likewise fails emitted TypeScript strict typecheck. These are characterized in `docs/world-semantics-v0.md`; this batch did not change the generators or generated files.
+
+The generated TypeScript checker has one post-success rollback savepoint, but generated `ports.d.ts` omits it from `IWorldChecker`; generated Python and interpreted TypeScript expose no matching public post-success rollback method. Rollback only restores checker memory. The README example is a single modeled lifecycle with a serialized checker; it does not establish external or cross-process atomicity.
+
+The CLI and public demo wording now report observed traces and sampled differential results. The BullMQ README paragraph describes the actual `transitionJob` Redis Lua mechanism without claiming a verified replacement of all BullMQ scripts. Manual claim review covered README, the packaged skill, CLI output, and the packed demo; no marketing-string-only tests were added. Later Harmonia correspondence, real Fabric fault handling, templates/diagnostics, and composition/backends remain outside this implementation.

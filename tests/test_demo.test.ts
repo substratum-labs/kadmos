@@ -18,8 +18,9 @@ test("built-in self-contained runDemo executes and verifies all invariants", asy
   assert.match(output, /\[ 3\. THE FABRIC \]/);
   assert.match(output, /\[ 4\. INTEGRATION \]/);
   assert.match(output, /GATEKEEPER REFUSED UNCONSTITUTIONAL ACTION/);
-  assert.match(output, /Shortest Counterexample Trace/);
-  assert.match(output, /CEGIS: Minimal Counterexample Trace Guided Agent Self-Repair/);
+  assert.match(output, /Refusal trace: accepted prefix and refused attempt/);
+  assert.match(output, /Step 1: State=CREATED, Action=DISPATCH_GOODS/);
+  assert.match(output, /CONFIRM_PAYMENT\s+-> ALLOWED/);
   assert.match(output, /THE KADMOS SHIFT/);
 
   const cliOutput = await runCli(["demo"]);
@@ -38,4 +39,3 @@ test("CLI with no arguments or --help outputs friendly banner and quickstart", a
   const hFlag = await runCli(["-h"]);
   assert.equal(hFlag, noArgs);
 });
-
