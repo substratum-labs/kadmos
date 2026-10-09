@@ -83,6 +83,19 @@ test("three checker constructors and resets preserve resolved seed and one savep
   });
 });
 
+test("well-formed false initial invariant refuses construction on all three paths", async () => {
+  const world: WorldSpec = {
+    version: "kadmos.world.v0", name: "FalseInitialInvariant",
+    states: [{ id: "S", initial: true }], context: {},
+    invariants: [{ id: "BLOCK", predicate: "false" }], transitions: [],
+  };
+  assert.throws(() => createWorldChecker(world), /INITIAL_INVARIANT_FAILED: BLOCK/);
+  await runGenerated(world, (WorldChecker, python) => {
+    assert.throws(() => new WorldChecker(), /INITIAL_INVARIANT_FAILED: BLOCK/);
+    assert.deepEqual(python("import json\nfrom world_checker import WorldChecker\ntry: WorldChecker()\nexcept ValueError as e: print(json.dumps(str(e)))"), "INITIAL_INVARIANT_FAILED: BLOCK");
+  });
+});
+
 test("constructor and reset reject malformed top-level contexts without consuming undo", async () => {
   const world: WorldSpec = {
     version: "kadmos.world.v0", name: "ContextAdmission", states: [{ id: "START", initial: true }],

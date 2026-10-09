@@ -5,7 +5,12 @@ import { identifiers } from "./world_expression.js";
 export const KADMOS_COMPILER_CONTRACT_VERSION = "kadmos.compiler.k02.v1" as const;
 
 function copyModel(input: unknown, active: WeakSet<object> = new WeakSet()): unknown {
-  if (input === null || typeof input !== "object") return input;
+  if (input === null || input === undefined || typeof input === "string" || typeof input === "boolean") return input;
+  if (typeof input === "number") {
+    if (!Number.isFinite(input)) throw new Error("INVALID_WORLD: non-JSON number");
+    return input;
+  }
+  if (typeof input !== "object") throw new Error("INVALID_WORLD: non-data value");
   if (nodeTypes.isProxy(input)) throw new Error("INVALID_WORLD: proxy");
   if (active.has(input)) throw new Error("INVALID_WORLD: cycle");
   active.add(input);
@@ -68,6 +73,7 @@ export function admitWorldSpec(input: unknown): WorldSpec {
     if (typeof transition.id !== "string" || !transition.id) throw new Error("INVALID_WORLD: transition id");
     if (transitionIds.has(transition.id)) throw new Error(`DUPLICATE_TRANSITION_ID: ${transition.id}`);
     transitionIds.add(transition.id);
+    if (typeof transition.from !== "string" || typeof transition.to !== "string") throw new Error("INVALID_WORLD: transition endpoint");
     if (!stateIds.has(transition.from) || !stateIds.has(transition.to)) throw new Error(`UNDECLARED_STATE: ${String(transition.from)} -> ${String(transition.to)}`);
     if (states.some((state) => state.id === transition.from && state.terminal === true)) throw new Error(`TERMINAL_STATE: ${String(transition.from)}`);
     if (!Array.isArray(transition.effects) || !transition.effects.every((effect) => typeof effect === "string")) throw new Error("INVALID_WORLD: effects");
@@ -75,6 +81,7 @@ export function admitWorldSpec(input: unknown): WorldSpec {
 
   const allowed = new Set([...Object.keys(context), "state", "event", "request"]);
   for (const invariant of invariants) {
+    if (typeof invariant.id !== "string" || invariant.id.length === 0) throw new Error("INVALID_WORLD: invariant id");
     if (typeof invariant.predicate !== "string") throw new Error("INVALID_WORLD: predicate");
     for (const id of identifiers(invariant.predicate)) if (!allowed.has(id)) throw new Error(`UNDECLARED_IDENTIFIER: ${id}`);
   }

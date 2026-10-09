@@ -88,6 +88,51 @@ test("programmatic World with data-only own fields retains admission compatibili
   assert.equal(createWorldChecker(input).step({ transitionId: "GO" }).allowed, true);
 });
 
+test("shared admission rejects callable model leaves without invoking serialization hooks", () => {
+  for (const enter of [admitWorldSpec, compileWorldSpec, compileWorldSpecPython, createWorldChecker]) {
+    let calls = 0;
+    const model = { ...minimalWorld, toJSON() { calls++; return minimalWorld; } };
+    assert.throws(() => enter(model as never), /INVALID_WORLD/);
+    assert.equal(calls, 0);
+    for (const bad of [() => "hook", Symbol("hook"), 1n, Infinity, NaN]) {
+      assert.throws(() => enter({ ...minimalWorld, metadata: { nested: bad } } as never), /INVALID_WORLD/);
+    }
+    assert.doesNotThrow(() => enter({ ...minimalWorld, description: undefined } as never));
+  }
+});
+
+test("shared admission rejects malformed endpoints without caller coercion", () => {
+  for (const enter of [admitWorldSpec, compileWorldSpec, compileWorldSpecPython, createWorldChecker]) {
+    let calls = 0;
+    const endpoint = { toString() { calls++; return "MISSING"; } };
+    const model = { ...minimalWorld, transitions: [{ ...minimalWorld.transitions[0], from: endpoint }] };
+    assert.throws(() => enter(model as never), /INVALID_WORLD/);
+    assert.equal(calls, 0);
+    assert.throws(() => enter({ ...minimalWorld, transitions: [{ ...minimalWorld.transitions[0], from: {} }] } as never), /INVALID_WORLD: transition endpoint/);
+    assert.throws(() => enter({ ...minimalWorld, transitions: [{ ...minimalWorld.transitions[0], from: 0 }] } as never), /INVALID_WORLD: transition endpoint/);
+  }
+  const undeclared = { ...minimalWorld, transitions: [{ ...minimalWorld.transitions[0], from: "MISSING" }] };
+  assert.throws(() => admitWorldSpec(undeclared), /UNDECLARED_STATE: MISSING -> DONE/);
+  const yaml = `version: "kadmos.world.v0"\nname: EndpointProbe\nstates:\n  - id: S\n    initial: true\ncontext: {}\ninvariants: []\ntransitions:\n  - id: GO\n    from: S\n    to: S\n    guard: true\n    directive: null\n    effects: []\n`;
+  assert.throws(() => parseWorldSpec(yaml.replace("from: S", "from: 0")), /INVALID_WORLD: transition endpoint/);
+  assert.throws(() => parseWorldSpec(yaml.replace("to: S", "to: false")), /INVALID_WORLD: transition endpoint/);
+});
+
+test("shared admission requires nonempty string invariant IDs", () => {
+  const yamlBase = `version: "kadmos.world.v0"\nname: InvariantIdProbe\nstates:\n  - id: S\n    initial: true\ncontext: {}\ninvariants:\n  - predicate: "false"\ntransitions: []\n`;
+  for (const [invariant, source] of [
+    [{ predicate: "false" }, yamlBase],
+    [{ id: "", predicate: "false" }, yamlBase.replace('predicate: "false"', 'id: ""\n    predicate: "false"')],
+    [{ id: 0, predicate: "false" }, yamlBase.replace('predicate: "false"', 'id: 0\n    predicate: "false"')],
+  ] as const) {
+    assert.throws(() => parseWorldSpec(source), /INVALID_WORLD: invariant id/);
+    const direct = { ...minimalWorld, invariants: [invariant] };
+    for (const enter of [admitWorldSpec, compileWorldSpec, compileWorldSpecPython, createWorldChecker]) {
+      assert.throws(() => enter(direct as never), /INVALID_WORLD: invariant id/);
+    }
+  }
+});
+
 test("explicitly empty World compiles strict TS and importable Python without invented invariants", async () => {
   const world: WorldSpec = {
     version: "kadmos.world.v0", name: "EmptyWorld", states: [{ id: "START", initial: true }],
