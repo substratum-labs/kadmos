@@ -59,7 +59,41 @@ Once the World IR is frozen:
 ### Phase 4: Fabric Implementation Under Gatekeeper
 Implement the physical glue code (HTTP controllers, database persistence, Redis adapters, third-party APIs):
 1. Import `WorldChecker` into the worker or service.
-2. **Mandatory Step Hook**: Before a physical side effect, request authorization. For TypeScript, use the serialized, executable [README Fabric example](../../README.md#3-fabric-under-governance): it sends `eventPayload`, leaves refused steps untouched, and calls the generated checker's `rollbackLastStep()` immediately when persistence fails after an allowed step. Checker rollback cannot undo an external effect that already committed.
+2. **Mandatory Step Hook**: Before a physical side effect, request authorization. This TypeScript example assumes the compiled order World declares `CONFIRM_PAYMENT` from `CREATED` to `PAID`, with `directive: null` and a guard matching `event.captured_amount` to `order_amount`. The [README Fabric example](https://github.com/substratum-labs/kadmos/blob/main/README.md#3-fabric-under-governance) includes that World; the executable pattern is also included here so this skill can be copied on its own.
+
+```typescript
+import { WorldChecker } from "./world/world_checker.js";
+
+export const checker = new WorldChecker();
+let pending: Promise<void> = Promise.resolve();
+
+export function processPayment(
+  orderId: string,
+  amount: number,
+  persist: (orderId: string, state: string) => Promise<void>,
+): Promise<void> {
+  const operation = pending.then(async () => {
+    const verdict = checker.step({
+      transitionId: "CONFIRM_PAYMENT",
+      eventPayload: { captured_amount: amount },
+    });
+    if (!verdict.allowed) {
+      throw new Error(`Gatekeeper refusal: ${verdict.violation?.message}`);
+    }
+    try {
+      await persist(orderId, verdict.currentState);
+    } catch (error) {
+      checker.rollbackLastStep();
+      throw error;
+    }
+  });
+  pending = operation.then(() => undefined, () => undefined);
+  return operation;
+}
+```
+
+This checker represents one order lifecycle; Fabric must associate each order with its own governed lifecycle. All calls using this checker must pass through the queue so another successful step cannot replace its savepoint during `await persist(...)`. Refusal preserves earlier accepted state and needs no rollback. A physical failure after an allowed step rolls back checker memory immediately, while the queue remains usable and the caller receives the failure. If persistence committed before reporting failure, it needs separate transactional, idempotent, or compensating handling; checker rollback does not undo committed external effects or establish cross-process atomicity.
+
 3. In a scaffolded Python `src/worker.py`, the import path is:
    ```python
    from pathlib import Path
