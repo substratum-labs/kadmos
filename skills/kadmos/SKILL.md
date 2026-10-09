@@ -26,16 +26,16 @@ When tasked with implementing or refactoring any stateful or critical workflow, 
 ### Phase 1: Boundary & World Inference
 Do **NOT** jump directly into writing business code or modifying endpoints.
 1. Inspect the requirements or PRD.
-2. Run `kadmos infer --prd <spec.md>` or invoke MCP tool `kadmos_infer`.
+2. Run `kadmos infer <requirements-file>` or invoke MCP tool `kadmos_infer`.
 3. Synthesize or inspect the resulting `world.yaml`:
    - **States**: Closed finite enumeration (including explicit `initial` and `terminal` states).
    - **Context**: Bounded numerical/relational quantities (with `min`, `max`, `unit`, and `default`).
-   - **Invariants**: Safety predicates that must **never** be violated in any state (e.g. conservation of value, balance non-negativity).
+   - **Invariants**: Safety predicates checked at initialization and after requested transitions (e.g. conservation of value, balance non-negativity).
    - **Transitions**: Guarded transitions with directives and context update effects.
 
 ### Phase 2: Interactive Legislation & Dilemma Resolution
 If the model contains ambiguous edge cases, race conditions, or conflicting requirements:
-1. Run `kadmos legislate world.yaml --out world.yaml` or invoke MCP tool `kadmos_legislate`.
+1. Run `kadmos legislate <requirements-file> --out world.yaml` or invoke MCP tool `kadmos_legislate`; the CLI reads requirements prose and infers a candidate World before presenting dilemmas.
 2. Kadmos will surface candidate worst-case dilemmas (Option A vs Option B) for review.
 3. Present these dilemma trade-offs to the human operator for explicit legislative decision. **NEVER** silently guess or weaken invariants in secret.
 
@@ -59,42 +59,25 @@ Once the World IR is frozen:
 ### Phase 4: Fabric Implementation Under Gatekeeper
 Implement the physical glue code (HTTP controllers, database persistence, Redis adapters, third-party APIs):
 1. Import `WorldChecker` into the worker or service.
-2. **Mandatory Step Hook**: Before committing any physical side effect (e.g., executing payment capture, writing database state, releasing a lock), the Fabric code **MUST** request authorization:
-   ```typescript
-   // TypeScript Example
-   import { WorldChecker } from "./world/world_checker.js";
-
-   export async function handlePayment(orderId: string, amount: number) {
-     const verdict = checker.step({
-       transitionId: "CONFIRM_PAYMENT",
-       payload: { captured_amount: amount },
-     });
-
-     if (!verdict.allowed) {
-       // Automatic sound blame: log and rollback
-       checker.rollbackLastStep();
-       throw new Error(`Gatekeeper rejected payment: ${verdict.violation?.message}`);
-     }
-
-     // Safe to commit side effects now
-     await db.orders.update(orderId, { status: verdict.currentState });
-   }
-   ```
+2. **Mandatory Step Hook**: Before a physical side effect, request authorization. For TypeScript, use the serialized, executable [README Fabric example](../../README.md#3-fabric-under-governance): it sends `eventPayload`, leaves refused steps untouched, and calls the generated checker's `rollbackLastStep()` immediately when persistence fails after an allowed step. Checker rollback cannot undo an external effect that already committed.
+3. In a scaffolded Python `src/worker.py`, the import path is:
    ```python
-   # Python Example
-   from world.world_checker import WorldChecker
+   from pathlib import Path
+   import sys
 
-   def handle_payment(order_id: str, amount: int):
-       verdict = checker.step({
-           "transitionId": "CONFIRM_PAYMENT",
-           "payload": {"captured_amount": amount}
-       })
-       if not verdict["allowed"]:
-           checker.rollback_last_step()
-           raise RuntimeError(f"Gatekeeper rejected: {verdict.get('violation')}")
-       
-       db.orders.update(order_id, status=verdict["currentState"])
+   sys.path.insert(0, str(Path(__file__).parent / "world"))
+   from world_checker import WorldChecker
+
+   checker = WorldChecker()
+   verdict = checker.step({
+       "transitionId": "INITIATE_PAYMENT",
+       "proposedDirective": "DISPATCH_PAYMENT_GATEWAY",
+       "eventPayload": {},
+   })
+   if not verdict["allowed"]:
+       raise RuntimeError(f"Gatekeeper rejected: {verdict['violation']}")
    ```
+   This request matches the default scaffold World. For a transition with no directive, its World definition must explicitly say `directive: null`, and the request may omit `proposedDirective`. Generated Python has no public post-success rollback method; plan persistence failure handling separately before using it for physical effects.
 
 ### Phase 5: Differential Testing & CEGIS Self-Repair
 1. Run the differential fuzzer:
@@ -111,7 +94,7 @@ Implement the physical glue code (HTTP controllers, database persistence, Redis 
 ## Agent Operational Rules (Non-Bypassable Invariants)
 
 1. **Zero Silent Mutation**: If a business test fails because of a World invariant, the agent is strictly forbidden from editing `world.yaml` to weaken the rule without explicit human operator instruction.
-2. **Atomicity & Rollback**: Whenever a Fabric worker catches an exception after calling `step()`, it must immediately call `checker.rollbackLastStep()`.
+2. **Checker Rollback**: In generated TypeScript, after an allowed `step()`, a physical failure must immediately call `checker.rollbackLastStep()` before any other successful step can replace the savepoint. Do not call it after a refused step. Serialize all asynchronous users of the checker. This restores checker memory only; coordinate external effects separately. Generated Python currently has no matching public post-success method.
 3. **Seam Immutability**: All type definitions in `ports.d.ts` / `ports.py` are ground truth. If the types do not fit the requirement, re-run `infer` and `compile`, never hand-edit.
 4. **Clean Verification**: Before declaring any coding task complete, execute:
    - `pnpm test` (or `pytest`)

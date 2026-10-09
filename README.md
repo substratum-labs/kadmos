@@ -68,9 +68,21 @@ states:
     terminal: true
 
 context:
-  order_amount: { type: integer, min: 1, max: 10000000, default: 5000 }
-  escrow_balance: { type: integer, min: 0, max: 10000000, default: 0 }
-  settled_amount: { type: integer, min: 0, max: 10000000, default: 0 }
+  order_amount:
+    type: integer
+    min: 1
+    max: 10000000
+    default: 5000
+  escrow_balance:
+    type: integer
+    min: 0
+    max: 10000000
+    default: 0
+  settled_amount:
+    type: integer
+    min: 0
+    max: 10000000
+    default: 0
 
 invariants:
   - id: INV-CONSERVATION
@@ -81,6 +93,7 @@ transitions:
     from: CREATED
     to: PAID
     guard: "event.captured_amount == order_amount"
+    directive: null
     effects:
       - "escrow_balance = order_amount"
 
@@ -105,27 +118,37 @@ kadmos compile world.yaml --out src/world --lang all
 The coding agent writes application code constrained by the gatekeeper:
 
 ```typescript
-import { createWorldChecker } from "./world/world_checker.js";
+import { WorldChecker } from "./world/world_checker.js";
 
-const checker = createWorldChecker();
+export const checker = new WorldChecker();
+let pending: Promise<void> = Promise.resolve();
 
-export async function processPayment(orderId: string, amount: number) {
-  // Request authorization from the gatekeeper
-  const verdict = checker.step({
-    transitionId: "CONFIRM_PAYMENT",
-    payload: { captured_amount: amount },
+export function processPayment(
+  orderId: string,
+  amount: number,
+  persist: (orderId: string, state: string) => Promise<void>,
+): Promise<void> {
+  const operation = pending.then(async () => {
+    const verdict = checker.step({
+      transitionId: "CONFIRM_PAYMENT",
+      eventPayload: { captured_amount: amount },
+    });
+    if (!verdict.allowed) {
+      throw new Error(`Gatekeeper refusal: ${verdict.violation?.message}`);
+    }
+    try {
+      await persist(orderId, verdict.currentState);
+    } catch (error) {
+      checker.rollbackLastStep();
+      throw error;
+    }
   });
-
-  if (!verdict.allowed) {
-    // Sound rollback if rejected
-    checker.rollbackLastStep();
-    throw new Error(`Gatekeeper refusal: ${verdict.violation?.message}`);
-  }
-
-  // Safe to execute physical database and external API side effects
-  await db.orders.update(orderId, { status: verdict.currentState });
+  pending = operation.then(() => undefined, () => undefined);
+  return operation;
 }
 ```
+
+Calls using this checker must pass through the queue above so another step cannot replace its rollback savepoint during `await persist(...)`. Rejection leaves checker state unchanged and needs no rollback. On a physical failure after an allowed step, rollback restores only checker memory. If persistence committed before reporting failure, the caller needs a transaction, idempotency, or compensation; this example does not make database/API effects atomic with the checker.
 
 If an agent attempts an illegal transition (e.g., dispatching goods directly from `CREATED` without payment), the gatekeeper refuses that request and returns the accepted history plus the refused attempt as a diagnostic trace.
 
