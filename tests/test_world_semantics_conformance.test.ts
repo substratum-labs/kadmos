@@ -16,7 +16,7 @@ type Checker = {
   rollbackLastStep(): void;
 };
 
-async function runGenerated<T>(world: WorldSpec, check: (CheckerType: new () => Checker, python: (script: string, expectedFailure?: RegExp) => unknown) => T | Promise<T>, expectedCompileError?: RegExp): Promise<T> {
+async function runGenerated<T>(world: WorldSpec, check: (CheckerType: new () => Checker, python: (script: string) => unknown) => T | Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), "kadmos-semantics-"));
   try {
     const ts = compileWorldSpec(world);
@@ -31,21 +31,11 @@ async function runGenerated<T>(world: WorldSpec, check: (CheckerType: new () => 
       "--moduleResolution", "NodeNext", "--typeRoots", join(process.cwd(), "node_modules/@types"),
       "--types", "node", join(dir, "ports.d.ts"), join(dir, "world_checker.ts"),
     ], { encoding: "utf8" });
-    if (expectedCompileError) {
-      assert.notEqual(tsc.status, 0, "omitted World directive currently fails emitted TS typecheck");
-      assert.match(`${tsc.stdout}\n${tsc.stderr}`, expectedCompileError);
-    } else {
-      assert.equal(tsc.status, 0, `${tsc.stdout}\n${tsc.stderr}`);
-    }
+    assert.equal(tsc.status, 0, `${tsc.stdout}\n${tsc.stderr}`);
     const { WorldChecker } = await import(pathToFileURL(join(dir, "world_checker.js")).href);
-    const python = (script: string, expectedFailure?: RegExp): unknown => {
+    const python = (script: string): unknown => {
       const executable = process.platform === "win32" ? "python" : "python3";
       const result = spawnSync(executable, ["-B", "-c", script], { cwd: dir, encoding: "utf8" });
-      if (expectedFailure) {
-        assert.notEqual(result.status, 0, "expected generated Python import to fail");
-        assert.match(result.stderr, expectedFailure);
-        return null;
-      }
       assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
       return JSON.parse(result.stdout) as unknown;
     };
@@ -155,7 +145,7 @@ print(json.dumps({"codes":codes,"reset_error":reset_error,"min_error":min_error,
   });
 });
 
-test("omitted World directive differs from an omitted request directive", async () => {
+test("omitted World directive is canonical null while named directives remain strict", async () => {
   const world: WorldSpec = {
     version: "kadmos.world.v0", name: "OmittedWorldDirective",
     states: [{ id: "START", initial: true }, { id: "DONE" }, { id: "SENT" }],
@@ -167,12 +157,13 @@ test("omitted World directive differs from an omitted request directive", async 
   };
   await runGenerated(world, (WorldChecker, python) => {
     const gate = new WorldChecker();
-    assert.equal(gate.step({ transitionId: "GO" }).violation?.code, "UNAUTHORIZED_DIRECTIVE");
-    assert.equal(gate.getState(), "START");
+    assert.equal(gate.step({ transitionId: "GO" }).allowed, true);
+    assert.equal(gate.getState(), "DONE");
+    gate.reset();
     assert.equal(gate.step({ transitionId: "SEND" }).violation?.code, "UNAUTHORIZED_DIRECTIVE");
     assert.equal(gate.step({ transitionId: "SEND", proposedDirective: "SEND" }).allowed, true);
-    assert.equal(python("from world_checker import WorldChecker", /SyntaxError: invalid syntax/), null);
-  }, /Property 'directive' does not exist/);
+    assert.deepEqual(python("import json\nfrom world_checker import WorldChecker\nc=WorldChecker()\na=c.step({'transitionId':'GO'})\nc.reset()\nb=c.step({'transitionId':'SEND'})\nd=c.step({'transitionId':'SEND','proposedDirective':'SEND'})\nprint(json.dumps([a['allowed'],b['violation']['code'],d['allowed']]))"), [true, "UNAUTHORIZED_DIRECTIVE", true]);
+  });
 });
 
 test("generated expressions distinguish null property access and nonfinite operations", async () => {

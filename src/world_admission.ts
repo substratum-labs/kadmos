@@ -2,6 +2,8 @@ import { types as nodeTypes } from "node:util";
 import type { WorldSpec } from "./types/world.js";
 import { identifiers } from "./world_expression.js";
 
+export const KADMOS_COMPILER_CONTRACT_VERSION = "kadmos.compiler.k02.v1" as const;
+
 function copyModel(input: unknown, active: WeakSet<object> = new WeakSet()): unknown {
   if (input === null || typeof input !== "object") return input;
   if (nodeTypes.isProxy(input)) throw new Error("INVALID_WORLD: proxy");

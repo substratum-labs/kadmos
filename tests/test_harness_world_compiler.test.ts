@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { admitWorldSpec, compileWorldSpec, compileWorldSpecPython, parseWorldSpec } from "../src/world_compiler.js";
+import { KADMOS_COMPILER_CONTRACT_VERSION, admitWorldSpec, compileWorldSpec, compileWorldSpecPython, parseWorldSpec } from "../src/world_compiler.js";
 import { createWorldChecker } from "../src/world_checker.js";
 import type { WorldSpec } from "../src/types/world.js";
 
@@ -72,6 +72,33 @@ test("direct World admission applies existing schema checks before projection", 
     assert.throws(() => enter(model as never), error);
   }
   assert.throws(() => parseWorldSpec(7 as never), /INVALID_WORLD: source/);
+});
+
+test("explicitly empty World compiles strict TS and importable Python without invented invariants", async () => {
+  const world: WorldSpec = {
+    version: "kadmos.world.v0", name: "EmptyWorld", states: [{ id: "START", initial: true }],
+    context: {}, invariants: [], transitions: [],
+  };
+  const ts = compileWorldSpec(world);
+  const py = compileWorldSpecPython(world);
+  assert.equal(KADMOS_COMPILER_CONTRACT_VERSION, "kadmos.compiler.k02.v1");
+  for (const emitted of [ts.portsDts, ts.worldCheckerTs, py.portsPy, py.worldCheckerPy]) assert.match(emitted, /kadmos\.compiler\.k02\.v1/);
+  assert.match(py.portsPy, /WorldDirective = None/);
+  assert.doesNotMatch(ts.worldCheckerTs, /"predicate":"true"/);
+  const directory = mkdtempSync(join(tmpdir(), "kadmos-empty-"));
+  try {
+    writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+    writeFileSync(join(directory, "ports.d.ts"), ts.portsDts);
+    writeFileSync(join(directory, "world_checker.ts"), ts.worldCheckerTs);
+    writeFileSync(join(directory, "ports.py"), py.portsPy);
+    writeFileSync(join(directory, "world_checker.py"), py.worldCheckerPy);
+    const tsc = spawnSync(process.execPath, [join(process.cwd(), "node_modules/typescript/bin/tsc"), "--ignoreConfig", "--strict", "--skipLibCheck", "--target", "ES2022", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--typeRoots", join(process.cwd(), "node_modules/@types"), "--types", "node", join(directory, "ports.d.ts"), join(directory, "world_checker.ts")], { encoding: "utf8" });
+    assert.equal(tsc.status, 0, `${tsc.stdout}\n${tsc.stderr}`);
+    const { WorldChecker } = await import(pathToFileURL(join(directory, "world_checker.js")).href);
+    assert.equal(new WorldChecker().step({ transitionId: "UNKNOWN" }).violation.code, "INVALID_TRANSITION");
+    const python = spawnSync(process.platform === "win32" ? "python" : "python3", ["-B", "-c", "from ports import WorldDirective; from world_checker import WorldChecker; assert WorldDirective is None; assert WorldChecker().step({'transitionId':'UNKNOWN'})['violation']['code'] == 'INVALID_TRANSITION'"], { cwd: directory, encoding: "utf8" });
+    assert.equal(python.status, 0, `${python.stdout}\n${python.stderr}`);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 const fixture = readFileSync(
