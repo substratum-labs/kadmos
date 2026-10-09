@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import type { WorldSpec } from "../src/types/world.js";
 import { compileWorldSpec, compileWorldSpecPython } from "../src/world_compiler.js";
 import { createWorldChecker } from "../src/world_checker.js";
+import { runThreePaths, type ThreePathCommand, type ThreePathOutcome } from "./world_three_path_runner.js";
 
 type Checker = {
   getState(): string;
@@ -111,6 +112,115 @@ test("constructor and reset reject malformed top-level contexts without consumin
     assert.deepEqual(python("import json\nfrom world_checker import WorldChecker\ncodes=[]\nfor bad in [True,1,'bad',[],{'n':True}]:\n  try: WorldChecker(bad)\n  except ValueError as e: codes.append(str(e).split(':')[0])\nc=WorldChecker({'n':2}); c.step({'transitionId':'INC'})\nfor bad in [True,1,'bad',[],{'n':True}]:\n  try: c.reset(bad)\n  except ValueError as e: codes.append(str(e).split(':')[0])\nclass Sub(dict): pass\ntry: c.reset(Sub())\nexcept ValueError as e: codes.append(str(e).split(':')[0])\nc.rollback_last_step(); print(json.dumps([codes,c.get_context()['n']]))"), [Array(11).fill("INVALID_BOUNDS"), 2]);
     assert.deepEqual(python("import json\nfrom world_checker import WorldChecker\nc=WorldChecker({'n':2}); c.step({'transitionId':'INC'})\na=c.context; a['n']=9\nh=c.history; h.clear()\nblocked=[]\nfor name,value in [('state','FORGED'),('context',{}),('history',[])]:\n  try: setattr(c,name,value)\n  except AttributeError: blocked.append(name)\nbefore=[c.state,c.context['n'],len(c.history)]\nc.rollback_last_step()\nprint(json.dumps([blocked,before,[c.state,c.context['n'],len(c.history)]]))"), [["state", "context", "history"], ["START", 3, 1], ["START", 2, 0]]);
   });
+});
+
+test("three-path runner compares constructor seed and reset lifecycle to literal outcomes", async () => {
+  const world: WorldSpec = {
+    version: "kadmos.world.v0", name: "ThreePathReset", states: [{ id: "START", initial: true }],
+    context: { n: { type: "integer", default: 0 } }, invariants: [],
+    transitions: [{ id: "INC", from: "START", to: "START", guard: true, directive: null, effects: ["n = n + 1"] }],
+  };
+  const commands: ThreePathCommand[] = [
+    { kind: "step", request: { transitionId: "INC" } },
+    { kind: "reset", context: { n: 4 } }, { kind: "reset", context: {} },
+    { kind: "reset" }, { kind: "reset", context: null }, { kind: "rollback" },
+  ];
+  const expected: ThreePathOutcome["interpreted"] = { observations: [
+    { kind: "step", state: "START", context: { n: 3 }, verdict: { allowed: true, previousState: "START", currentState: "START", context: { n: 3 }, directiveAllowed: null } },
+    { kind: "reset", state: "START", context: { n: 4 } },
+    { kind: "reset", state: "START", context: { n: 0 } },
+    { kind: "reset", state: "START", context: { n: 2 } },
+    { kind: "reset", state: "START", context: { n: 2 } },
+    { kind: "rollback", state: "START", context: { n: 2 }, errorCode: "NO_CHECKER_SAVEPOINT" },
+  ] };
+  const outcome = await runThreePaths(world, commands, { n: 2 });
+  assert.deepEqual(outcome.interpreted, expected);
+  assert.deepEqual(outcome.emittedTs, expected);
+  assert.deepEqual(outcome.emittedPy, expected);
+});
+
+test("three paths match literal ordered diagnostics and rollback history", async () => {
+  const world: WorldSpec = {
+    version: "kadmos.world.v0", name: "TraceOracle", states: [{ id: "START", initial: true }],
+    context: { n: { type: "integer", default: 2, min: 0, max: 10 } }, invariants: [],
+    transitions: [
+      { id: "INC", from: "START", to: "START", guard: true, directive: null, effects: ["n = n + 1"] },
+      { id: "SEND", from: "START", to: "START", guard: true, directive: "SEND", effects: [] },
+    ],
+  };
+  const acceptedRecord = { step: 1, state: "START", action: "INC", eventPayload: { tag: "x" }, proposedDirective: null };
+  const outcome = await runThreePaths(world, [
+    { kind: "step", request: { transitionId: "INC", eventPayload: { tag: "x" }, proposedDirective: null } },
+    { kind: "step", request: { transitionId: "SEND", proposedDirective: "WRONG" } },
+    { kind: "reset", context: { n: "bad" } },
+    { kind: "rollback" },
+    { kind: "step", request: { transitionId: "UNKNOWN" } },
+  ], { n: 2 });
+  const expected: ThreePathOutcome["interpreted"] = { observations: [
+    { kind: "step", state: "START", context: { n: 3 }, verdict: { allowed: true, previousState: "START", currentState: "START", context: { n: 3 }, directiveAllowed: null } },
+    { kind: "step", state: "START", context: { n: 3 }, verdict: { allowed: false, previousState: "START", currentState: "START", context: { n: 3 }, directiveAllowed: null, violation: { code: "UNAUTHORIZED_DIRECTIVE", message: "Directive does not match declared transition", shortestCounterexampleTrace: [acceptedRecord, { step: 2, state: "START", action: "SEND", proposedDirective: "WRONG" }] } } },
+    { kind: "reset", state: "START", context: { n: 3 }, errorCode: "INVALID_BOUNDS" },
+    { kind: "rollback", state: "START", context: { n: 2 } },
+    { kind: "step", state: "START", context: { n: 2 }, verdict: { allowed: false, previousState: "START", currentState: "START", context: { n: 2 }, directiveAllowed: null, violation: { code: "INVALID_TRANSITION", message: "Transition 'UNKNOWN' is not legal from state 'START'", shortestCounterexampleTrace: [{ step: 1, state: "START", action: "UNKNOWN" }] } } },
+  ] };
+  assert.deepEqual(outcome.interpreted, expected);
+  assert.deepEqual(outcome.emittedTs, expected);
+  assert.deepEqual(outcome.emittedPy, expected);
+});
+
+test("three paths match literal guard, bounds, invariant, directive, and sequential-effect outcomes", async () => {
+  const world: WorldSpec = {
+    version: "kadmos.world.v0", name: "StageOracle",
+    states: [{ id: "START", initial: true }, { id: "DONE", terminal: true }],
+    context: { a: { type: "integer", default: 2, max: 5 }, b: { type: "integer", default: 0, max: 10 } },
+    invariants: [{ id: "ORDER", predicate: "b <= a + 1" }],
+    transitions: [
+      { id: "MOVE", from: "START", to: "DONE", guard: true, directive: null, effects: ["a = a + 1", "b = a + 1"] },
+      { id: "SEND", from: "START", to: "DONE", guard: true, directive: "SEND", effects: [] },
+      { id: "GUARD", from: "START", to: "DONE", guard: "event.ok == true", directive: null, effects: [] },
+      { id: "BOUNDS", from: "START", to: "DONE", guard: true, directive: null, effects: ["a = 6"] },
+      { id: "INV", from: "START", to: "DONE", guard: true, directive: null, effects: ["b = 9"] },
+    ],
+  };
+  const prior = { a: 2, b: 0 };
+  const check = async (request: Record<string, unknown>, expected: ThreePathOutcome["interpreted"]) => {
+    const outcome = await runThreePaths(world, [{ kind: "step", request }]);
+    assert.deepEqual(outcome.interpreted, expected);
+    assert.deepEqual(outcome.emittedTs, expected);
+    assert.deepEqual(outcome.emittedPy, expected);
+  };
+  await check({ transitionId: "MOVE" }, { observations: [{ kind: "step", state: "DONE", context: { a: 3, b: 4 }, verdict: { allowed: true, previousState: "START", currentState: "DONE", context: { a: 3, b: 4 }, directiveAllowed: null } }] });
+  await check({ transitionId: "SEND", proposedDirective: "SEND" }, { observations: [{ kind: "step", state: "DONE", context: prior, verdict: { allowed: true, previousState: "START", currentState: "DONE", context: prior, directiveAllowed: "SEND" } }] });
+  for (const [request, code, message, invariant] of [
+    [{ transitionId: "SEND" }, "UNAUTHORIZED_DIRECTIVE", "Directive does not match declared transition", undefined],
+    [{ transitionId: "GUARD" }, "GUARD_FAILED", "Guard condition failed", undefined],
+    [{ transitionId: "BOUNDS" }, "INVALID_BOUNDS", "Context bound failed on 'a'", undefined],
+    [{ transitionId: "INV" }, "INVARIANT_FAILED", "Invariant violation: 'ORDER'", "ORDER"],
+  ] as const) {
+    const violation = { code, message, ...(invariant === undefined ? {} : { violatedInvariant: invariant }), shortestCounterexampleTrace: [{ step: 1, state: "START", action: request.transitionId }] };
+    await check(request, { observations: [{ kind: "step", state: "START", context: prior, verdict: { allowed: false, previousState: "START", currentState: "START", context: prior, directiveAllowed: null, violation } }] });
+  }
+});
+
+test("three-path runner preserves invalid constructor and empty-World outcomes", async () => {
+  const world: WorldSpec = {
+    version: "kadmos.world.v0", name: "EmptyOracle", states: [{ id: "START", initial: true }],
+    context: {}, invariants: [], transitions: [],
+  };
+  const expected: ThreePathOutcome["interpreted"] = { observations: [
+    { kind: "step", state: "START", context: {}, verdict: { allowed: false, previousState: "START", currentState: "START", context: {}, directiveAllowed: null, violation: { code: "INVALID_TRANSITION", message: "Transition 'UNKNOWN' is not legal from state 'START'", shortestCounterexampleTrace: [{ step: 1, state: "START", action: "UNKNOWN" }] } } },
+  ] };
+  const good = await runThreePaths(world, [{ kind: "step", request: { transitionId: "UNKNOWN" } }]);
+  assert.deepEqual(good.interpreted, expected);
+  assert.deepEqual(good.emittedTs, expected);
+  assert.deepEqual(good.emittedPy, expected);
+  for (const bad of [true, 1, "bad", [], { n: true }]) {
+    const outcome = await runThreePaths(world, [], bad);
+    const refused = { constructionError: "INVALID_BOUNDS", observations: [] };
+    assert.deepEqual(outcome.interpreted, refused);
+    assert.deepEqual(outcome.emittedTs, refused);
+    assert.deepEqual(outcome.emittedPy, refused);
+  }
 });
 
 const sequentialWorld: WorldSpec = {
