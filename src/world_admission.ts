@@ -51,6 +51,10 @@ export function admitWorldSpec(input: unknown): WorldSpec {
   const states = raw.states.map((item) => object(item, "state"));
   const invariants = raw.invariants.map((item) => object(item, "invariant"));
   const transitions = raw.transitions.map((item) => object(item, "transition"));
+  for (const state of states) {
+    if (state.initial !== undefined && typeof state.initial !== "boolean") throw new Error("INVALID_WORLD: state initial");
+    if (state.terminal !== undefined && typeof state.terminal !== "boolean") throw new Error("INVALID_WORLD: state terminal");
+  }
   if (states.filter((state) => state.initial === true).length !== 1) throw new Error("INITIAL_STATE: exactly one required");
   const stateIds = new Set(states.map((state) => state.id));
   if (stateIds.size !== states.length || [...stateIds].some((id) => typeof id !== "string")) throw new Error("INVALID_WORLD: duplicate state");

@@ -133,6 +133,37 @@ test("shared admission requires nonempty string invariant IDs", () => {
   }
 });
 
+test("state initial and terminal markers require Boolean data across all admission paths", () => {
+  const entries = [admitWorldSpec, compileWorldSpec, compileWorldSpecPython, createWorldChecker] as const;
+  for (const bad of ["false", 1, 0, null, {}, []]) {
+    const initialModel = { ...minimalWorld, states: [{ id: "START", initial: true }, { id: "DONE", initial: bad }] };
+    const terminalModel = { ...minimalWorld, states: [{ id: "START", initial: true, terminal: bad }, { id: "DONE" }] };
+    for (const enter of entries) {
+      assert.throws(() => enter(initialModel as never), /INVALID_WORLD: state initial/);
+      assert.throws(() => enter(terminalModel as never), /INVALID_WORLD: state terminal/);
+    }
+  }
+  const yaml = `version: "kadmos.world.v0"\nname: StateFlagProbe\nstates:\n  - id: START\n    initial: true\n  - id: DONE\ncontext: {}\ninvariants: []\ntransitions:\n  - id: GO\n    from: START\n    to: DONE\n    guard: true\n    directive: null\n    effects: []\n`;
+  for (const scalar of ['"false"', "1", "null", "{}", "[]"]) {
+    assert.throws(() => parseWorldSpec(yaml.replace("  - id: DONE\n", `  - id: DONE\n    initial: ${scalar}\n`)), /INVALID_WORLD: state initial/);
+    assert.throws(() => parseWorldSpec(yaml.replace("    initial: true\n", `    initial: true\n    terminal: ${scalar}\n`)), /INVALID_WORLD: state terminal/);
+  }
+});
+
+test("Boolean state markers and absent or own undefined flags preserve transition semantics", () => {
+  const valid = { ...minimalWorld, states: [{ id: "START", initial: true, terminal: false }, { id: "DONE", initial: false, terminal: true }, { id: "OTHER" }] };
+  assert.equal(admitWorldSpec(valid).states.find((state) => state.initial)?.id, "START");
+  assert.equal(createWorldChecker(valid).step({ transitionId: "GO" }).allowed, true);
+  const optionalUndefined = { ...minimalWorld, states: [{ id: "START", initial: true, terminal: undefined }, { id: "DONE", initial: undefined, terminal: undefined }] };
+  for (const enter of [admitWorldSpec, compileWorldSpec, compileWorldSpecPython, createWorldChecker]) assert.doesNotThrow(() => enter(optionalUndefined as never));
+  const terminalEdge = { ...minimalWorld, states: [{ id: "START", initial: true, terminal: true }, { id: "DONE" }] };
+  for (const enter of [admitWorldSpec, compileWorldSpec, compileWorldSpecPython, createWorldChecker]) {
+    assert.throws(() => enter(terminalEdge as never), /TERMINAL_STATE: START/);
+  }
+  const yaml = `version: "kadmos.world.v0"\nname: ValidFlags\nstates:\n  - id: START\n    initial: true\n    terminal: false\n  - id: DONE\n    initial: false\n    terminal: true\ncontext: {}\ninvariants: []\ntransitions:\n  - id: GO\n    from: START\n    to: DONE\n    guard: true\n    directive: null\n    effects: []\n`;
+  assert.equal(createWorldChecker(parseWorldSpec(yaml)).step({ transitionId: "GO" }).allowed, true);
+});
+
 test("explicitly empty World compiles strict TS and importable Python without invented invariants", async () => {
   const world: WorldSpec = {
     version: "kadmos.world.v0", name: "EmptyWorld", states: [{ id: "START", initial: true }],
