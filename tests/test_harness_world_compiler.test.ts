@@ -7,8 +7,72 @@ import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { compileWorldSpec, parseWorldSpec } from "../src/world_compiler.js";
+import { admitWorldSpec, compileWorldSpec, compileWorldSpecPython, parseWorldSpec } from "../src/world_compiler.js";
+import { createWorldChecker } from "../src/world_checker.js";
 import type { WorldSpec } from "../src/types/world.js";
+
+const minimalWorld = {
+  version: "kadmos.world.v0", name: "AdmissionProbe",
+  states: [{ id: "START", initial: true }, { id: "DONE" }],
+  context: {}, invariants: [],
+  transitions: [{ id: "GO", from: "START", to: "DONE", guard: true, effects: [] }],
+} as const;
+
+test("one admission boundary normalizes only absent World directive", () => {
+  const yaml = `version: "kadmos.world.v0"\nname: AdmissionProbe\nstates:\n  - id: START\n    initial: true\n  - id: DONE\ncontext: {}\ninvariants: []\ntransitions:\n  - id: GO\n    from: START\n    to: DONE\n    guard: true\n    effects: []\n`;
+  for (const source of [yaml, yaml.replace("    effects: []", "    directive:\n    effects: []"), yaml.replace("    effects: []", "    directive: null\n    effects: []")]) {
+    const original = source;
+    assert.equal(parseWorldSpec(source).transitions[0]?.directive, null);
+    assert.equal(source, original);
+  }
+  assert.equal(admitWorldSpec(minimalWorld).transitions[0]?.directive, null);
+  assert.equal(Object.hasOwn(minimalWorld.transitions[0], "directive"), false);
+  assert.equal(createWorldChecker(minimalWorld).step({ transitionId: "GO" }).allowed, true);
+  assert.match(compileWorldSpec(minimalWorld).worldCheckerTs, /"directive":null/);
+  assert.match(compileWorldSpecPython(minimalWorld).worldCheckerPy, /directive/);
+  for (const directive of [undefined, "", 7, true, {}, []]) {
+    const bad = { ...minimalWorld, transitions: [{ ...minimalWorld.transitions[0], directive }] };
+    for (const enter of [admitWorldSpec, compileWorldSpec, compileWorldSpecPython, createWorldChecker]) {
+      assert.throws(() => enter(bad as never), /INVALID_WORLD: directive/);
+    }
+  }
+});
+
+test("direct World admission reads no hostile nested getter or proxy trap", () => {
+  for (const key of ["directive", "id", "effects"] as const) {
+    let reads = 0;
+    const transition = Object.defineProperty({ ...minimalWorld.transitions[0] }, key, { get() { reads++; return null; } });
+    const hostile = { ...minimalWorld, transitions: [transition] };
+    for (const enter of [admitWorldSpec, compileWorldSpec, compileWorldSpecPython, createWorldChecker]) {
+      assert.throws(() => enter(hostile as never), /INVALID_WORLD/);
+      assert.equal(reads, 0);
+    }
+  }
+  let traps = 0;
+  const transition = new Proxy({ ...minimalWorld.transitions[0] }, { getOwnPropertyDescriptor() { traps++; throw Error("trap"); }, get() { traps++; throw Error("trap"); } });
+  for (const enter of [admitWorldSpec, compileWorldSpec, compileWorldSpecPython, createWorldChecker]) {
+    assert.throws(() => enter({ ...minimalWorld, transitions: [transition] } as never), /INVALID_WORLD/);
+    assert.equal(traps, 0);
+  }
+});
+
+test("direct World admission applies existing schema checks before projection", () => {
+  const cases: Array<[unknown, RegExp]> = [
+    [{ ...minimalWorld, states: [{ id: "START" }, { id: "DONE" }] }, /INITIAL_STATE/],
+    [{ ...minimalWorld, transitions: [minimalWorld.transitions[0], minimalWorld.transitions[0]] }, /DUPLICATE_TRANSITION_ID/],
+    [{ ...minimalWorld, transitions: [{ ...minimalWorld.transitions[0], to: "GHOST" }] }, /UNDECLARED_STATE/],
+    [{ ...minimalWorld, transitions: [{ ...minimalWorld.transitions[0], guard: 4 }] }, /INVALID_WORLD: guard/],
+    [{ ...minimalWorld, transitions: [{ ...minimalWorld.transitions[0], effects: ["ghost = 1"] }] }, /UNDECLARED_IDENTIFIER/],
+    [{ ...minimalWorld, context: { n: { type: "integer", default: 1.5 } } }, /INVALID_BOUNDS/],
+    [{ ...minimalWorld, context: undefined }, /INVALID_WORLD: context/],
+    [{ ...minimalWorld, invariants: undefined }, /INVALID_WORLD: lists/],
+    [{ ...minimalWorld, transitions: undefined }, /INVALID_WORLD: lists/],
+  ];
+  for (const [model, error] of cases) for (const enter of [admitWorldSpec, compileWorldSpec, compileWorldSpecPython, createWorldChecker]) {
+    assert.throws(() => enter(model as never), error);
+  }
+  assert.throws(() => parseWorldSpec(7 as never), /INVALID_WORLD: source/);
+});
 
 const fixture = readFileSync(
   new URL("../../conformance/fixtures/order_settlement.world.yaml", import.meta.url),

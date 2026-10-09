@@ -29,6 +29,9 @@ export interface TransitionDef {
   readonly effects: readonly string[];
 }
 
+/** Source form; admission fills an omitted directive with null. */
+export type TransitionDefInput = Omit<TransitionDef, "directive"> & { readonly directive?: string | null };
+
 export interface WorldSpec {
   readonly version: "kadmos.world.v0";
   readonly name: string;
@@ -38,3 +41,6 @@ export interface WorldSpec {
   readonly invariants: readonly InvariantDef[];
   readonly transitions: readonly TransitionDef[];
 }
+
+/** Programmatic/YAML input before canonical admission. */
+export type WorldSpecInput = Omit<WorldSpec, "transitions"> & { readonly transitions: readonly TransitionDefInput[] };

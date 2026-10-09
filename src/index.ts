@@ -37,7 +37,7 @@ export { runDifferentialFuzzing, mulberry32, type FuzzOptions, type FuzzReport }
 export { renderWorldGraph } from "./visualizer.js";
 export { initKadmosProject, type ScaffoldOptions, type ScaffoldResult } from "./scaffold.js";
 export { runMcpServer } from "./mcp/server.js";
-export { parseWorldSpec, compileWorldSpec, type WorldProjection } from "./world_compiler.js";
+export { parseWorldSpec, compileWorldSpec, admitWorldSpec, type WorldProjection } from "./world_compiler.js";
 export { compileWorldSpecPython, type PythonWorldProjection } from "./python_compiler.js";
 export { inferBoundary, type BoundaryCategory, type BoundaryCandidate, type BoundaryInferenceResult, type BoundaryInferenceOptions, type SemanticWorldExtraction } from "./boundary_inference.js";
 export { synthesizeDilemmas, formatDilemmas, applyLegislationPatch, type LegislativeDilemma, type WorldPatch } from "./dilemma_synthesis.js";

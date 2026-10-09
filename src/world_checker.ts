@@ -1,6 +1,7 @@
 import type { IWorldChecker, StepVerdict, TransitionStepRequest, WorldContext } from "./types/ports.js";
 import type { StepRecord } from "./types/counterexample.js";
-import type { WorldSpec } from "./types/world.js";
+import type { WorldSpecInput } from "./types/world.js";
+import { admitWorldSpec } from "./world_admission.js";
 import { types as nodeTypes } from "node:util";
 import { evaluate } from "./world_expression.js";
 
@@ -56,10 +57,10 @@ export function sanitizePayload(raw: unknown, depth: number = 0, seen: Set<objec
 }
 
 export function createWorldChecker(
-  rawSpec: WorldSpec,
+  rawSpec: WorldSpecInput,
   rawInitialContext: Partial<WorldContext> = {},
 ): IWorldChecker {
-  const spec = deepFreeze(structuredClone(rawSpec));
+  const spec = deepFreeze(admitWorldSpec(rawSpec));
   const frozenDefaultContext = Object.freeze(structuredClone(rawInitialContext));
   const initial = spec.states.find((state) => state.initial)?.id;
   if (!initial) throw new Error("INITIAL_STATE: exactly one required");

@@ -1,11 +1,13 @@
-import type { WorldSpec } from "./types/world.js";
+import type { WorldSpecInput } from "./types/world.js";
+import { admitWorldSpec } from "./world_admission.js";
 
 export interface PythonWorldProjection {
   readonly portsPy: string;
   readonly worldCheckerPy: string;
 }
 
-export function compileWorldSpecPython(spec: WorldSpec): PythonWorldProjection {
+export function compileWorldSpecPython(input: WorldSpecInput): PythonWorldProjection {
+  const spec = admitWorldSpec(input);
   const literal = (values: string[]) => values.length ? `Literal[${values.map(v => JSON.stringify(v)).join(", ")}]` : "None";
   const directives = [...new Set(spec.transitions.map(t => t.directive).filter((v): v is string => v !== null))];
   const fields = Object.keys(spec.context).map(name => `${JSON.stringify(name)}: ${spec.context[name]!.type === "string" ? "str" : "int"}`).join(", ");
