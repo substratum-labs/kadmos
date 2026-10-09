@@ -74,6 +74,20 @@ test("direct World admission applies existing schema checks before projection", 
   assert.throws(() => parseWorldSpec(7 as never), /INVALID_WORLD: source/);
 });
 
+test("programmatic World with data-only own fields retains admission compatibility", () => {
+  class Model {
+    version = "kadmos.world.v0" as const;
+    name = "DataOnlyClass";
+    states = [{ id: "START", initial: true }, { id: "DONE" }];
+    context = {};
+    invariants: never[] = [];
+    transitions = [{ id: "GO", from: "START", to: "DONE", guard: true, effects: [] }];
+  }
+  const input = new Model();
+  assert.equal(admitWorldSpec(input).transitions[0]?.directive, null);
+  assert.equal(createWorldChecker(input).step({ transitionId: "GO" }).allowed, true);
+});
+
 test("explicitly empty World compiles strict TS and importable Python without invented invariants", async () => {
   const world: WorldSpec = {
     version: "kadmos.world.v0", name: "EmptyWorld", states: [{ id: "START", initial: true }],

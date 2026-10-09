@@ -7,13 +7,14 @@ export const KADMOS_COMPILER_CONTRACT_VERSION = "kadmos.compiler.k02.v1" as cons
 function copyModel(input: unknown, active: WeakSet<object> = new WeakSet()): unknown {
   if (input === null || typeof input !== "object") return input;
   if (nodeTypes.isProxy(input)) throw new Error("INVALID_WORLD: proxy");
-  const proto = Object.getPrototypeOf(input);
-  if (Array.isArray(input) ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) throw new Error("INVALID_WORLD: object");
   if (active.has(input)) throw new Error("INVALID_WORLD: cycle");
   active.add(input);
   try {
     const descriptors = Object.getOwnPropertyDescriptors(input);
-    for (const descriptor of Object.values(descriptors)) if (!("value" in descriptor)) throw new Error("INVALID_WORLD: accessor");
+    for (const key of Reflect.ownKeys(descriptors)) {
+      const descriptor = Reflect.get(descriptors, key) as PropertyDescriptor;
+      if (!("value" in descriptor)) throw new Error("INVALID_WORLD: accessor");
+    }
     if (Array.isArray(input)) {
       const result: unknown[] = [];
       for (let i = 0; i < input.length; i++) {
