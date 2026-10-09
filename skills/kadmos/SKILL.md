@@ -14,7 +14,7 @@ Instead of letting an agent generate unconstrained code and relying on fallible 
 ```
 Raw PRD / Intent ────> [1. Infer World] ────> [2. Legislate Dilemmas] ────> [3. Compile Seam]
                                                                                      │
-    Production Reality <──── [5. Bisimulation Fuzz] <──── [4. Fabric Under Gatekeeper] <─┘
+    Production Reality <──── [5. Differential Fuzz] <──── [4. Fabric Under Gatekeeper] <─┘
 ```
 
 ---
@@ -36,7 +36,7 @@ Do **NOT** jump directly into writing business code or modifying endpoints.
 ### Phase 2: Interactive Legislation & Dilemma Resolution
 If the model contains ambiguous edge cases, race conditions, or conflicting requirements:
 1. Run `kadmos legislate world.yaml --out world.yaml` or invoke MCP tool `kadmos_legislate`.
-2. Kadmos will surface 2–3 shortest worst-case dilemmas (Option A vs Option B).
+2. Kadmos will surface candidate worst-case dilemmas (Option A vs Option B) for review.
 3. Present these dilemma trade-offs to the human operator for explicit legislative decision. **NEVER** silently guess or weaken invariants in secret.
 
 ### Phase 3: Formal Seam Compilation
@@ -96,15 +96,15 @@ Implement the physical glue code (HTTP controllers, database persistence, Redis 
        db.orders.update(order_id, status=verdict["currentState"])
    ```
 
-### Phase 5: Bisimulation Testing & CEGIS Self-Repair
+### Phase 5: Differential Testing & CEGIS Self-Repair
 1. Run the differential fuzzer:
    ```bash
    kadmos test world.yaml --runs 30 --steps 10
    ```
 2. If tests fail or the Gatekeeper rejects an action:
-   - Kadmos computes the **Shortest Counterexample Trace** (e.g. `CREATED -> FULFILLED` without `PAID`).
-   - Use this algebraic counterexample to re-order your Fabric execution calls.
-   - Do **NOT** try random code changes; follow the exact sequence indicated by the shortest trace.
+   - A refusal includes the accepted step history and refused attempt as a diagnostic trace.
+   - Use the refusal code, guard, invariant, and trace to revise Fabric and retest against the declared World.
+   - The seeded differential fuzzer compares observed TypeScript and Python behavior; it is not a proof for all inputs.
 
 ---
 
