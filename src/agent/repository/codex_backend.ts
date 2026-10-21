@@ -28,6 +28,10 @@ function parseOutput(stdout: string): { malformed: boolean; usage: Usage; quota:
   }
   return { malformed: malformed || !completed, usage, quota };
 }
+/** Literal argv shared by the adapter and portable transport qualification. */
+export function codexArguments(prefixArgs: readonly string[], workspace: string): string[] {
+  return [...prefixArgs, 'exec', '--json', '--color', 'never', '--sandbox', 'workspace-write', '--cd', workspace, '-'];
+}
 export class CodexBackend implements CodingBackend {
   constructor(readonly options: BackendOptions) {}
   async run(task: CodingTask, signal: AbortSignal): Promise<CodingResult> {
@@ -53,7 +57,7 @@ export class CodexBackend implements CodingBackend {
     const startedAt = new Date().toISOString();
     const deadline = Math.min(task.deadlineEpochMs, Date.now() + task.limits.attemptMs);
     const stdoutPath = join(attemptDir, 'stdout.jsonl'), stderrPath = join(attemptDir, 'stderr.txt');
-    const argv = [...this.options.prefixArgs, 'exec', '--json', '--color', 'never', '--sandbox', 'workspace-write', '--cd', task.workspace, '-'];
+    const argv = codexArguments(this.options.prefixArgs, task.workspace);
     writeFileSync(join(attemptDir, 'stdin.txt'), task.instructions, { flag: 'wx', mode: 0o600 });
     // Probe the actual executable, not the scripted fixture prefix. Bounded and supervised too.
     const versionOut = join(attemptDir, 'version.stdout'), versionErr = join(attemptDir, 'version.stderr');

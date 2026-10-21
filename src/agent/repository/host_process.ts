@@ -15,7 +15,9 @@ function processes(): Member[] | null {
     const fields = line.trim().split(/\s+/);
     if (fields.length !== 4 || fields.slice(0, 3).some(value => !/^\d+$/.test(value))) return null;
     const pid = Number(fields[0]), ppid = Number(fields[1]), group = Number(fields[2]);
-    if (![pid, ppid, group].every(Number.isSafeInteger) || pid <= 0 || group <= 0) return null;
+    if (![pid, ppid, group].every(Number.isSafeInteger) || pid <= 0 || group < 0) return null;
+    // Linux kernel/sessionless rows may have PGID0. Keep them in inventory;
+    // only the positive child group or rooted lineage can select cleanup PIDs.
     members.push({ pid, ppid, group, state: fields[3] ?? '' });
   }
   return members;

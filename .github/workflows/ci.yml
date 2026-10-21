@@ -30,5 +30,9 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
+      - name: Record actual POSIX PGID0 inventory rows
+        if: runner.os != 'Windows'
+        run: |
+          python -c "import subprocess,json; rows=subprocess.check_output(['ps','-axo','pid=,ppid=,pgid=,stat='],text=True).splitlines(); print(json.dumps({'inventoryRows':len(rows),'pgid0Rows':[r for r in rows if len(r.split())==4 and r.split()[2]=='0']}))"
       - run: pnpm test
       - run: node bin/kadmos.js test conformance/fixtures/order_settlement.world.yaml --runs 30

@@ -667,3 +667,26 @@ Actual installed-backend A20 delivered on bf1bbc4 in two original attempts after
 Yong World approval; see the measured receipt. This F4 source was locally verified
 and fresh-read the original complete evidence for compatibility; it did not rerun the
 installed coding backend. Whole-Epic human acceptance remains pending.
+
+## F5 platform CI qualification boundary
+
+The default live target remains macOS; the frozen A20 installed Codex run used
+engine bf1bbc4. Linux CI exercises the real POSIX fixture supervisor, not an
+installed Codex backend. Linux installed-backend delivery remains unqualified.
+Windows does not support process-tree qualification: the backend refuses before
+launch, with no candidate or delivery. Its CI suite runs every legacy test plus
+repository contracts and portable argv/stdin/snapshot boundary checks, including
+the actual unsupported-platform no-launch check. POSIX runtime qualification
+files are listed as NOT_EXECUTED / unqualified on Windows and never counted PASS.
+macOS/Linux run every test, with no skips or expected failures.
+
+F4 local 772/772 did not establish remote matrix success: run39691008888 failed.
+F5 corrects PGID0 inventory validation (positive PID still required; malformed
+rows still poison qualification), adds explicit Windows test selection and gives
+finite verifier fixtures startup headroom while preserving deadline assertions.
+At F5 source check-in, local macOS Node26 verification passed 780/780.
+Configured matrix scope is 780 cases per macOS/Linux job and 276 per Windows
+job (268 unchanged legacy + five contracts + three portable boundary cases).
+Remote counts and qualification require the exact-head terminal PR checks;
+this check-in does not assert remote success. No new
+Windows supervision, model installation, runtime authority or A20 rerun.

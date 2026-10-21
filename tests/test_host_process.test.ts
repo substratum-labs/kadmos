@@ -45,3 +45,21 @@ test('D1c output I/O failure after spawn still reaps the child and refuses quali
   assert.throws(()=>process.kill(r.pid!,0));
   assert.ok(r.diagnostics.some(x=>x.includes('supervision:')));
 });
+
+// Rejecting an unrelated Linux PGID0 row must not poison the real child's closure.
+for (const row of ['99999999 0 0 S', '0 0 0 S', '-2 0 1 S', '99999999 0 -1 S', '99999999 0 1.5 S', 'malformed']) {
+  test('F5 real supervisor inventory row: '+row, {timeout: 10_000}, async t => {
+    const dir=mkdtempSync(join(tmpdir(),'f5-inventory-'));
+    const oldPath=process.env.PATH;
+    t.after(()=>{process.env.PATH=oldPath;rmSync(dir,{recursive:true,force:true});});
+    writeFileSync(join(dir,'ps'), '#!/bin/sh\n/bin/ps "$@" || exit $?\nprintf "%s\\n" '+JSON.stringify(row)+'\n', {mode:0o700});
+    process.env.PATH=dir+':'+oldPath;
+    const r=await supervise(process.execPath,['-e','setTimeout(()=>{},150)'],dir,'',join(dir,'out'),join(dir,'err'),new AbortController().signal,Date.now()+5000,100,false);
+    assert.equal(r.exitCode,0);
+    assert.equal(r.treeStopped,row==='99999999 0 0 S'?true:'unknown');
+    const receipt=JSON.parse(readFileSync(join(dir,'out.lifecycle.json'),'utf8'));
+    assert.equal(receipt.inventoryFailed,row!=='99999999 0 0 S');
+    assert.ok(receipt.tracked.every((p:{pid:number})=>p.pid>0));
+    assert.deepEqual(receipt.remaining,[]);
+  });
+}

@@ -34,7 +34,7 @@ test('verifier direct executable digest ignores absolute data argv and accepts f
 for(const mode of ['nonzero','signal','timeout','launch'])test(`verifier actual ${mode} never passes`,async t=>{
  const code=mode==='signal'?"process.kill(process.pid,'SIGTERM')":mode==='nonzero'?"console.log('requirement');process.exit(9)":'setInterval(()=>{},1000)';
  const {f,input}=setup(t,code,p=>mode==='launch'?({...p,verifiers:[{...p.verifiers[0]!,executable:join(fixHost(p),'missing')}]}):p);
- const r=await verifyCandidate({...input,limits:{...input.limits,verifierMs:150}},f.options.signal);
+ const r=await verifyCandidate({...input,limits:{...input.limits,verifierMs:3000}},f.options.signal);
  assert.notEqual(r.status,'passed');if(mode==='nonzero'){assert.equal(r.checks[0]?.process.exitCode,9);assert.equal(r.failureKind,'compile');}
  if(mode==='timeout')assert.equal(r.checks[0]?.status,'timeout');
  if(mode==='launch')assert.equal(r.checks[0]?.status,'launch_failed');
@@ -79,8 +79,10 @@ test('verifier cancellation waits for actual host-script readiness and stops its
  } finally {controller.abort();await running;}
 });
 test('verifier shares original deadline across commands and does not reset per check',async t=>{
- const {f,input}=setup(t,'setTimeout(()=>{},180)',p=>({...p,verifiers:[p.verifiers[0]!,{...p.verifiers[0]!,id:'second'}]}));
- const r=await verifyCandidate({...input,limits:{...input.limits,verifierMs:350}},f.options.signal);
+ // Each command fits a fresh 5s budget; their sum exceeds the one original budget.
+ // Headroom covers real CI startup without weakening the reset-deadline trap.
+ const {f,input}=setup(t,"setTimeout(()=>{},process.argv.includes('slow')?3500:2000)",p=>({...p,verifiers:[p.verifiers[0]!,{...p.verifiers[0]!,id:'second',argv:[...p.verifiers[0]!.argv,'slow']}]}));
+ const r=await verifyCandidate({...input,limits:{...input.limits,verifierMs:5000}},f.options.signal);
  assert.notEqual(r.status,'passed');assert.equal(r.checks[0]?.status,'passed');assert.ok(r.checks.length<2 || r.checks[1]?.status==='timeout');
 });
 test('verifier refuses genuinely frozen empty check set',async t=>{
