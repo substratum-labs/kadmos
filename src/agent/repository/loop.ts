@@ -11,6 +11,7 @@ import { verifyCandidate } from './verify.js';
 import { classifyFailure } from './feedback.js';
 import { validateDelivery } from './artifacts.js';
 import { copy } from './evidence.js';
+import { createControl, detachBackend } from './control.js';
 
 function logData(path:string,options:RepositoryRunOptions,workspace:string):string {
  const fd=openSync(hostPath(path,workspace,options.policy),constants.O_RDONLY|constants.O_NOFOLLOW);
@@ -19,7 +20,7 @@ function logData(path:string,options:RepositoryRunOptions,workspace:string):stri
 /** Host-owned serialized fixed-World loop. Model prose never conveys approval or acceptance. */
 export async function runRepositoryTask(given: RepositoryRunOptions): Promise<RepositoryRunRecord> {
  // Detach all immutable inputs before the first backend await; the backend and signal are capabilities.
- const options={...copy({...given,backend:null,signal:null}),backend:given.backend,signal:given.signal} as RepositoryRunOptions;
+ const options={...copy({...given,backend:null,signal:null}),backend:detachBackend(given.backend),signal:given.signal} as RepositoryRunOptions;
  const now=Date.now();
  let record:RepositoryRunRecord={schema:REPOSITORY_CONTRACT,runId:options.runId,status:'incomplete',limits:options.limits,startedAt:new Date(now).toISOString(),deadlineEpochMs:now+options.limits.overallMs,attempts:[],revisions:[options.revision],effects:[],delivery:null,diagnostics:[]};
  let owned=false,projection=false,lock='',workspace='',root='';
@@ -49,6 +50,7 @@ export async function runRepositoryTask(given: RepositoryRunOptions): Promise<Re
   const identity={...options,workspace,revisionId:options.revision.id};
   const baseline=captureIdentity(identity);
   createVerificationContext({...identity,expected:baseline});
+  createControl({...options,artifactDir:root,workspace});
   checkpointRun(storage,record);
   for(let index=0;index<header.limits.maxAttempts;index++) {
    if(options.signal.aborted || Date.now()>=header.deadlineEpochMs){diagnose(options.signal.aborted?'controller cancelled before attempt':'original run deadline exhausted','incomplete');checkpointRun(storage,record);break;}

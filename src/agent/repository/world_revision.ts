@@ -5,6 +5,9 @@ import { compileWorldSpec, parseWorldSpec } from '../../world_compiler.js';
 import type { ApprovedWorldChange, Digest, FileIdentity, OperatorDecision, WorldChangeInput, WorldChangeProposal, WorldRevision } from './contracts.js';
 import { readVerificationContext } from './context.js';
 import { readAtomicJson } from './store.js';
+import { fileRef } from './evidence.js';
+import { readControl, freezeControlData, type OriginalControl } from './control.js';
+import { captureIdentity } from './identity.js';
 import { containsPath, hashBytes, safePath } from './workspace.js';
 
 function requireValue(ok: boolean, why: string): asserts ok { if (!ok) throw new Error(why); }
@@ -149,4 +152,39 @@ export function activateWorldRevision(input: ApprovedWorldChange): WorldRevision
   const fd=openSync(dir,constants.O_RDONLY);try{fsyncSync(fd);}finally{closeSync(fd);}
   return result;
  } catch { return {...input.current,state:'rejected'}; }
+}
+
+/** Read-only archive validation. Active labels are never controller authority. */
+export function readApprovedActivation(input:{readonly control:OriginalControl;readonly currentRevision:WorldRevision;readonly requestedRevision:WorldRevision}):WorldRevision {
+ object(input,['control','currentRevision','requestedRevision']);
+ const c=readControl({artifactDir:input.control.artifactDir,runId:input.control.runId});
+ requireValue(isDeepStrictEqual(c,input.control),'original control disagreement');
+ // E2a supports one approved successor of the original revision. Later chains need durable controller history.
+ requireValue(isDeepStrictEqual(input.currentRevision,c.initialRevision),'stale controller base');
+ captureIdentity({...c.roles,workspace:c.source,policy:c.policy,revisionId:c.initialRevision.id,baseline:c.baseline});
+ const requested=input.requestedRevision;id(requested.id);id(requested.proposalId);
+ const root=c.artifactDir,dir=absolute(join(root,'inputs','revisions',c.runId,requested.id,'activation'));
+ requireValue(isDeepStrictEqual(readdirSync(dir).sort(),['record.json','seam','world.yaml']),'partial/stranded activation archive');
+ const retained=object(JSON.parse(utf8(bytes(join(dir,'record.json')))),['schema','runId','proposalDigest','requirements','decisionPath','decisionDigest','decision','revision']);
+ requireValue(retained.schema==='kadmos.host-world-activation.v1' && retained.runId===c.runId && retained.requirements===c.baseline.requirements && isDeepStrictEqual(retained.revision,requested),'activation binding mismatch');
+ const pd=proposalDir(root,c.runId,requested.proposalId),record=object(JSON.parse(utf8(bytes(join(pd,'record.json')))),['schema','proposal']);
+ requireValue(record.schema==='kadmos.host-world-proposal.v1','invalid proposal schema');
+ const p=loadProposal(record.proposal as WorldChangeProposal);
+ requireValue(p.artifactDir===root && p.runId===c.runId && p.proposalId===requested.proposalId && isDeepStrictEqual(p.base,input.currentRevision) && p.requirements===c.baseline.requirements && p.proposalDigest===retained.proposalDigest,'proposal/controller mismatch');
+ requireValue(requested.id===`r-${p.proposalDigest.slice(7)}` && requested.parentId===p.base.id && requested.worldPath===join(dir,'world.yaml') && isDeepStrictEqual(requested.seamPaths,[join(dir,'seam')]),'activation location/ancestry mismatch');
+ const stale=canonicalReceipts(requested.staleReceiptIds);
+ requireValue(isDeepStrictEqual(stale,requested.staleReceiptIds) && p.base.staleReceiptIds.every(x=>stale.includes(x)),'invalid archived stale receipt IDs');
+ requireValue(requested.world===p.patchDigest && bytes(requested.worldPath).equals(Buffer.from(p.patch)),'archived World differs from proposal');
+ revision(requested);
+ requireValue(isDeepStrictEqual(readdirSync(join(dir,'seam')).sort(),['ports.d.ts','world_checker.ts']),'unexpected archived seam');
+ const decisionPath=retained.decisionPath;requireValue(typeof decisionPath==='string','invalid archived decision path');
+ const approved=decision({proposal:p,current:input.currentRevision,decisionPath,decisionsDir:c.decisionsDir,runId:c.runId,historicalReceiptIds:stale});
+ requireValue(hashBytes(bytes(decisionPath))===retained.decisionDigest && isDeepStrictEqual(approved,retained.decision),'original decision evidence changed/unavailable');
+ // Reject hardlinks as well as symlinks for every retained archive/proposal/base/decision file.
+ for(const path of [join(dir,'record.json'),requested.worldPath,join(dir,'seam','ports.d.ts'),join(dir,'seam','world_checker.ts'),join(pd,'record.json'),join(pd,'patch.yaml')])fileRef(root,path);
+ fileRef(c.decisionsDir,decisionPath);
+ for(const path of [p.base.worldPath,...p.base.seamPaths.flatMap(role=>lstatSync(role).isDirectory()?readdirSync(role).map(name=>join(role,name)):[role])]){
+  requireValue(lstatSync(absolute(path)).nlink===1,'aliased original input');
+ }
+ return freezeControlData(JSON.parse(JSON.stringify(requested)) as WorldRevision);
 }
