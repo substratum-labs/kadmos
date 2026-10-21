@@ -1,9 +1,9 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { InputBinding, RepositoryRunOptions, RepositoryRunRecord } from './contracts.js';
 import { readControl } from './control.js';
-import { readApprovedActivation } from './world_revision.js';
+import { readApprovedActivation, seamSlots } from './world_revision.js';
 import { readRunCheckpoint, readCompleteRun, beginRevision, commitRevision } from './publication.js';
 import { readVerificationContext, createVerificationContext } from './context.js';
 import { captureIdentity } from './identity.js';
@@ -65,8 +65,9 @@ export function prepareContinuation(options:RepositoryRunOptions,onHistory:(reco
  insist(isDeepStrictEqual(captureIdentity({...c.roles,...storage,revisionId:c.initialRevision.id,baseline:c.baseline}),actual),'reconstruction differs from recorded candidate');
  const map=(declared:string)=>safePath(join(storage.workspace,relative(resolve(c.policy.sourceRoot),resolve(declared))));
  writeFileSync(map(c.roles.worldPath),readFileSync(revision.worldPath));
- // Original role layout can be a directory or the two individually declared files.
- for(const role of c.roles.seamPaths){const path=map(role);const st=lstatSync(path);if(st.isDirectory()){for(const name of readdirSync(path)){insist(['ports.d.ts','world_checker.ts'].includes(name),'unexpected seam layout');writeFileSync(safePath(join(path,name)),readFileSync(join(revision.seamPaths[0]!,name)));chmodSync(join(path,name),0o644);}}else {const name=basename(path);insist(['ports.d.ts','world_checker.ts'].includes(name),'unexpected seam role');writeFileSync(path,readFileSync(join(revision.seamPaths[0]!,name)));chmodSync(path,0o644);}}
+ // Archive validation guarantees the exact frame and logical slots before the intent fence.
+ const originalSlots=seamSlots(c.roles.seamPaths),archivedSlots=seamSlots(revision.seamPaths);
+ for(const slot of originalSlots){const archived=archivedSlots.find(x=>x.frame===slot.frame);insist(archived && archived.name===slot.name,'archive slot mismatch');const path=safePath(join(storage.workspace,relative(c.source,slot.path)));writeFileSync(path,readFileSync(archived.path));chmodSync(path,archived.executable?0o755:0o644);}
  const identity={...c.roles,...storage,revisionId:revision.id};const baseline=captureIdentity(identity);
  insist(baseline.world===revision.world && baseline.seam===revision.seam && baseline.requirements===c.baseline.requirements && baseline.policy===c.baseline.policy,'new revision binding mismatch');
  createVerificationContext({...identity,expected:baseline});commitRevision(storage,revision);

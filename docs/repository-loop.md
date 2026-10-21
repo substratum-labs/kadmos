@@ -37,9 +37,9 @@ Status below describes current implementation; planned behavior grants no author
 - **Implemented D2a, pending review:** `classifyFailure(VerificationReceipt) -> FailureRoute` chooses `CODE_REPAIR`,
   `WORLD_CHANGE_REQUIRED`, `CORE_MISMATCH`, `ENVIRONMENT_BLOCKED` or `NEEDS_REVIEW`.
   A route is evidence routing, never World or compiler authority.
-- **Planned E; current stub returns invalid pending digests:** `proposeWorldChange(WorldChangeInput) -> WorldChangeProposal` records a rationale
+- **Implemented E, pending independent review:** `proposeWorldChange(WorldChangeInput) -> WorldChangeProposal` records a rationale
   and exact replacement World YAML bytes (no executable patch language).
-- **Planned E; current stub returns pending, never activates:** `activateWorldRevision(ApprovedWorldChange) -> WorldRevision` loads a trusted
+- **Implemented E, pending independent review:** `activateWorldRevision(ApprovedWorldChange) -> WorldRevision` loads a trusted
   operator record, validates all bound IDs/digests and that decisionPath is inside the separately
   trusted decisionsDir (with no symlink traversal), freezes a new World and
   independently regenerated seam, and marks historical receipt IDs stale.
@@ -124,9 +124,9 @@ only the macOS host probe is currently qualified. No universal containment claim
 
 ## Input files, decisions and artifacts
 
-Implemented: `kadmos repo run --input <run.json>`. Planned commands are
-`propose-world --input <proposal.json>`, `approve-world --input <decision.json>`,
-`reject-world --input <decision.json>` and `continue --input <continue.json>`.
+Implemented: `kadmos repo run --input <run.json>`,
+`propose-world --input <proposal.json>`, `approve-world --input <decision.json> --artifact-dir <hostRoot>`,
+`reject-world --input <decision.json> --artifact-dir <hostRoot>` and `continue --input <continue.json>`.
 Run input uses `schema: "kadmos.repository.v1"`, `runId`, absolute `source`,
 `artifactDir`, `requirementsPath`, `worldPath`, nonempty `seamPaths`, `instructions`,
 `policy`, `backend` and `revisionId`. See `repository-input.schema.json` for nested
@@ -139,10 +139,8 @@ is constructed from actual frozen World/seam digests, without World activation.
 Backend config is `{executable, prefixArgs}`: production prefix is `[]`; a trusted
 scripted launcher must explicitly supply its prefix. The backend adds only the
 frozen installed CLI argv above and inherits operator configuration. SIGINT/SIGTERM
-abort the controller and reach the shared supervisor. No continuation or approval
-command is implemented. JSON output gives exact run `status`, `runId`, canonical
-`artifactDir`, `workspace`, attempts and delivery/diagnostics. The bin exits 0 only
-for delivered; all other run statuses exit 1. Delivery requires complete-run
+abort the controller and reach the shared supervisor. Continuation and deliberate operator decision commands use the original frozen control described below. JSON output gives exact run `status`, `runId`, canonical
+`artifactDir`, `workspace`, attempts and delivery/diagnostics. The bin exits 0 for delivered run/continue results and completed proposal/decision commands (including deliberate rejection); all other run/continue statuses exit 1. Delivery requires complete-run
 readback, never the display projection or process exit alone. Continue identifies run/artifact directory and exact
 revision; it loads immutable recorded inputs and the original budget. No stdin
 or candidate-authored approval is accepted automatically.
@@ -499,3 +497,18 @@ The host preserves the previous physical workspace, reconstructs a fresh clean b
 A create-once generation reservation under `publication/<run>/generations/00000001` fences the original complete marker before workspace mutation. Intent, preserved workspace, new context/switch, checkpoints, manifest and complete are distinct from the original publication. Complete is last; current readback independently checks the new revision's actual backend and verifier evidence. Missing/partial intent, switch or publication never falls back to the old complete. Original receipts remain historical and cannot deliver a different current revision, regardless of the archived stale-receipt subset. Derived staleness is retained separately in the intent; archived WorldRevision metadata remains exact.
 
 Compatibility ruling: public `RepositoryRunRecord` and `WorldRevision` shapes stay unchanged. Initial D fixed-World readback remains supported. This internal v1 supports only one successor rooted in the initial durable history; a second successor is explicitly refused even if independently approved. An interrupted reservation requires trusted host recovery; no automatic crash repair is claimed. Host records are integrity evidence under the existing trusted local operator assumption, not signatures or malicious same-user isolation. Direct continuation does not add `propose`/`approve`/`reject`/`continue` CLI commands; E2c owns those. No business World approval or installed coding-agent invocation is implied by SCRIPTED tests.
+
+
+## E2c host CLI and seam frames (pending independent review)
+
+The four commands above are implemented. Proposal and continuation JSON use the exact frozen schema; decision JSON remains the exact nine-field object with no schema or artifact locator. **Class C CLI-context clarification:** `approve-world` and `reject-world` require `--artifact-dir <hostRoot>` after `--input <decision.json>`. This flag only locates the original control for the stated run. It is not operator permission and cannot override the original `decisionsDir`. The previously underspecified locator is explicit rather than inferred from cwd, global registries, candidate metadata or filesystem scans. Unknown arguments/fields refuse. Host input files must be absolute, regular, unaliased, and outside source/candidate; system `/var` and `/tmp` aliases retain existing canonical handling.
+
+`propose-world` resolves base paths and roles exclusively from `readControl` and validated original checkpoints/context. It checks current base IDs/digests/requirements, original remaining budget, source/candidate and supported pause route before reserving a proposal. A new root is never adopted. This bounded v1 supports one successor: after any generation reservation/use, further proposal/decision/continuation requests refuse early. Completed original runs may also propose a successor while budget remains; their complete receipt is validated before proposal.
+
+A deliberate host `approve-world` or `reject-world` validates command, nonempty operator, canonical millisecond UTC time and all retained proposal/base/digest bindings using the same validator as archive readback. It creates exactly one trusted decision at `<original decisionsDir>/<runId>/<proposalId>/record.json`. Replays, conflicting approval/rejection, overwrite and cross-run bindings refuse. Approval then creates the immutable E1 archive with actual historical verifier-attempt receipt IDs (`runId/attemptId`); rejection preserves the current World and creates no active archive/controller generation. An activation failure retains its decision reservation for explicit host recovery. Candidate-authored JSON and model prose never automatically become approval. This trusted local operator protocol supplies integrity checks, not authentication against a malicious same-user host process.
+
+`continue` accepts only `{schema,runId,artifactDir,revisionId}`. It loads the requested stored activation and exact original control/history, constructs the saved built-in backend and process-local signal, and passes original source/roles/instructions/policy/limits/decision root into the existing controller. Opaque host capabilities cannot be reconstructed by the CLI. SIGINT/SIGTERM propagate and listeners are removed on exit. Original attempt count/start/deadline are never renewed; operator wait consumes the deadline. Delivered output requires a fresh `readCompleteRun` whose revision/World/seam tuple and last revision equal the requested archive. An old root complete is never a fallback.
+
+New archives preserve the existing seam hash frame: declared role index, root-relative path (basename for individual files), and executable bit. Standard single-directory archive paths/bytes remain compatible. Individual files in either order, nested directories and multiple nonempty roots retain their exact frame. Strict readback derives expected archive locations and the entire directory/file set from validated original roles, then validates compiler bytes, modes, hashes and decision evidence. Continuation materializes by those logical generated slots at the original lexical roles. An empty declared role root is outside this bounded archive format and is refused before archive reservation or continuation intent; no hashes or old contexts are rewritten. Empty subdirectories within a nonempty role are not part of the identity frame and are not archived.
+
+All worker demonstrations are SCRIPTED backend/operator fixtures. No actual business World decision, Yong approval, installed coding-agent qualification or production mutation is implied. Parent physical Grok reviews assembled Task E; F still owns HTTP reconciliation/A18 and the later A20 live gate.

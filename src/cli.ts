@@ -32,6 +32,8 @@ ${bold(cyan(" |_|\\_\\__,_| \\__,_|_|_|_\\___/\\___/         "))}
 
 ${bold("Commands:")}
   ${cyan("repo run")} --input <run.json>        Run fixed-World repository generation and verification
+  ${cyan("repo propose-world|continue")} --input <file.json>
+  ${cyan("repo approve-world|reject-world")} --input <decision.json> --artifact-dir <hostRoot>
   ${cyan("demo")}                                Run 10-second interactive hallucination & repair walkthrough
   ${cyan("init")} [dir] [--template <tpl>]       Scaffold a new governed project
   ${cyan("compile")} <world.yaml> --out <dir>    Compile World model into TypeScript and Python seams

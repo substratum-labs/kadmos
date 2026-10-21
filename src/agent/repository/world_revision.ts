@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { compileWorldSpec, parseWorldSpec } from '../../world_compiler.js';
@@ -32,22 +32,51 @@ function projection(raw: string): Record<string,string> {
  requireValue(typeof raw==='string' && Buffer.from(raw,'utf8').toString('utf8')===raw,'invalid replacement World UTF-8');
  const p=compileWorldSpec(parseWorldSpec(raw));return {'ports.d.ts':p.portsDts,'world_checker.ts':p.worldCheckerTs};
 }
-/** Same seam identity convention as captureIdentity, without source-role remapping. */
-function seamIdentity(paths: readonly string[], generated: Record<string,string>): Digest {
+/** Logical generated slots retain the existing declared-root index, relative path and mode frame. */
+export function seamSlots(paths:readonly string[]):{path:string;frame:string;name:string;executable:boolean}[] {
+ const slots:{path:string;frame:string;name:string;executable:boolean}[]=[],seen=new Set<string>(),names=new Set<string>();
  requireValue(Array.isArray(paths) && paths.length>0,'seam paths required');
- const files: FileIdentity[]=[],seen=new Set<string>(),names=new Set<string>();
  paths.forEach((declared,index)=>{
-  const root=absolute(declared);
   const walk=(path:string,suffix:string):void=>{
    const full=absolute(path),st=lstatSync(full);
    if(st.isDirectory()){for(const name of readdirSync(full).sort())walk(join(full,name),suffix?`${suffix}/${name}`:name);return;}
-   requireValue(st.isFile() && !seen.has(full.toLowerCase()),'duplicate/invalid seam file');seen.add(full.toLowerCase());
-   const name=basename(full);requireValue(Object.hasOwn(generated,name) && !names.has(name),'unexpected/duplicate generated seam');names.add(name);
-   const raw=bytes(full);requireValue(raw.equals(Buffer.from(generated[name]!)),'generated seam differs from World');
-   files.push({path:`${index}/${suffix||name}`,sha256:hashBytes(raw),executable:(st.mode&0o111)!==0});
-  };walk(root,'');
+   requireValue(st.isFile() && st.nlink===1 && !seen.has(full.toLowerCase()),'duplicate/invalid seam file');seen.add(full.toLowerCase());
+   const name=basename(full);requireValue(['ports.d.ts','world_checker.ts'].includes(name) && !names.has(name),'unexpected/duplicate generated seam');names.add(name);
+   slots.push({path:full,frame:`${index}/${suffix||name}`,name,executable:(st.mode&0o111)!==0});
+  };walk(declared,'');
  });
- requireValue(names.size===2,'incomplete TypeScript seam');files.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);return hashBytes(JSON.stringify(files));
+ requireValue(names.size===2,'incomplete TypeScript seam');return slots.sort((a,b)=>a.frame<b.frame?-1:a.frame>b.frame?1:0);
+}
+function seamIdentity(paths:readonly string[],generated:Record<string,string>):Digest {
+ const files:FileIdentity[]=seamSlots(paths).map(slot=>{
+  const raw=bytes(slot.path);requireValue(raw.equals(Buffer.from(generated[slot.name]!)),'generated seam differs from World');
+  return {path:slot.frame,sha256:hashBytes(raw),executable:slot.executable};
+ });return hashBytes(JSON.stringify(files));
+}
+/** Derive archive locations solely from validated base roles, never from archive metadata. */
+function archiveLayout(base:WorldRevision,dir:string,generated:Record<string,string>) {
+ const slots=seamSlots(base.seamPaths);
+ requireValue(base.seamPaths.every((_,i)=>slots.some(slot=>slot.frame.startsWith(`${i}/`))),'unsupported empty declared seam role');
+ const seamPaths=base.seamPaths.map((role,i)=>{
+  const root=base.seamPaths.length===1?join(dir,'seam'):join(dir,'seam',String(i));
+  return lstatSync(role).isDirectory()?root:join(root,basename(role));
+ });
+ const files=slots.map(slot=>{
+  const index=Number(slot.frame.split('/')[0]),suffix=slot.frame.slice(slot.frame.indexOf('/')+1);
+  const role=base.seamPaths[index]!;
+  return {...slot,path:lstatSync(role).isDirectory()?join(seamPaths[index]!,suffix):seamPaths[index]!,bytes:generated[slot.name]!};
+ });
+ const seam=hashBytes(JSON.stringify(files.map(f=>({path:f.frame,sha256:hashBytes(f.bytes),executable:f.executable}))));
+ return {seamPaths,files,seam};
+}
+function archiveFiles(root:string):string[] {
+ const result:string[]=[];
+ const walk=(dir:string):void=>{for(const name of readdirSync(absolute(dir)).sort()){const full=absolute(join(dir,name)),st=lstatSync(full);if(st.isDirectory()){result.push(full+'/');walk(full);}else {requireValue(st.isFile(),'invalid archive file');result.push(full);}}};walk(root);return result.sort();
+}
+function expectedArchiveFiles(root:string,files:readonly string[]):string[] {
+ const paths=new Set(files);
+ for(const file of files){let parent=dirname(file);while(parent!==root){requireValue(containsPath(root,parent),'archive location escapes');paths.add(parent+'/');parent=dirname(parent);}}
+ return [...paths].sort();
 }
 function revision(value: WorldRevision): void {
  object(value,['id','world','seam','parentId','proposalId','worldPath','seamPaths','state','staleReceiptIds']);
@@ -121,12 +150,30 @@ function decision(input: ApprovedWorldChange): OperatorDecision {
   const rp=absolute(role),parent=lstatSync(rp).isDirectory()?rp:dirname(rp);
   requireValue(!containsPath(parent,root),'decision root overlaps source roles');
  }
- const d=object(JSON.parse(utf8(bytes(path))),['command','operator','runId','proposalId','proposalDigest','baseRevisionId','baseWorld','patchDigest','recordedAt']);
+ return validateOperatorDecision(JSON.parse(utf8(bytes(path))),input.proposal,'approve-world',input.runId);
+}
+/** Shared frozen nine-field validator for host commands and archive readback. */
+export function validateOperatorDecision(value:unknown,p:WorldChangeProposal,command:OperatorDecision['command'],runId:string):OperatorDecision {
+ const d=object(value,['command','operator','runId','proposalId','proposalDigest','baseRevisionId','baseWorld','patchDigest','recordedAt']);
  text(d.operator);text(d.recordedAt);
  requireValue(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(d.recordedAt) && new Date(d.recordedAt).toISOString()===d.recordedAt,'invalid operator time');
- const p=input.proposal;
- requireValue(d.command==='approve-world' && d.runId===input.runId && d.runId===p.runId && d.proposalId===p.proposalId && d.proposalDigest===p.proposalDigest && d.baseRevisionId===p.base.id && d.baseWorld===p.base.world && d.patchDigest===p.patchDigest,'operator approval mismatch');
+ requireValue(d.command===command && d.runId===runId && d.runId===p.runId && d.proposalId===p.proposalId && d.proposalDigest===p.proposalDigest && d.baseRevisionId===p.base.id && d.baseWorld===p.base.world && d.patchDigest===p.patchDigest,'operator decision mismatch');
  return d as unknown as OperatorDecision;
+}
+export function readWorldProposal(input:{artifactDir:string;runId:string;proposalId:string}):WorldChangeProposal {
+ const root=absolute(input.artifactDir),dir=proposalDir(root,input.runId,input.proposalId);
+ fileRef(root,join(dir,'record.json'));fileRef(root,join(dir,'patch.yaml'));
+ const record=object(JSON.parse(utf8(bytes(join(dir,'record.json')))),['schema','proposal']);
+ requireValue(record.schema==='kadmos.host-world-proposal.v1','invalid proposal schema');
+ const p=loadProposal(record.proposal as WorldChangeProposal);
+ requireValue(p.artifactDir===root && p.runId===input.runId && p.proposalId===input.proposalId,'proposal location mismatch');return p;
+}
+/** Requested ID only locates an archive; full original-control validation conveys its authority. */
+export function readRequestedActivation(control:OriginalControl,revisionId:string):WorldRevision {
+ id(revisionId);const path=join(control.artifactDir,'inputs','revisions',control.runId,revisionId,'activation','record.json');fileRef(control.artifactDir,path);
+ const record=JSON.parse(utf8(bytes(path))) as {revision:WorldRevision};
+ requireValue(record.revision?.id===revisionId,'requested revision mismatch');
+ return readApprovedActivation({control,currentRevision:control.initialRevision,requestedRevision:record.revision});
 }
 /** Standalone archive creation grants neither controller continuation nor delivery. */
 export function activateWorldRevision(input: ApprovedWorldChange): WorldRevision {
@@ -140,13 +187,11 @@ export function activateWorldRevision(input: ApprovedWorldChange): WorldRevision
   const dir=absolute(join(p.artifactDir,'inputs','revisions',p.runId,revisionId,'activation'));
   // No context reservation here: E2 owns the sibling verification-context directory.
   requireValue(!existsSync(dir),'activation reservation already exists');
-  const r: WorldRevision={id:revisionId,parentId:p.base.id,proposalId:p.proposalId,world:hashBytes(p.patch),seam:hashBytes(JSON.stringify(Object.entries(generated).map(([name,value])=>({path:`0/${name}`,sha256:hashBytes(value),executable:false})))),worldPath:join(dir,'world.yaml'),seamPaths:[join(dir,'seam')],state:'active',staleReceiptIds};
-  // Keep exactly the two generated files in a dedicated seam directory.
-  const seamDir=join(dir,'seam');
-  mkdirSync(dirname(dir),{recursive:true,mode:0o700});absolute(dirname(dir));mkdirSync(dir,{mode:0o700});mkdirSync(seamDir,{mode:0o700});
-  const result=r;
+  const layout=archiveLayout(p.base,dir,generated);
+  const result:WorldRevision={id:revisionId,parentId:p.base.id,proposalId:p.proposalId,world:hashBytes(p.patch),seam:layout.seam,worldPath:join(dir,'world.yaml'),seamPaths:layout.seamPaths,state:'active',staleReceiptIds};
+  mkdirSync(dirname(dir),{recursive:true,mode:0o700});absolute(dirname(dir));mkdirSync(dir,{mode:0o700});
   writeExclusive(result.worldPath,p.patch);
-  for(const [name,value] of Object.entries(generated))writeExclusive(join(seamDir,name),value);
+  for(const file of layout.files){mkdirSync(dirname(file.path),{recursive:true,mode:0o700});writeExclusive(file.path,file.bytes);chmodSync(file.path,file.executable?0o700:0o600);}
   requireValue(seamIdentity(result.seamPaths,generated)===result.seam,'archive seam mismatch');
   writeExclusive(join(dir,'record.json'),JSON.stringify({schema:'kadmos.host-world-activation.v1',runId:p.runId,proposalDigest:p.proposalDigest,requirements:p.requirements,decisionPath:absolute(input.decisionPath),decisionDigest:hashBytes(bytes(input.decisionPath)),decision:approved,revision:result}));
   const fd=openSync(dir,constants.O_RDONLY);try{fsyncSync(fd);}finally{closeSync(fd);}
@@ -171,19 +216,20 @@ export function readApprovedActivation(input:{readonly control:OriginalControl;r
  requireValue(record.schema==='kadmos.host-world-proposal.v1','invalid proposal schema');
  const p=loadProposal(record.proposal as WorldChangeProposal);
  requireValue(p.artifactDir===root && p.runId===c.runId && p.proposalId===requested.proposalId && isDeepStrictEqual(p.base,input.currentRevision) && p.requirements===c.baseline.requirements && p.proposalDigest===retained.proposalDigest,'proposal/controller mismatch');
- requireValue(requested.id===`r-${p.proposalDigest.slice(7)}` && requested.parentId===p.base.id && requested.worldPath===join(dir,'world.yaml') && isDeepStrictEqual(requested.seamPaths,[join(dir,'seam')]),'activation location/ancestry mismatch');
+ const layout=archiveLayout(p.base,dir,projection(p.patch));
+ requireValue(requested.id===`r-${p.proposalDigest.slice(7)}` && requested.parentId===p.base.id && requested.worldPath===join(dir,'world.yaml') && isDeepStrictEqual(requested.seamPaths,layout.seamPaths) && requested.seam===layout.seam,'activation location/ancestry mismatch');
  const stale=canonicalReceipts(requested.staleReceiptIds);
  requireValue(isDeepStrictEqual(stale,requested.staleReceiptIds) && p.base.staleReceiptIds.every(x=>stale.includes(x)),'invalid archived stale receipt IDs');
  requireValue(requested.world===p.patchDigest && bytes(requested.worldPath).equals(Buffer.from(p.patch)),'archived World differs from proposal');
  revision(requested);
- requireValue(isDeepStrictEqual(readdirSync(join(dir,'seam')).sort(),['ports.d.ts','world_checker.ts']),'unexpected archived seam');
+ requireValue(isDeepStrictEqual(archiveFiles(dir),expectedArchiveFiles(dir,[join(dir,'record.json'),requested.worldPath,...layout.files.map(f=>f.path)])),'unexpected archived seam');
  const decisionPath=retained.decisionPath;requireValue(typeof decisionPath==='string','invalid archived decision path');
  const approved=decision({proposal:p,current:input.currentRevision,decisionPath,decisionsDir:c.decisionsDir,runId:c.runId,historicalReceiptIds:stale});
  requireValue(hashBytes(bytes(decisionPath))===retained.decisionDigest && isDeepStrictEqual(approved,retained.decision),'original decision evidence changed/unavailable');
  // Reject hardlinks as well as symlinks for every retained archive/proposal/base/decision file.
- for(const path of [join(dir,'record.json'),requested.worldPath,join(dir,'seam','ports.d.ts'),join(dir,'seam','world_checker.ts'),join(pd,'record.json'),join(pd,'patch.yaml')])fileRef(root,path);
+ for(const path of [join(dir,'record.json'),requested.worldPath,...layout.files.map(f=>f.path),join(pd,'record.json'),join(pd,'patch.yaml')])fileRef(root,path);
  fileRef(c.decisionsDir,decisionPath);
- for(const path of [p.base.worldPath,...p.base.seamPaths.flatMap(role=>lstatSync(role).isDirectory()?readdirSync(role).map(name=>join(role,name)):[role])]){
+ for(const path of [p.base.worldPath,...seamSlots(p.base.seamPaths).map(f=>f.path)]){
   requireValue(lstatSync(absolute(path)).nlink===1,'aliased original input');
  }
  return freezeControlData(JSON.parse(JSON.stringify(requested)) as WorldRevision);

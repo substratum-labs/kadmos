@@ -24,8 +24,8 @@ test('repository CLI real process delivers independently verified repaired candi
  assert.match(readFileSync(join(result.workspace,'src/a.ts'),'utf8'),/number = 1/);assert.match(readFileSync(join(result.workspace,'src/b.ts'),'utf8'),/b = 2/);
  assert.equal(result.delivery.binding.candidate.digest,record.delivery?.binding.candidate.digest);
 });
-test('runCli rejects unknown repository arguments and unimplemented commands',async()=>{
- for(const args of [['repo','run','--config','x'],['repo','continue','--input','x'],['repo','run','--input','x','--extra']])await assert.rejects(async()=>runCli(args),/Usage|repo run/);
+test('runCli rejects unknown repository arguments and invalid command arity',async()=>{
+ for(const args of [['repo','run','--config','x'],['repo','continue','--input','x','--extra'],['repo','run','--input','x','--extra']])await assert.rejects(async()=>runCli(args),/Usage|repo run/);
 });
 for(const bad of ['signal','backend','limits','policy','revisionId','seamPaths','decisionsDir'])test(`CLI validates ${bad} before artifacts`,t=>{
  const f=fixture();t.after(f.cleanup);const v:Record<string,unknown>=input(f);

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync
 import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { CodexBackend } from '../src/agent/repository/codex_backend.js';
+import { captureIdentity } from '../src/agent/repository/identity.js';
 import { d, hostFixture } from './repository_test_support.js';
 import { join } from 'node:path';
 import { fixture } from './repository_test_support.js';
@@ -119,4 +120,47 @@ test('E2b valid negative history with started process and null pid fences unknow
  const backend={async run(...args:Parameters<typeof f.backend.run>){const actual=await f.backend.run(...args);assert.equal(actual.process.treeStopped,true);const negative={...actual,status:'launch_failed' as const,process:{...actual.process,pid:null,treeStopped:'unknown' as const},candidate:null};writeFileSync(join(args[0].artifactDir,'attempts',args[0].attemptId,'process.json'),JSON.stringify(negative));return negative;}};
  // This is deliberately negative JSON testinput retaining real launch logs, never a passing receipt.
  const old=await runRepositoryTask({...f.options,backend});assert.equal(old.status,'blocked');assert.equal(old.attempts[0]?.backend.process.pid,null);assert.ok(old.attempts[0]?.backend.process.startedAt);const count=launches(f);const run=await runRepositoryTask({...approve(f),backend});assert.equal(run.attempts.length,1);assert.equal(run.delivery,null);assert.match(run.diagnostics.at(-1)??'',/unresolved prior process tree/);assert.equal(launches(f),count);
+});
+
+for(const order of ['ports-first','checker-first'] as const)test(`E2c split seam ${order} continues with original frame`,{timeout:20000},async t=>{
+ const f=fixture();t.after(f.cleanup);
+ const names=order==='ports-first'?['ports.d.ts','world_checker.ts']:['world_checker.ts','ports.d.ts'];
+ const seamPaths=names.map(n=>join(f.source,'generated',n));
+ const binding=captureIdentity({...f.options,seamPaths,workspace:f.source,revisionId:'r0'});
+ const revision={...f.revision,seam:binding.seam,seamPaths};
+ const options={...f.options,seamPaths,revision};
+ const initial=await runRepositoryTask(options);assert.equal(initial.status,'delivered');
+ const adjusted={...f,revision,options,binding};const approved=approve(adjusted);
+ const run=await runRepositoryTask(approved);assert.equal(run.status,'delivered',run.diagnostics.join('\n'));
+ assert.equal(run.attempts.length,2);assert.equal(run.delivery?.binding.seam,approved.revision.seam);
+ assert.deepEqual(readCompleteRun(storage(f)),run);
+});
+
+for(const layout of ['nested','multiple-roots','executable'] as const)test(`E2c preserves ${layout} generated role frame`,{timeout:20000},async t=>{
+ const f=fixture();t.after(f.cleanup);const fs=await import('node:fs');let seamPaths=[...f.options.seamPaths];
+ if(layout==='nested'){mkdirSync(join(f.source,'generated/nested'));for(const name of ['ports.d.ts','world_checker.ts'])fs.renameSync(join(f.source,'generated',name),join(f.source,'generated/nested',name));}
+ if(layout==='multiple-roots'){for(const [dir,name] of [['types','ports.d.ts'],['checker','world_checker.ts']]){mkdirSync(join(f.source,'generated',dir!));fs.renameSync(join(f.source,'generated',name!),join(f.source,'generated',dir!,name!));}seamPaths=[join(f.source,'generated/checker'),join(f.source,'generated/types')];}
+ if(layout==='executable')fs.chmodSync(join(f.source,'generated/ports.d.ts'),0o755);
+ for(const argv of [['add','.'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','SCRIPTED layout']])assert.equal(spawnSync('git',argv,{cwd:f.source}).status,0);
+ const baseCommit=spawnSync('git',['rev-parse','HEAD'],{cwd:f.source,encoding:'utf8'}).stdout.trim();const policy={...f.policy,baseCommit};
+ const binding=captureIdentity({...f.options,seamPaths,policy,workspace:f.source,revisionId:'r0'}),revision={...f.revision,seam:binding.seam,seamPaths};const options={...f.options,seamPaths,policy,revision};
+ const old=await runRepositoryTask(options);assert.equal(old.status,'delivered',old.diagnostics.join('\n'));
+ const approved=approve({...f,options,revision,binding});const run=await runRepositoryTask(approved);assert.equal(run.status,'delivered',run.diagnostics.join('\n'));assert.equal(run.delivery?.binding.seam,approved.revision.seam);assert.deepEqual(readCompleteRun(storage(f)),run);
+ if(layout==='executable')assert.ok(statSync(join(storage(f).workspace,'generated/ports.d.ts')).mode&0o111);
+});
+for(const tamper of ['mode','extra-directory','role-order'] as const)test(`E2c archive frame tamper ${tamper} refuses before intent`,{timeout:20000},async t=>{
+ const f=fixture();t.after(f.cleanup);await runRepositoryTask(f.options);const options=approve(f),s=storage(f),count=launches(f);
+ if(tamper==='mode'){const {chmodSync}=await import('node:fs');chmodSync(join(options.revision.seamPaths[0]!,'ports.d.ts'),0o755);}
+ if(tamper==='extra-directory')mkdirSync(join(options.revision.seamPaths[0]!,'stranded'));
+ const requested=tamper==='role-order'?{...options,revision:{...options.revision,seamPaths:[join(options.revision.seamPaths[0]!,'world_checker.ts'),join(options.revision.seamPaths[0]!,'ports.d.ts')]}}:options;
+ const run=await runRepositoryTask(requested);assert.equal(run.delivery,null);assert.equal(launches(f),count);assert.equal(existsSync(join(s.artifactDir,'publication',s.runId,'generations')),false);
+});
+
+test('E2c empty declared seam root is bounded out before archive reservation',t=>{
+ const f=fixture();t.after(f.cleanup);mkdirSync(join(f.source,'generated/empty'));
+ const seamPaths=[join(f.source,'generated/empty'),join(f.source,'generated/ports.d.ts'),join(f.source,'generated/world_checker.ts')];
+ const binding=captureIdentity({...f.options,seamPaths,workspace:f.source,revisionId:'r0'}),base={...f.revision,seam:binding.seam,seamPaths};
+ const p=proposeWorldChange({runId:f.options.runId,proposalId:'empty',base,patch:readFileSync(f.options.worldPath,'utf8')+'\n# SCRIPTED replacement\n',artifactDir:f.options.artifactDir,rationale:'SCRIPTED empty role boundary',requirements:binding.requirements});
+ mkdirSync(f.options.decisionsDir,{recursive:true});const decisionPath=join(f.options.decisionsDir,'empty.json');writeFileSync(decisionPath,JSON.stringify({command:'approve-world',operator:'SCRIPTED',runId:p.runId,proposalId:p.proposalId,proposalDigest:p.proposalDigest,baseRevisionId:base.id,baseWorld:base.world,patchDigest:p.patchDigest,recordedAt:new Date().toISOString()}));
+ const r=activateWorldRevision({proposal:p,current:base,decisionPath,decisionsDir:f.options.decisionsDir,runId:p.runId,historicalReceiptIds:[]});assert.equal(r.state,'rejected');assert.equal(existsSync(join(p.artifactDir,'inputs/revisions',p.runId,`r-${p.proposalDigest.slice(7)}`,'activation')),false);
 });
