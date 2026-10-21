@@ -1,10 +1,10 @@
 # Repository loop interface (v1, pre-implementation)
 
 This contract adds a future repository workflow. The existing `kadmos run`
-and `kadmos.compiler.k02.v1` are unchanged. The repository modules currently
-return explicit pending/incomplete results. They do not launch coding agents,
-verify candidates, activate World revisions or deliver code. Behavioral tests
-are intentionally failing. No usable repository CLI is claimed yet.
+and `kadmos.compiler.k02.v1` are unchanged. The physical backend, scripted executable backend and disposable workspace now
+produce process/snapshot evidence. Verification, orchestration, World revision
+and delivery modules still return pending/incomplete results. Later behavioral
+tests intentionally fail. No usable repository CLI is claimed yet.
 
 The TypeScript wire shapes are in `src/agent/repository/contracts.ts`.
 Persisted objects use UTF-8 JSON; run records/manifests and command inputs carry
@@ -106,10 +106,14 @@ finite deadline, launch error and quota must stop tracked work and await closure
 POSIX cancellation sends SIGTERM to the detached group, waits at most killGraceMs,
 then SIGKILL if required, and confirms closure. A measured host probe stopped an
 installed CLI waiting on stdin and a heartbeat descendant in the same group.
-It did not qualify cancellation during live model/tool execution or descendants
-that deliberately escape the group. Such uncertainty is retained, not success.
+A later bounded installed-CLI smoke made its requested disposable edit and exited
+0, but a tool child changed groups: the adapter returned `launch_failed` with
+`treeStopped: unknown`, no candidate and no delivery. Observed escaping children
+are signalled individually; lifecycle sidecars retain tracked PID/group inventory
+and remaining members. Unobserved rapid escapes remain unqualified. Such uncertainty
+is retained, not success.
 Windows requires measured tree termination (for example `taskkill /T /F`) before
-live qualification. Portable argv tests remain mandatory on Windows and Linux;
+live qualification; the adapter refuses to launch on unsupported platforms. Portable argv tests remain mandatory on Windows and Linux;
 only the macOS host probe is currently qualified. No universal containment claim.
 
 ## Input files, decisions and artifacts
@@ -188,3 +192,11 @@ options replace `revisionId` with the loaded immutable `WorldRevision`, resolve
 the configured backend to `CodingBackend`, and supply the process-local signal.
 Proposal input loads its exact base revision; decisions must also match retained
 proposal bytes rather than trusting digest fields provided by a caller.
+
+Task C backend checks also stop remaining group members after normal parent exit.
+Attempt IDs cannot overwrite earlier logs. Version probes are separately bounded
+and stopped, usage is parsed only when actually reported, and missing runtime
+limits fail before launch. POSIX process inventory is a local best-effort measure,
+not adversarial containment. Windows live execution remains refused; Linux live
+execution has not been measured. macOS system `/var` and `/tmp` aliases are
+canonicalized; candidate aliases and other symlink ancestors are refused.

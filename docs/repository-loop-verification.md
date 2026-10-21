@@ -31,3 +31,10 @@ TypeScript diagnostic, and a separate actuator process's refusal, commit/drop,
 same-ID deduplication and restart query. Those fixture checks do not substitute
 for the missing controller/backend behavior. Finite tests do not establish
 universal correctness, isolation or crash durability.
+
+Task C checkpoint: the argv backend and workspace implementation are now present.
+Focused A01–A04 plus lifecycle/workspace regressions pass; D–F behavior remains
+intentionally RED. A single Codex 0.163.0 smoke actually edited the disposable
+file (41→42) and exited 0. Its child-group escape conservatively produced
+`launch_failed` / `treeStopped: unknown`; this is failed qualification evidence,
+not a delivered task or an A20 substitute. No auth/quota block was reported.

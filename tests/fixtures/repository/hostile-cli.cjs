@@ -13,9 +13,10 @@ process.stdin.on('end', () => {
   console.log(JSON.stringify({ type: 'thread.started', thread_id: 'fixture' }));
   if (mode === 'quota') { console.error('usage_limit_reached'); process.exitCode = 1; return; }
   if (mode === 'malformed') { console.log('not-json'); return; }
-  if (mode === 'hang') {
-    const child = spawn(process.execPath, ['-e', `setInterval(()=>require('fs').appendFileSync(${JSON.stringify(path.join(host,'heartbeat'))},'x'),20);setTimeout(()=>process.exit(),8000)`], { stdio: 'ignore' });
+  if (['hang','linger','stubborn','escape'].includes(mode)) {
+    const child = spawn(process.execPath, ['-e', `${mode==='stubborn'?"process.on('SIGTERM',()=>{});":''}setInterval(()=>require('fs').appendFileSync(${JSON.stringify(path.join(host,'heartbeat'))},'x'),20);setTimeout(()=>process.exit(),8000)`], { stdio: 'ignore', detached:mode==='escape' });
     fs.writeFileSync(path.join(host, 'child.pid'), String(child.pid));
+    if(mode==='linger') { console.log(JSON.stringify({type:'turn.completed'})); setTimeout(()=>process.exit(0),150); return; }
     setInterval(() => {}, 1000); setTimeout(()=>process.exit(8),8000); return;
   }
   if (mode.startsWith('tamper:')) fs.appendFileSync(path.join(cwd, mode.slice(7)), '\nTAMPER');
