@@ -54,7 +54,7 @@ for(const mode of ['timeout','launch'])test(`strict ${mode} is environment`,asyn
  const f=fixture();t.after(f.cleanup);const body='setInterval(()=>{},1000)';writeFileSync(join(f.host,'verify.cjs'),body);
  const policy={...f.policy,verifiers:[{...f.policy.verifiers[0]!,resultProtocol:'exit-v1' as const,programDigest:d(body),...(mode==='launch'?{executable:join(f.host,'absent')}:{} )}]};
  const binding=captureIdentity({...f.options,workspace:f.source,policy,revisionId:'r0'});createVerificationContext({...f.options,workspace:f.source,policy,revisionId:'r0',expected:binding});
- const r=await verifyCandidate({...f.verification,policy,binding,limits:{...f.options.limits,verifierMs:150}},f.options.signal);
+ const r=await verifyCandidate({...f.verification,policy,binding,limits:{...f.options.limits,verifierMs:3000}},f.options.signal);
  assert.equal(r.failureKind,'environment');assert.equal(r.checks[0]?.status,mode==='timeout'?'timeout':'launch_failed');assert.equal(r.checks[0]?.process.exitCode,null);
 });
 test('strict protocol removal cannot reuse frozen context or policy hash',async t=>{

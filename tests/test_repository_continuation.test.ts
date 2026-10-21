@@ -128,7 +128,7 @@ for(const order of ['ports-first','checker-first'] as const)test(`E2c split seam
  const seamPaths=names.map(n=>join(f.source,'generated',n));
  const binding=captureIdentity({...f.options,seamPaths,workspace:f.source,revisionId:'r0'});
  const revision={...f.revision,seam:binding.seam,seamPaths};
- const options={...f.options,seamPaths,revision};
+ const options={...f.options,seamPaths,revision,limits:{...f.options.limits,attemptMs:3000}};
  const initial=await runRepositoryTask(options);assert.equal(initial.status,'delivered');
  const adjusted={...f,revision,options,binding};const approved=approve(adjusted);
  const run=await runRepositoryTask(approved);assert.equal(run.status,'delivered',run.diagnostics.join('\n'));

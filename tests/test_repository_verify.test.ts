@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, existsSync, symlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, symlinkSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fixture } from './repository_test_support.js';
 import { createVerificationContext } from '../src/agent/repository/context.js';
@@ -28,8 +28,8 @@ test('verifier runs frozen script with candidate cwd and retains real immutable 
  assert.match(readFileSync(c.process.stdoutPath,'utf8'),/host check/);
 });
 test('verifier direct executable digest ignores absolute data argv and accepts frozen external cwd',async t=>{
- const {f,input}=setup(t,'unused',p=>({...p,verifiers:[{...p.verifiers[0]!,executable:'/bin/echo',argv:['/absolute-data'],cwd:join(p.sourceRoot,'..','host'),programDigest:hashBytes(readFileSync('/bin/echo'))}]}));
- const r=await verifyCandidate(input,f.options.signal);assert.equal(r.status,'passed');assert.match(readFileSync(r.checks[0]!.process.stdoutPath,'utf8'),/absolute-data/);
+ const {f,input}=setup(t,'unused',p=>({...p,verifiers:[{...p.verifiers[0]!,executable:realpathSync('/bin/echo'),argv:['/absolute-data'],cwd:join(p.sourceRoot,'..','host'),programDigest:hashBytes(readFileSync(realpathSync('/bin/echo')))}]}));
+ const r=await verifyCandidate(input,f.options.signal);assert.equal(r.status,'passed',r.diagnostics.join('\n'));assert.match(readFileSync(r.checks[0]!.process.stdoutPath,'utf8'),/absolute-data/);
 });
 for(const mode of ['nonzero','signal','timeout','launch'])test(`verifier actual ${mode} never passes`,async t=>{
  const code=mode==='signal'?"process.kill(process.pid,'SIGTERM')":mode==='nonzero'?"console.log('requirement');process.exit(9)":'setInterval(()=>{},1000)';

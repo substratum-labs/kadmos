@@ -175,3 +175,16 @@ job (268 unchanged legacy + five contracts + three portable boundary cases).
 Remote counts and qualification require the exact-head terminal PR checks;
 this check-in does not assert remote success. No new
 Windows supervision, model installation, runtime authority or A20 rerun.
+
+The first F5 matrix at bbb42a1 confirmed actual Linux PGID0 rows and reduced
+Linux failures from213–216 to1–2; Windows275 passed on the synthetic merge. Residual actual failures
+identified a noncanonical /bin/echo test fixture and finite strict-timeout /
+split-seam readiness budgets. The follow-up canonicalizes that frozen fixture
+path and gives only those fixtures3000ms; production limits and assertions
+stay unchanged. Remote qualification still requires terminal exact-head CI.
+
+CI now checks out the exact PR source head. The earlier synthetic merge had
+picked up a concurrent main cleanup removing one legacy assertion, yielding
+779 POSIX /275 Windows cases. Exact-head qualification preserves all original
+source assertions:780 POSIX /276 Windows, with separately executed packed
+NodeNext consumer checks. No branch/main merge or legacy-test edit is made.
