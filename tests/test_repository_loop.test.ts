@@ -1,3 +1,4 @@
+import { createVerificationContext } from '../src/agent/repository/context.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, unlinkSync, readFileSync, existsSync } from 'node:fs';
@@ -20,7 +21,7 @@ for(const path of ['world.yaml','generated/world_checker.ts','generated/ports.d.
  assert.equal(r.attempts[0]?.verification?.status,'protected_change','must detect actual protected input mutation');assert.equal(r.delivery,null);
 });
 test('A07 snapshot binds additions and deletions, verifier write and late drift block delivery',{timeout:20_000},async t=>{
- const f=fixture('noop','drift');t.after(f.cleanup);const before=snapshotCandidate(f.source,f.policy);
+ const f=fixture('noop','drift');t.after(f.cleanup);createVerificationContext({...f.options,workspace:f.source,revisionId:'r0',expected:f.binding});const before=snapshotCandidate(f.source,f.policy);
  writeFileSync(join(f.source,'src/new.ts'),'export const n=3;');unlinkSync(join(f.source,'src/b.ts'));
  const after=snapshotCandidate(f.source,f.policy);
  assert.notEqual(before.digest,after.digest,'source changes must affect identity');
@@ -31,7 +32,7 @@ test('A07 snapshot binds additions and deletions, verifier write and late drift 
  const run=await runRepositoryTask(f.options);assert.equal(run.delivery,null);assert.notEqual(run.status,'delivered');
 });
 for(const mode of ['missing','timeout','nonzero'])test(`A08 verifier ${mode} is actual failed evidence`,{timeout:20_000},async t=>{
- const f=fixture('noop',mode);t.after(f.cleanup);const policy=f.policy;
+ const f=fixture('noop',mode);t.after(f.cleanup);createVerificationContext({...f.options,workspace:f.source,revisionId:'r0',expected:f.binding});const policy=f.policy;
  const r=await verifyCandidate({...f.verification,policy},f.options.signal);
  assert.equal(r.checks[0]?.status,mode==='missing'?'launch_failed':mode==='timeout'?'timeout':'failed');
  assert.notEqual(r.status,'passed');if(mode==='nonzero')assert.equal(r.checks[0]?.process.exitCode,9);
@@ -64,14 +65,14 @@ import { parseWorldSpec } from '../src/world_compiler.js';
 import { settleOperation } from '../examples/repository-order-service/settlement.js';
 
 test('A07 late source write after passing checks fails final delivery readback',{timeout:20_000},async t=>{
- const f=fixture();t.after(f.cleanup);const checked=await verifyCandidate(f.verification,f.options.signal);
+ const f=fixture();t.after(f.cleanup);createVerificationContext({...f.options,workspace:f.source,revisionId:'r0',expected:f.binding});const checked=await verifyCandidate(f.verification,f.options.signal);
  assert.equal(checked.status,'passed','establish actual successful checks before the late write');
  writeFileSync(join(f.source,'src/late.ts'),'export const late = 1;');
  const r=validateDelivery({workspace:f.source,policy:f.policy,receipt:checked,expected:f.binding,requiredCheckIds:['acceptance'],unresolvedEffects:[]});
  assert.equal(r.status,'refused');assert.equal(r.manifest,null);
 });
 test('A19 retained unknown physical effect blocks otherwise checked delivery',{timeout:20_000},async t=>{
- const f=fixture();t.after(f.cleanup);const checked=await verifyCandidate(f.verification,f.options.signal);
+ const f=fixture();t.after(f.cleanup);createVerificationContext({...f.options,workspace:f.source,revisionId:'r0',expected:f.binding});const checked=await verifyCandidate(f.verification,f.options.signal);
  assert.equal(checked.status,'passed');
  const r=validateDelivery({workspace:f.source,policy:f.policy,receipt:checked,expected:f.binding,requiredCheckIds:['acceptance'],unresolvedEffects:[{operationId:'op-unknown',outcome:'unknown',reconciliation:'unavailable',effectCount:'unknown',checkerRollback:true,trace:['step','commit:response-lost','rollback','query:unavailable']}]});
  assert.equal(r.status,'refused');assert.equal(r.manifest,null);

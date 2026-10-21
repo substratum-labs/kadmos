@@ -1,8 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
-import { lstatSync, readFileSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { lstatSync } from 'node:fs';
 import { REPOSITORY_CONTRACT, type DeliveryValidationInput, type DeliveryValidation } from './contracts.js';
-import { containsPath, hashBytes, safePath, snapshotCandidate } from './workspace.js';
+import { hashBytes, snapshotCandidate } from './workspace.js';
+
+import { resolveVerifier, hostPath } from './verifier_command.js';
 
 /** Final eligibility only. The host must separately persist a complete run atomically. */
 export function validateDelivery(input: DeliveryValidationInput): DeliveryValidation {
@@ -19,7 +20,6 @@ export function validateDelivery(input: DeliveryValidationInput): DeliveryValida
     require(new Set(input.requiredCheckIds).size === input.requiredCheckIds.length &&
       isDeepStrictEqual([...input.requiredCheckIds].sort(), [...ids].sort()), 'required checks differ from policy');
     require(receipt.checks.length === ids.length && new Set(receipt.checks.map(x => x.checkId)).size === ids.length, 'missing or duplicate receipts');
-    const workspace = safePath(input.workspace);
     for (const command of policy.verifiers) {
       const check = receipt.checks.find(x => x.checkId === command.id);
       require(Boolean(check), 'missing check receipt');
@@ -27,17 +27,13 @@ export function validateDelivery(input: DeliveryValidationInput): DeliveryValida
       require(isDeepStrictEqual(check.command, command), 'check command differs from frozen policy');
       const process = check.process;
       require(check.status === 'passed' && process.exitCode === 0 && process.signal === null && process.treeStopped === true, 'check did not exit successfully with closed tree');
-      require(process.executable === command.executable && process.cwd === command.cwd &&
-        isDeepStrictEqual(process.argv, command.argv.map(x => x === '<candidate>' ? input.workspace : x)), 'process invocation mismatch');
+      const invocation=resolveVerifier(command,input.workspace,policy);
+      require(process.executable === invocation.executable && process.cwd === invocation.cwd &&
+        isDeepStrictEqual(process.argv, invocation.argv), 'process invocation mismatch');
       require(Number.isInteger(process.pid) && process.pid! > 0 && process.startedAt !== null && process.endedAt !== null &&
         Number.isFinite(Date.parse(process.startedAt)) && Number.isFinite(Date.parse(process.endedAt)) &&
         Date.parse(process.endedAt) >= Date.parse(process.startedAt), 'missing process lifecycle');
-      // A script launcher freezes argv[0]; a direct executable freezes itself.
-      const program = command.argv[0] && isAbsolute(command.argv[0]) ? command.argv[0] : command.executable;
-      for (const path of [command.executable, program, command.cwd, process.stdoutPath, process.stderrPath]) {
-        require(isAbsolute(path) && !containsPath(workspace, safePath(path)), 'host verifier paths must be outside candidate');
-      }
-      require(lstatSync(program).isFile() && hashBytes(readFileSync(program)) === command.programDigest, 'host verifier program drift');
+      for (const path of [process.stdoutPath,process.stderrPath]) hostPath(path,input.workspace,policy);
       require(lstatSync(process.stdoutPath).isFile() && lstatSync(process.stderrPath).isFile(), 'missing regular process logs');
     }
     // Last operation before manifest construction: re-read exact regular input bytes and modes.
