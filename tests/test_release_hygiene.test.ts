@@ -86,6 +86,13 @@ test("release hygiene: design artifacts and internal monorepo leaks are prevente
 
   const trackedOutput = execSync("git ls-files", { cwd: fileURLToPath(root), encoding: "utf8" });
   const files = trackedOutput.trim().split("\n").filter(Boolean);
+  for (const forbiddenPath of ["AGENTS.md", "CLAUDE.md", "GEMINI.md"]) {
+    assert.ok(!files.includes(forbiddenPath), `${forbiddenPath} must not be tracked in git`);
+  }
+  for (const file of files) {
+    assert.ok(!file.startsWith("docs/superpowers/"), `Internal plan/spec ${file} must not be tracked in git`);
+    assert.ok(!file.startsWith("docs/verification/"), `Internal verification doc ${file} must not be tracked in git`);
+  }
   const targetForbidden = ["substratum", "internal"].join("-");
   for (const file of files) {
     if (file.endsWith("test_release_hygiene.test.ts")) continue;
@@ -95,14 +102,4 @@ test("release hygiene: design artifacts and internal monorepo leaks are prevente
       assert.ok(!content.includes(targetForbidden), `Tracked file ${file} contains reference to ${targetForbidden}`);
     }
   }
-});
-
-test("standalone agent instructions are present and self-contained", () => {
-  const agents = read("AGENTS.md");
-  assert.match(agents, /# Kadmos — Contributor & Coding Agent Instructions/);
-  assert.match(agents, /pnpm run verify/);
-  assert.ok(!agents.includes("substratum-internal"));
-
-  assert.equal(existsSync(new URL("CLAUDE.md", root)), true, "CLAUDE.md must exist");
-  assert.equal(existsSync(new URL("GEMINI.md", root)), true, "GEMINI.md must exist");
 });

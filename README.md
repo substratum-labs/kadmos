@@ -239,7 +239,7 @@ The separate `kadmos-mcp` binary starts the same server directly after global in
 
 ## Agent Skill Integration
 
-Kadmos packages an official **Agent Skill** (`skills/kadmos/SKILL.md`) compatible with modern coding agent environments (Antigravity, Claude Code, Cursor, Cline).
+Kadmos packages an official **Agent Skill** (`skills/kadmos/SKILL.md`) compatible with modern coding agent environments (Claude Code, Cursor, Cline).
 
 The skill describes a 5-phase model-first workflow for coding agents:
 1. **Phase 1: Boundary & World Inference** (`kadmos infer` / `kadmos_infer`)
@@ -279,7 +279,7 @@ Kadmos is currently in **Developer Preview (v0.x)**. Re-architecting software de
 - **Semantic Fidelity & Intent Convergence**: Preventing LLMs from distorting domain intent when translating natural language into formal models. We are designing domain-verified template libraries (`Patterns & Templates`) and few-shot calibration to converge on precise laws without reducing the formal model into shallow prose.
 - **Model Compositionality & System Scaling**: Scaling beyond single bounded domains (order settlement, circuit breakers, queues) into multi-model, multi-service systems using rely-guarantee contracts, interface automata, and compositional verification without cognitive explosion.
 - **Brownfield Retrofitting**: Developing progressive embedding adapters and static boundary detectors to incrementally introduce formal gatekeepers into existing large-scale, legacy codebases without greenfield rewrites.
-- **Agent Skill & Ergonomics**: Deepening frictionless MCP and Skill distribution across leading coding agents (Cursor, Claude Code, Pi, Antigravity) so agents naturally adopt model-first synthesis without requiring developers or models to be formal-methods experts.
+- **Agent Skill & Ergonomics**: Deepening frictionless MCP and Skill distribution across leading coding agents (Cursor, Claude Code, Cline) so agents naturally adopt model-first synthesis without requiring developers or models to be formal-methods experts.
 - **Formal Verification Backends**: Extending Kadmos IR export and verification backends to standard automated theorem provers and model checkers (SMT/Z3, TLA+, Alloy) alongside the high-speed compiled runtime gatekeepers.
 
 ---
