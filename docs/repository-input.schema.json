@@ -23,36 +23,30 @@
         "maxAttempts": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 9007199254740991
+          "maximum": 2147483647
         },
         "attemptMs": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 9007199254740991
+          "maximum": 2147483647
         },
         "verifierMs": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 9007199254740991
+          "maximum": 2147483647
         },
         "overallMs": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 9007199254740991
+          "maximum": 2147483647
         },
         "killGraceMs": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 9007199254740991
+          "maximum": 2147483647
         }
       },
-      "required": [
-        "maxAttempts",
-        "attemptMs",
-        "verifierMs",
-        "overallMs",
-        "killGraceMs"
-      ],
+      "required": [],
       "additionalProperties": false
     },
     "file": {
@@ -386,9 +380,7 @@
         "instructions",
         "policy",
         "backend",
-        "limits",
-        "revisionId",
-        "decisionsDir"
+        "revisionId"
       ],
       "additionalProperties": false
     },

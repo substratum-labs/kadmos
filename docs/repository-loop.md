@@ -5,8 +5,9 @@ process evidence, frozen verification contexts, real verification, delivery
 eligibility, original run budgets, immutable checkpoints and complete-run
 publication/readback. D1 foundation was physically accepted at 280f087.
 D2a adds fixed-World orchestration and bounded diagnostic feedback, pending physical D review.
-D2b repository CLI/live demonstration, E World proposal/activation, and F
-effect reconciliation remain pending. Later behavioral tests intentionally
+D2b adds the initial repository CLI and minimum explicit precommit-refusal
+prerequisite (early F work, pending review). E World proposal/activation and full F
+effect reconciliation remain pending. Actual live outcome is in the D2b review packet. Later behavioral tests intentionally
 fail. Existing `kadmos run` and `kadmos.compiler.k02.v1` are unchanged.
 
 The TypeScript wire shapes are in `src/agent/repository/contracts.ts`.
@@ -123,12 +124,26 @@ only the macOS host probe is currently qualified. No universal containment claim
 
 ## Input files, decisions and artifacts
 
-Future commands are `kadmos repo run --input <run.json>`,
+Implemented: `kadmos repo run --input <run.json>`. Planned commands are
 `propose-world --input <proposal.json>`, `approve-world --input <decision.json>`,
 `reject-world --input <decision.json>` and `continue --input <continue.json>`.
-Run input contains source/artifact paths, requirements/World/seam paths, policy,
-instructions and finite limits. Backend config identifies executable/prefix argv;
-production prefix is empty. Continue identifies run/artifact directory and exact
+Run input uses `schema: "kadmos.repository.v1"`, `runId`, absolute `source`,
+`artifactDir`, `requirementsPath`, `worldPath`, nonempty `seamPaths`, `instructions`,
+`policy`, `backend` and `revisionId`. See `repository-input.schema.json` for nested
+policy/verifier shapes. `limits` may omit keys; each missing key uses the finite
+default above (maximum supported timer integer 2147483647). `decisionsDir` defaults
+to `<artifactDir>/decisions`. Unknown fields, serialized signals/capabilities and
+unsupported arguments/subcommands refuse. Paths are canonicalized before freezing
+host policy/context; verifier argv data tokens remain literal. The initial revision
+is constructed from actual frozen World/seam digests, without World activation.
+Backend config is `{executable, prefixArgs}`: production prefix is `[]`; a trusted
+scripted launcher must explicitly supply its prefix. The backend adds only the
+frozen installed CLI argv above and inherits operator configuration. SIGINT/SIGTERM
+abort the controller and reach the shared supervisor. No continuation or approval
+command is implemented. JSON output gives exact run `status`, `runId`, canonical
+`artifactDir`, `workspace`, attempts and delivery/diagnostics. The bin exits 0 only
+for delivered; all other run statuses exit 1. Delivery requires complete-run
+readback, never the display projection or process exit alone. Continue identifies run/artifact directory and exact
 revision; it loads immutable recorded inputs and the original budget. No stdin
 or candidate-authored approval is accepted automatically.
 
@@ -342,3 +357,25 @@ after restoring protected bytes. These are D2 changes, not retroactive D1 accept
 A10's code-repair route is exercised independently; its later F settlement trace
 still intentionally fails. Task D remains IN_PROGRESS until D2b CLI/live and the
 shared settlement prerequisite are handled and physical review accepts the assembly.
+
+## Early F precommit-refusal prerequisite (D2b)
+
+The example order-service settlement seam authorizes INITIATE_PAYMENT with the
+fixed directive before invoking its trusted host actuator argv through the shared
+supervisor. Timeout is 5000ms with 100ms termination grace. It reserves a permanent
+`<recordPath>.dispatch` directory and writes `{outcome:"unknown", delivery:null}`
+before step/launch. Record paths must be absolute with safe ancestors; stored
+records and unknown reservations fence restart and overlap. The same host must
+reuse the same operation record path. This is trusted single-host operation
+fencing, without adversarial storage or power-loss guarantees.
+
+The only recognized noncommit protocol is exit 2, no signal/reason, qualified
+process closure, and stdout containing exactly one JSON object with exactly:
+`{"protocol":"kadmos.precommit-refusal.v1","operationId":"<exact ID>","outcome":"not_committed","effectCount":0}`.
+Only that trusted precommit refusal permits internal checker rollback and trace
+`["step","actuator:refused","rollback"]`. It never undoes external physical work.
+Malformed output, arbitrary nonzero, timeout, cancellation, committed output and
+lost response remain unknown, delivery null, without repeat execution or rollback
+claim. stdout/stderr, lifecycle and process observation remain outside candidate.
+The query argument is unused: reconciliation and independent HTTP/fault/live F
+acceptance remain deferred. A17 passing this shared prerequisite does not accept F.

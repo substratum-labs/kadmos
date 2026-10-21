@@ -1,3 +1,4 @@
+import { runRepositoryCli } from './agent/repository/cli.js';
 import { cpSync, lstatSync, mkdtempSync, readFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -30,6 +31,7 @@ ${bold(cyan(" |_|\\_\\__,_| \\__,_|_|_|_\\___/\\___/         "))}
  ${dim("Evidence-native architecture for coding agents (v0.1.2)")}
 
 ${bold("Commands:")}
+  ${cyan("repo run")} --input <run.json>        Run fixed-World repository generation and verification
   ${cyan("demo")}                                Run 10-second interactive hallucination & repair walkthrough
   ${cyan("init")} [dir] [--template <tpl>]       Scaffold a new governed project
   ${cyan("compile")} <world.yaml> --out <dir>    Compile World model into TypeScript and Python seams
@@ -48,7 +50,7 @@ ${bold("Quickstart:")}
 }
 
 function usage(): never {
-  throw new Error("Usage: kadmos demo | mcp | graph <world-file> [--format mermaid|dot|html] [--out <file>] [--open] | init [directory] [--template default|order-settlement|circuit-breaker] [--lang ts|python|all] [--force] | test <world-file> [--runs <N>] [--steps <M>] [--seed <S>] [--coverage] [--json] | infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
+  throw new Error("Usage: kadmos repo run --input <run.json> | demo | mcp | graph <world-file> [--format mermaid|dot|html] [--out <file>] [--open] | init [directory] [--template default|order-settlement|circuit-breaker] [--lang ts|python|all] [--force] | test <world-file> [--runs <N>] [--steps <M>] [--seed <S>] [--coverage] [--json] | infer <file> | legislate <file> [--interactive] [--accept-all-a] [--accept-all-b] [--non-interactive] [--out <path>] | compile <world-file> --out <dir> [--lang ts|python|all] | run --prd <file> [--world <file>] [--world-out <path>] [--out <dir>] [--model <model>] [--provider <provider>] [--max-turns <N>] [--accept-all-a] [--accept-all-b] [--non-interactive] [--dry-run]");
 }
 
 function publishProjectionDirectory(outDir: string, files: Record<string, string>): void {
@@ -96,6 +98,7 @@ export function runCli(args: readonly string[]): string | Promise<string> {
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h" || args[0] === "help") {
     return formatHelp();
   }
+  if (args[0] === "repo") return runRepositoryCli(args.slice(1));
   if (args[0] === "demo") {
     if (args.length > 1) usage();
     return runDemo();
