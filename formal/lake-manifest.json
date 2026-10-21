@@ -1,0 +1,15 @@
+{"version": "1.1.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"url": "https://github.com/substratum-labs/harmonia",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "5e06c474ec1362fb67ce9f1b0ff597f6eafc9ed4",
+   "name": "harmonia",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "v0.1.0",
+   "inherited": false,
+   "configFile": "lakefile.lean"}],
+ "name": "«kadmos-formal»",
+ "lakeDir": ".lake"}
