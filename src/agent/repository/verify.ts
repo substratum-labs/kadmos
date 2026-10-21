@@ -1,11 +1,19 @@
 import { isDeepStrictEqual } from 'node:util';
-import { mkdirSync, mkdtempSync, lstatSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, lstatSync, existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 import type { VerificationInput, VerificationReceipt, CheckReceipt, ProcessEvidence } from './contracts.js';
 import { loadVerificationContext } from './context.js';
 import { supervise } from './host_process.js';
 import { hostPath, resolveVerifier } from './verifier_command.js';
 import { createAtomicJson } from './store.js';
+import { copy, fileRef, verificationFiles, checkVerificationEvidence, type VerificationEvidence } from './evidence.js';
+const observedReceipts = new WeakMap<VerificationReceipt, VerificationEvidence>();
+/** In-process host provenance. A serialized/fabricated receipt cannot mint this capability. */
+export function verificationEvidence(receipt: VerificationReceipt): VerificationEvidence {
+ const evidence=observedReceipts.get(receipt);
+ if(!evidence || !isDeepStrictEqual(receipt,evidence.receipt))throw new Error('receipt lacks actual host verifier provenance');
+ checkVerificationEvidence(evidence);return copy(evidence);
+}
 
 /** Actual frozen host checks. Host storage and sampled lineage assume a trusted single operator. */
 export async function verifyCandidate(input: VerificationInput, signal: AbortSignal): Promise<VerificationReceipt> {
@@ -63,5 +71,11 @@ export async function verifyCandidate(input: VerificationInput, signal: AbortSig
   failureKind??='environment';
  }
  if(dir)try {createAtomicJson(join(dir,'after'),{after,receipt:receipt()});}catch(error){status='incomplete';failureKind='environment';diagnostics.push(`receipt publication: ${String(error)}`);}
- return receipt();
+ const result=receipt();
+ if(!dir)observedReceipts.set(result,{input:copy(input),invocation:null,receipt:copy(result),refs:[]});
+ if(dir)try {
+  const evidence:VerificationEvidence={input:copy(input),invocation:dir,receipt:copy(result),refs:verificationFiles(input,dir,result).filter(path=>existsSync(path)).map(path=>fileRef(input.artifactDir,path))};
+  checkVerificationEvidence(evidence);observedReceipts.set(result,evidence);
+ }catch(error){diagnostics.push(`evidence sealing: ${String(error)}`);}
+ return result;
 }

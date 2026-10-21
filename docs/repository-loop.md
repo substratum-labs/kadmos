@@ -211,3 +211,71 @@ Ruling: v1 TS seam declarations may be directories or individual files but must
 cover exactly ports.d.ts and world_checker.ts once; extra/duplicate files refuse.
 This helper grants neither verifier success nor durable acceptance. Wiring capture
 into orchestration and final delivery remains pending.
+
+
+## Internal complete-run publication (D1f)
+
+The public v1 record/manifest interfaces above remain unchanged. The original
+`run.json` / `delivery.json` sketch is a future compatibility view; neither a
+projection file nor `validateDelivery` eligibility grants durable delivery.
+The host uses `publication.ts`: `initializeRun` before any attempts, then
+`readRunStart`, `checkpointRun`, `readRunCheckpoint`, `publishRun`, and
+`readCompleteRun`. The loop/CLI wiring remains Task D2.
+
+All paths below are host-selected under an external artifact root, outside and
+not containing the source/candidate. No backend prose selects evidence paths.
+Safe lowercase IDs, canonical paths, symlink rejection, single-link regular
+files and exclusive record reservation prevent aliases/overwrite in this model.
+
+```text
+publication/<run>/start/record.json                 # kadmos.run-start.v1
+publication/<run>/checkpoints/00000001/record.json   # kadmos.run-checkpoint.v1
+publication/<run>/checkpoints/00000002/record.json   # next immutable version
+publication/<run>/manifest/record.json              # kadmos.delivery-manifest.v1
+publication/<run>/complete/record.json              # kadmos.run-complete.v1, LAST
+publication/<run>/writer/                           # exclusive transient host reservation
+verification/<run>/<attempt>/invocation-<unique>/   # existing actual verifier evidence
+```
+
+Start stores original limits, start time, deadline, workspace and frozen policy
+once. Checkpoints contain incomplete/blocked/awaiting-world v1 records, the start
+reference, preceding checkpoint reference, verifier authority and backend file
+references. References contain artifact-relative path, raw-byte SHA256 and
+executable mode. Histories retain immutable prefixes of attempts, revisions,
+effects and diagnostics; budgets cannot renew across revisions. Expiry refuses
+new publication, but does not prevent incomplete replay or readback of a record
+that was published before its original deadline.
+
+The real verifier seals its host context, before/after and check records, stdout,
+stderr and lifecycle inventory at completion. New checkpoint authority requires
+that actual in-process verifier provenance; fabricated self-consistent receipt
+JSON is insufficient. Recovery can reuse only authority already sealed in
+persisted host checkpoints, after all referenced bytes are reread. Failed/unknown
+verification retains the available evidence and missing evidence never grants
+success. The latest delivered attempt additionally needs its actual backend
+receipt/logs/version/lifecycle, exact current host context/revision/binding,
+frozen successful checks, latest candidate identity and matching manifest.
+Unrecorded attempts, or multiple/stranded verifier invocations for a recorded
+attempt, refuse publication. The later loop must allocate a new attempt ID for
+another invocation and account for it in the original total attempt budget.
+
+Publication reserves one writer, validates the latest checkpoint and eligibility,
+creates the immutable manifest, then creates the complete envelope referencing
+start/checkpoint/manifest. It releases the writer and performs full durable
+readback plus a final actual candidate recapture before returning delivery.
+Readback refuses incomplete record directories, stray temporaries, broken chains,
+changed/missing receipt/log/context/manifest bytes, stale identities, retained
+unknown effects or unresolved process trees. The immutable effects history is
+conservative: unknown/unavailable outcomes block delivery; reconciliation and
+settlement authority remain later work and cannot be invented here.
+
+This is a commit-marker protocol over independent create-once records, not one
+multi-file transaction. A stranded writer, partial checkpoint, manifest without a
+complete marker, or incomplete complete reservation stays refused. A trusted host
+operator must first establish writer termination and preserve the failed evidence;
+there is no automatic lock stealing, deletion/retry, budget reset or fabricated
+completion. Healthy incomplete checkpoints support read/replay/extension without
+old JavaScript object identity. Checksums provide integrity, not signatures. The
+trust boundary remains the existing single-operator host storage and sampled
+process supervision; no universal relocation, power-loss atomicity, adversarial
+same-user filesystem protection, World approval or effect settlement is claimed.
