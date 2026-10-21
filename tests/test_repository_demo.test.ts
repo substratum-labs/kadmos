@@ -7,7 +7,7 @@ import { settleOperation, type SettlementInput } from '../examples/repository-or
 import { createWorldChecker } from '../src/world_checker.js';
 import { parseWorldSpec } from '../src/world_compiler.js';
 function request(f:ReturnType<typeof fixture>,mode:string,queryMode='normal'):SettlementInput {
- return {operationId:'op-1',checker:createWorldChecker(parseWorldSpec(readFileSync(f.options.worldPath,'utf8'))),actuator:{executable:process.execPath,argv:[actuatorFixture,join(f.host,'effects.json'),'apply','op-1',mode]},query:{executable:process.execPath,argv:[actuatorFixture,join(f.host,'effects.json'),'query','op-1',queryMode]},recordPath:join(f.host,'settlement.json'),signal:f.options.signal};
+ return {operationId:'op-1',checker:createWorldChecker(parseWorldSpec(readFileSync(f.options.worldPath,'utf8'))),actuator:{executable:process.execPath,argv:[actuatorFixture,join(f.host,'effects.json'),'apply','op-1',mode,'--bound']},query:{executable:process.execPath,argv:[actuatorFixture,join(f.host,'effects.json'),'query','op-1',queryMode,'--bound']},recordPath:join(f.host,'settlement.json'),signal:f.options.signal};
 }
 test('A17 precommit refusal rolls back authorized checker step with zero observed effects',{timeout:20_000},async t=>{
  const f=fixture();t.after(f.cleanup);const input=request(f,'refuse');const r=await settleOperation(input);

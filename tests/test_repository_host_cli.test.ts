@@ -109,3 +109,20 @@ test('E2c CLI retained approval raw bytes must remain exact',{timeout:20000},t=>
  const x=setup(t),p=propose(x),a=invoke(x.f,'approve-world',decision(p));assert.equal(a.status,0,a.stderr);const approved=JSON.parse(a.stdout),before=count(x.f);
  writeFileSync(approved.decisionPath,readFileSync(approved.decisionPath,'utf8')+'\n');const r=invoke(x.f,'continue',{schema,runId:p.runId,artifactDir:p.artifactDir,revisionId:approved.revision.id});assert.equal(r.status,1);assert.equal(count(x.f),before);assert.equal(existsSync(join(p.artifactDir,'publication',p.runId,'generations')),false);
 });
+
+// E Minor2 safe deferred disposition: archive-only approval grants no continuation.
+for(const fault of ['orphan-attempt','orphan-verifier','effect-count'])test(`F1 E Minor2 reproduced ${fault}: approval archive then pre-reservation refusal`,{timeout:20000},async t=>{
+ const x=setup(t),p=propose(x),c=readControl({artifactDir:p.artifactDir,runId:p.runId});
+ if(fault==='orphan-attempt')mkdirSync(join(p.artifactDir,'attempts','a-orphan'));
+ if(fault==='orphan-verifier')mkdirSync(join(p.artifactDir,'verification',p.runId,'a-orphan'));
+ if(fault==='effect-count'){
+  const {checkpointRun,readRunCheckpoint}=await import('../src/agent/repository/publication.js');
+  const old=readRunCheckpoint({artifactDir:c.artifactDir,runId:c.runId,workspace:c.header.workspace,policy:c.policy})!;
+  checkpointRun({artifactDir:c.artifactDir,runId:c.runId,workspace:c.header.workspace,policy:c.policy},{...old,effects:[...old.effects,{operationId:'inconsistent',outcome:'committed',reconciliation:'queried',effectCount:2,checkerRollback:false,trace:['host reproduction']}]});
+ }
+ const before=count(x.f),candidate=readFileSync(join(c.header.workspace,'world.yaml'),'utf8');
+ const a=invoke(x.f,'approve-world',decision(p));assert.equal(a.status,0,a.stderr);const revision=JSON.parse(a.stdout).revision;assert.equal(revision.state,'active');
+ const r=invoke(x.f,'continue',{schema,runId:p.runId,artifactDir:p.artifactDir,revisionId:revision.id});assert.equal(r.status,1);assert.equal(count(x.f),before);assert.equal(readFileSync(join(c.header.workspace,'world.yaml'),'utf8'),candidate);assert.equal(existsSync(join(p.artifactDir,'publication',p.runId,'generations')),false);
+ assert.match(r.stdout+r.stderr,fault==='effect-count'?/unresolved effects/:/unrecorded .*attempt/);
+ if(process.env.KADMOS_F1_EVIDENCE)writeFileSync(join(process.env.KADMOS_F1_EVIDENCE,`minor2-${fault}.json`),JSON.stringify({fault,approvalExit:a.status,approval:JSON.parse(a.stdout),continuationExit:r.status,stdout:r.stdout,stderr:r.stderr,backendCountUnchanged:count(x.f)===before,candidateUnchanged:readFileSync(join(c.header.workspace,'world.yaml'),'utf8')===candidate,generationReserved:false})+'\n');
+});

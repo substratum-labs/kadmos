@@ -1,14 +1,13 @@
 # Repository loop interface (v1, D2a integration checkpoint)
 
-Implemented D1 host APIs provide disposable workspaces, physical/scripted backend
+Implemented host APIs provide disposable workspaces, physical/scripted backend
 process evidence, frozen verification contexts, real verification, delivery
 eligibility, original run budgets, immutable checkpoints and complete-run
-publication/readback. D1 foundation was physically accepted at 280f087.
-D2a adds fixed-World orchestration and bounded diagnostic feedback, pending physical D review.
-D2b adds the initial repository CLI and minimum explicit precommit-refusal
-prerequisite (early F work, pending review). E World proposal/activation and full F
-effect reconciliation remain pending. Actual live outcome is in the D2b review packet. Later behavioral tests intentionally
-fail. Existing `kadmos run` and `kadmos.compiler.k02.v1` are unchanged.
+publication/readback. Tasks D and E received independent physical Grok acceptance;
+E acceptance is frozen at59885a5. Host commands include run, inspect, propose-world,
+approve-world, reject-world and continue, with runtime validation. F1 adds local
+settlement reconciliation; whole Task F and live A20 remain pending. Existing
+`kadmos run` and `kadmos.compiler.k02.v1` are unchanged.
 
 The TypeScript wire shapes are in `src/agent/repository/contracts.ts`.
 Persisted objects use UTF-8 JSON; run records/manifests and command inputs carry
@@ -206,8 +205,7 @@ reported as a green full suite while these intentional stubs remain.
 
 Machine-readable input-file shapes are frozen in
 [`repository-input.schema.json`](repository-input.schema.json). Runtime shape,
-path, finite-budget and digest validation is required in later implementation;
-this stage provides the schema, not a working command parser. TypeScript run
+path, finite-budget and digest validation is implemented by the host command parser. TypeScript run
 options replace `revisionId` with the loaded immutable `WorldRevision`, resolve
 the configured backend to `CodingBackend`, and supply the process-local signal.
 Proposal input loads its exact base revision; decisions must also match retained
@@ -512,3 +510,65 @@ A deliberate host `approve-world` or `reject-world` validates command, nonempty 
 New archives preserve the existing seam hash frame: declared role index, root-relative path (basename for individual files), and executable bit. Standard single-directory archive paths/bytes remain compatible. Individual files in either order, nested directories and multiple nonempty roots retain their exact frame. Strict readback derives expected archive locations and the entire directory/file set from validated original roles, then validates compiler bytes, modes, hashes and decision evidence. Continuation materializes by those logical generated slots at the original lexical roles. An empty declared role root is outside this bounded archive format and is refused before archive reservation or continuation intent; no hashes or old contexts are rewritten. Empty subdirectories within a nonempty role are not part of the identity frame and are not archived.
 
 All worker demonstrations are SCRIPTED backend/operator fixtures. No actual business World decision, Yong approval, installed coding-agent qualification or production mutation is implied. Parent physical Grok reviews assembled Task E; F still owns HTTP reconciliation/A18 and the later A20 live gate.
+
+
+## F1: local settlement and independent HTTP fault acceptance
+
+`examples/repository-order-service/settlement.ts` preserves the frozen
+`SettlementInput` shape. The HOST supplies executable/argv capabilities; generated
+Fabric/model stdout cannot select an actuator or grant authority. The independent
+HTTP server and argv adapter in `tests/fixtures/repository/http-{actuator,client}.cjs`
+use actual loopback sockets and separate processes. The server serializes requests,
+persists stable operation IDs and a counter, and creates each request trace file
+once. Literal `constructor` and `__proto__` IDs have no inherited-key behavior.
+
+The permanent `.dispatch` directory reserves an operation; `unknown.json` and
+`binding.json` precede checker authorization and dispatch. Unknown evidence is never
+erased. `authorized.json`, qualified process logs, and a create-once `outcome.json`
+retain provenance; `recordPath` remains the legacy JSON outcome plus `delivery:null`
+projection. Existing/interrupted reservations are never stolen, even after restart.
+Unknown restart is fenced without retrying apply or query. Known results revalidate
+their retained receipt. A fresh checker matching the saved starting state may
+reconstruct the authorized step; otherflow state is never reset. Matching already
+applied state is left alone. A known effect with incompatible checker state is
+conservatively returned as unknown without re-actuation.
+
+All receipts have exactly `protocol, operationId, outcome, effectCount`. Only closed,
+qualified processes count: committed apply requires `kadmos.effect-commit.v1`, exit0,
+committed/count1; original refusal requires `kadmos.precommit-refusal.v1`, exit2,
+not_committed/count0. Ambiguous apply is followed by `kadmos.effect-query.v1`, exit0,
+with committed/count1 or not_committed/count0 for that same operation. Invalid,
+wrong-ID, extra-field, count, signal, timeout and transport results alone never prove
+zero. Apply and query share a five-second deadline and bounded supervisor cleanup.
+A query is never launched unless apply's sampled process tree is stopped.
+
+A denied or throwing checker step already restores its internal state and can leave
+an earlier operation's undo. Settlement never rolls it back. Explicit refusal or
+qualified query noncommit can rollback only this operation's successful step while
+its saved state/context still matches. Callers must provide exclusive checker access
+during settlement; direct concurrent checker changes are outside the wrapper's
+serialization (detectable state drift refuses rollback). Internal rollback cannot
+undo an external commit. Committed-but-dropped HTTP replies physically query before
+settling; repeated IDs observe one mock effect. Unavailable query retains unknown,
+no delivery, and blocks automatic repetition across process restart.
+
+Scope: trusted local host capabilities/filesystem and one serialized mock server;
+process crash/restart fencing only, not fsync/power-loss recovery, multi-host safety,
+malicious same-user tampering protection or universal exactly-once delivery. Retained
+files are create-once by this controller; permissions are not an OS security boundary.
+The repository runtime still initializes `effects:[]`: F2 must collect/fence genuine
+host effects through the actual run path and prove unknown blocks delivery there.
+F1 settlement tests do not establish that broader integration. Task F's faulty
+Fabric→SCRIPTED loop repair, live installed-backend A20 with explicit exact human
+World approval, assembled physical Grok and cognitive delivery remain pending.
+
+E review Minor2 is safely deferred: approval may archive a decision/activation while
+orphan attempt/verifier directories or inconsistent committed counts exist. Owner
+F1 reproduction confirms continuation refuses before generation reservation,
+workspace mutation or backend dispatch. The archive alone grants no continuation or
+delivery. Frozen E acceptance did not execute those tests. Earlier rejection can be
+separately hardened; F1 makes no broader approval-history claim.
+
+The legacy file actuator keeps its original default JSON reply shapes. Settlement
+acceptance opts into `--bound` host receipts; original contract assertions remain
+unchanged. Legacy unbound stdout cannot resolve settlement.
