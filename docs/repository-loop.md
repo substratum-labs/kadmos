@@ -379,3 +379,54 @@ lost response remain unknown, delivery null, without repeat execution or rollbac
 claim. stdout/stderr, lifecycle and process observation remain outside candidate.
 The query argument is unused: reconciliation and independent HTTP/fault/live F
 acceptance remain deferred. A17 passing this shared prerequisite does not accept F.
+
+
+### Frozen verifier result protocol
+
+`VerifierCommand.resultProtocol` optionally accepts only `"exit-v1"`. Freeze it
+before backend work; it participates in the policy hash, verification context,
+CLI schema and exact command in each immutable CheckReceipt. Unknown or malformed
+values refuse before backend launch. No shell, function, prose or model JSON
+can override routing.
+
+With `exit-v1`, exit0 passes; exit1 uses the frozen `failureKind` only after an
+actual completed process with no signal/reason and a known closed tree. Every
+other/null exit, signal, launch failure, timeout or unknown tree is an
+infrastructure failure: `ENVIRONMENT_BLOCKED`, no repair attempt. Without the
+field, legacy host-declared nonzero routing (including exit9) remains coarse and
+cannot distinguish infrastructure from code failures. Signals always block as
+infrastructure under both modes. Existing frozen policies are never upgraded
+silently.
+
+Host adapters must reserve exit1 for actual candidate assertions/positively
+identified code diagnostics and use another exit (the demo uses86) for setup,
+imports, tool launch, configuration and uncaught harness exceptions. A buggy or
+lying host that reports setup failure as1 cannot be diagnosed from its prose.
+An entrypoint digest does not attest all transitive toolchain bytes.
+
+Reusable owner demo adapters live in `scripts/repository-demo/`. Copy
+`typecheck.cjs` and `functional.cjs` outside source/candidate, then freeze argv
+`[hostScript, "<candidate>", absoluteTscEntrypoint, absoluteKadmosRoot]` with
+`cwd` equal to the host script directory and `resultProtocol: "exit-v1"`.
+Build Kadmos first. Functional imports use `dist/pricing.js` and `dist/order.js`;
+setup/import/compilation stays outside assertion catches. Its top-level catch
+uses86. The typecheck adapter conservatively maps all nonzero compiler exits
+to86: it has no trusted structured diagnostic adapter and does not parse text
+to guess whether a source/config/tool failure caused the exit. This may stop a
+repairable syntax error; it avoids spending attempts on ambiguous infrastructure.
+
+Before freezing/launching a real run, prepare original-defect and independently
+known-good reference samples, then execute:
+
+```sh
+node scripts/repository-demo/preflight.mjs /absolute/host/run-input.json /absolute/original /absolute/reference /absolute/new-preflight-directory
+```
+
+This tool executes only the exact frozen external checker argv/cwd (candidate
+token substituted), never a backend. It saves input/program/tool-entrypoint and
+sample hashes, actual exits and raw logs. It requires reference typecheck +
+PASS5, and original typecheck + actual expected pricing/order assertion failures.
+Wrong output paths/cwd/missing tools block launch with zero model calls. Recheck
+these hashes, source cleanliness and current source head at the separate manual
+budget gate. Preflight alone never authorizes a live run or grants delivery to
+historical failed evidence. Freeze all final bytes only after successful preflight.

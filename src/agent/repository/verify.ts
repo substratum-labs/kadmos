@@ -58,7 +58,7 @@ export async function verifyCandidate(input: VerificationInput, signal: AbortSig
    // Recapture after every real process, even a failed one.
    after=loadVerificationContext(read).current;
    if(!isDeepStrictEqual(after,input.binding)){status='drift';throw new Error('candidate changed during verification');}
-   if(checkStatus!=='passed') {status='failed';failureKind=observed.reason===null&&observed.treeStopped===true?command.failureKind:'environment';break;}
+   if(checkStatus!=='passed') {status='failed';failureKind=observed.reason===null&&observed.signal===null&&observed.exitCode!==null&&observed.treeStopped===true&&(command.resultProtocol!=='exit-v1'||observed.exitCode===1)?command.failureKind:'environment';break;}
   }
   after=loadVerificationContext(read).current;
   if(!isDeepStrictEqual(after,input.binding)){status='drift';throw new Error('final binding drift');}

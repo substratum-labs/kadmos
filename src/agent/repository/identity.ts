@@ -1,3 +1,4 @@
+import { validateResultProtocol } from './verifier_command.js';
 import { isDeepStrictEqual } from 'node:util';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -9,6 +10,7 @@ const matches = (path: string, rule: string): boolean => rule.endsWith('/') ? pa
 /** Host capture; source-declared paths are mapped into the checked candidate, never read from source. */
 export function captureIdentity(input: IdentityRequest): InputBinding {
  const { policy, baseline } = input;
+ policy.verifiers.forEach(validateResultProtocol);
  const source = safePath(policy.sourceRoot), workspace = safePath(input.workspace);
  const candidate = snapshotCandidate(workspace, policy);
  const require = (ok: boolean, why: string): void => { if (!ok) throw new Error(why); };

@@ -29,10 +29,11 @@ export async function runRepositoryCli(args:readonly string[]):Promise<string> {
  if(typeof v.instructions!=='string'||v.instructions.includes('\0'))throw new Error('invalid repository input instructions');
  const p=object(v.policy,['sourceRoot','baseCommit','allowedPaths','protectedPaths','excludedOutputs','verifiers']);
  if(!Array.isArray(p.verifiers)||!p.verifiers.length)throw new Error('invalid repository input verifiers');
- const verifiers=p.verifiers.map(raw=>{const q=object(raw,['id','executable','argv','cwd','programDigest','failureKind']);
+ const verifiers=p.verifiers.map(raw=>{const q=object(raw,['id','executable','argv','cwd','programDigest','failureKind','resultProtocol'],['id','executable','argv','cwd','programDigest','failureKind']);
  const id=text(q.id),programDigest=text(q.programDigest),failureKind=text(q.failureKind);
  if(!/^[a-z0-9][a-z0-9_-]{0,127}$/.test(id)||!/^sha256:[a-f0-9]{64}$/.test(programDigest)||!['compile','functional','guard','requirement','core','environment','ambiguous'].includes(failureKind))throw new Error('invalid repository input verifier');
- return {id,executable:path(q.executable),argv:array(q.argv),cwd:q.cwd==='<candidate>'?'<candidate>':path(q.cwd),programDigest,failureKind};});
+ if(Object.hasOwn(q,'resultProtocol')&&q.resultProtocol!=='exit-v1')throw new Error('invalid repository input result protocol');
+ return {...(Object.hasOwn(q,'resultProtocol')?{resultProtocol:'exit-v1' as const}:{}),id,executable:path(q.executable),argv:array(q.argv),cwd:q.cwd==='<candidate>'?'<candidate>':path(q.cwd),programDigest,failureKind};});
  if(new Set(verifiers.map(q=>q.id)).size!==verifiers.length)throw new Error('invalid repository input duplicate verifier');
  const baseCommit=text(p.baseCommit);if(!/^[a-f0-9]{40,64}$/.test(baseCommit))throw new Error('invalid repository input baseCommit');
  const policy={sourceRoot:path(p.sourceRoot),baseCommit,allowedPaths:relative(p.allowedPaths),protectedPaths:relative(p.protectedPaths),excludedOutputs:relative(p.excludedOutputs),verifiers} as RepositoryPolicy;

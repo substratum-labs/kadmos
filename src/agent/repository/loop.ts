@@ -3,7 +3,7 @@ import { join, dirname, basename } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { REPOSITORY_CONTRACT, type RepositoryRunOptions, type RepositoryRunRecord, type AttemptRecord, type InputBinding } from './contracts.js';
 import { createWorkspace, safePath } from './workspace.js';
-import { hostPath } from './verifier_command.js';
+import { hostPath, validateResultProtocol } from './verifier_command.js';
 import { captureIdentity } from './identity.js';
 import { createVerificationContext } from './context.js';
 import { initializeRun, checkpointRun, publishRun } from './publication.js';
@@ -33,6 +33,7 @@ export async function runRepositoryTask(given: RepositoryRunOptions): Promise<Re
   safePath(path);renameSync(temp,path);
  };
  try {
+  options.policy.verifiers.forEach(validateResultProtocol);
   root=hostPath(options.artifactDir,options.source,options.policy);
   // Reject stale artifacts rather than adopting or replacing another run's history/projection.
   if(existsSync(root) && readdirSync(root).length)throw new Error('active or existing run artifacts; fresh start refused');

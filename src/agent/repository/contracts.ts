@@ -16,6 +16,7 @@ export interface InputBinding {
   readonly policy: Digest; readonly candidate: CandidateIdentity; readonly revisionId: string;
 }
 export interface VerifierCommand {
+  readonly resultProtocol?: 'exit-v1';
   readonly id: string; readonly executable: string; readonly argv: readonly string[];
   readonly cwd: string; readonly programDigest: Digest;
   readonly failureKind: 'compile' | 'functional' | 'guard' | 'requirement' | 'core' | 'environment' | 'ambiguous';

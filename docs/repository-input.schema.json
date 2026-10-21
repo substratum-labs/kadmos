@@ -176,6 +176,11 @@
             "environment",
             "ambiguous"
           ]
+        },
+        "resultProtocol": {
+          "enum": [
+            "exit-v1"
+          ]
         }
       },
       "required": [

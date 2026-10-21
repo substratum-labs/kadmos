@@ -44,3 +44,17 @@ test('CLI SIGTERM aborts real running backend and returns incomplete evidence', 
 });
 
 test('CLI applies finite defaults and retains operator backend prefix verbatim',t=>{const f=fixture('quota');t.after(f.cleanup);const value:Record<string,unknown>=input(f);delete value.limits;delete value.decisionsDir;const p=launch(f,value);assert.equal(p.status,1,p.stderr);const r=JSON.parse(p.stdout);assert.equal(r.status,'blocked');assert.equal(r.limits.maxAttempts,3);assert.equal(r.limits.attemptMs,1200000);assert.equal(r.limits.overallMs,5400000);assert.deepEqual(r.attempts[0].backend.process.argv.slice(0,3),f.backend.options.prefixArgs);});
+
+test('CLI preserves exit-v1 in frozen context, policy digest and complete check receipts',t=>{
+ const f=fixture('repair');t.after(f.cleanup);const value=input(f);
+ const p=launch(f,{...value,policy:{...value.policy,verifiers:value.policy.verifiers.map(c=>({...c,resultProtocol:'exit-v1'}))}});
+ assert.equal(p.status,0,p.stderr+p.stdout);const r=JSON.parse(p.stdout);assert.equal(r.attempts.length,2);
+ for(const a of r.attempts)assert.equal(a.verification.checks[0].command.resultProtocol,'exit-v1');
+ const context=JSON.parse(readFileSync(join(r.artifactDir,'inputs/revisions/run-1/r0/verification-context/record.json'),'utf8'));
+ assert.equal(context.context.policy.verifiers[0].resultProtocol,'exit-v1');
+ assert.equal(r.delivery.binding.policy,context.context.baseline.policy);
+});
+for(const resultProtocol of ['exit-v2',null,1,{}])test(`CLI refuses invalid resultProtocol ${JSON.stringify(resultProtocol)} before artifacts or backend`,t=>{
+ const f=fixture();t.after(f.cleanup);const v=input(f);const p=launch(f,{...v,policy:{...v.policy,verifiers:v.policy.verifiers.map(c=>({...c,resultProtocol}))}});
+ assert.equal(p.status,1);assert.equal(existsSync(f.options.artifactDir),false);assert.equal(f.exists('launches'),false);
+});
