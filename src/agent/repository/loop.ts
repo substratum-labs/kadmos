@@ -11,6 +11,7 @@ import { verifyCandidate } from './verify.js';
 import { classifyFailure } from './feedback.js';
 import { validateDelivery } from './artifacts.js';
 import { copy } from './evidence.js';
+import { prepareContinuation } from './continuation.js';
 import { createControl, detachBackend } from './control.js';
 
 function logData(path:string,options:RepositoryRunOptions,workspace:string):string {
@@ -20,7 +21,7 @@ function logData(path:string,options:RepositoryRunOptions,workspace:string):stri
 /** Host-owned serialized fixed-World loop. Model prose never conveys approval or acceptance. */
 export async function runRepositoryTask(given: RepositoryRunOptions): Promise<RepositoryRunRecord> {
  // Detach all immutable inputs before the first backend await; the backend and signal are capabilities.
- const options={...copy({...given,backend:null,signal:null}),backend:detachBackend(given.backend),signal:given.signal} as RepositoryRunOptions;
+ let options={...copy({...given,backend:null,signal:null}),backend:detachBackend(given.backend),signal:given.signal} as RepositoryRunOptions;
  const now=Date.now();
  let record:RepositoryRunRecord={schema:REPOSITORY_CONTRACT,runId:options.runId,status:'incomplete',limits:options.limits,startedAt:new Date(now).toISOString(),deadlineEpochMs:now+options.limits.overallMs,attempts:[],revisions:[options.revision],effects:[],delivery:null,diagnostics:[]};
  let owned=false,projection=false,lock='',workspace='',root='';
@@ -36,23 +37,32 @@ export async function runRepositoryTask(given: RepositoryRunOptions): Promise<Re
  try {
   options.policy.verifiers.forEach(validateResultProtocol);
   root=hostPath(options.artifactDir,options.source,options.policy);
-  // Reject stale artifacts rather than adopting or replacing another run's history/projection.
-  if(existsSync(root) && readdirSync(root).length)throw new Error('active or existing run artifacts; fresh start refused');
+  const existing=existsSync(root) && readdirSync(root).length>0;
   mkdirSync(root,{recursive:true,mode:0o700});
   lock=safePath(join(root,'controller'));mkdirSync(lock,{mode:0o700});owned=true;
-  workspace=safePath(join(dirname(root),basename(root)+'-workspace'));
+  let baseline:InputBinding;
+  let header:ReturnType<typeof initializeRun>;
+  if(existing) {
+   const resumed=prepareContinuation(options,old=>{record=old;});
+   options=resumed.options;record=resumed.record;workspace=resumed.workspace;baseline=resumed.baseline;
+   header={...record,workspace,policy:options.policy,schema:'kadmos.run-start.v1'};
+   projection=true;
+  } else {
+   workspace=safePath(join(dirname(root),basename(root)+'-workspace'));
+   const storage={artifactDir:root,workspace,policy:options.policy,runId:options.runId};
+   header=initializeRun({...storage,limits:options.limits});
+   record={...record,startedAt:header.startedAt,deadlineEpochMs:header.deadlineEpochMs,limits:header.limits};
+   display();projection=true;
+   const created=createWorkspace({source:options.source,destination:workspace,policy:options.policy});
+   if(created.status!=='created'){diagnose(created.diagnostics.join('\n'));return record;}
+   baseline=captureIdentity({...options,workspace,revisionId:options.revision.id});
+   createVerificationContext({...options,workspace,revisionId:options.revision.id,expected:baseline});
+   createControl({...options,artifactDir:root,workspace});
+  }
   const storage={artifactDir:root,workspace,policy:options.policy,runId:options.runId};
-  const header=initializeRun({...storage,limits:options.limits});
-  record={...record,startedAt:header.startedAt,deadlineEpochMs:header.deadlineEpochMs,limits:header.limits};
-  display();projection=true;
-  const created=createWorkspace({source:options.source,destination:workspace,policy:options.policy});
-  if(created.status!=='created'){diagnose(created.diagnostics.join('\n'));return record;}
   const identity={...options,workspace,revisionId:options.revision.id};
-  const baseline=captureIdentity(identity);
-  createVerificationContext({...identity,expected:baseline});
-  createControl({...options,artifactDir:root,workspace});
   checkpointRun(storage,record);
-  for(let index=0;index<header.limits.maxAttempts;index++) {
+  for(let index=record.attempts.length;index<header.limits.maxAttempts;index++) {
    if(options.signal.aborted || Date.now()>=header.deadlineEpochMs){diagnose(options.signal.aborted?'controller cancelled before attempt':'original run deadline exhausted','incomplete');checkpointRun(storage,record);break;}
    const id=`a${index+1}`;
    const binding=captureIdentity({...identity,baseline});

@@ -62,6 +62,12 @@ export function snapshotCandidate(workspace: string, policy: RepositoryPolicy): 
   const value = { baseCommit: policy.baseCommit, files, deleted };
   return { ...value, digest: hashBytes(JSON.stringify(value)) };
 }
+/** Validate the original clean base before any continuation candidate mutation. */
+export function validateSource(sourcePath:string,policy:RepositoryPolicy):void {
+ const source=safePath(sourcePath);
+ if(source!==safePath(policy.sourceRoot) || git(source,['rev-parse','--show-toplevel']).trim()!==source || git(source,['status','--porcelain=v1','-z','--untracked-files=all']) || git(source,['rev-parse','HEAD']).trim()!==policy.baseCommit)throw new Error('original source/head drift');
+ snapshotCandidate(source,policy);
+}
 export function createWorkspace(input: WorkspaceRequest): WorkspaceResult {
   let owned = false, destination = '';
   try {
