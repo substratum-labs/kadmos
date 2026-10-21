@@ -1,11 +1,12 @@
-# Repository loop interface (v1, D1 foundation)
+# Repository loop interface (v1, D2a integration checkpoint)
 
 Implemented D1 host APIs provide disposable workspaces, physical/scripted backend
 process evidence, frozen verification contexts, real verification, delivery
 eligibility, original run budgets, immutable checkpoints and complete-run
-publication/readback. D1 assembled independent acceptance is still pending.
-D2 orchestration/feedback and repository CLI, E World proposal/activation, and F
-effect reconciliation remain planned stubs. Later behavioral tests intentionally
+publication/readback. D1 foundation was physically accepted at 280f087.
+D2a adds fixed-World orchestration and bounded diagnostic feedback, pending physical D review.
+D2b repository CLI/live demonstration, E World proposal/activation, and F
+effect reconciliation remain pending. Later behavioral tests intentionally
 fail. Existing `kadmos run` and `kadmos.compiler.k02.v1` are unchanged.
 
 The TypeScript wire shapes are in `src/agent/repository/contracts.ts`.
@@ -30,9 +31,9 @@ Status below describes current implementation; planned behavior grants no author
   argv token `<candidate>` is replaced with the captured workspace path; no other
   interpolation is allowed. The same token may select the command cwd. A receipt binds
   the exact before/after input tuple, commands, actual exits and raw log paths.
-- **Planned D2; current stub returns incomplete without executing:** `runRepositoryTask(RepositoryRunOptions) -> Promise<RepositoryRunRecord>` owns
+- **Implemented D2a, pending review:** `runRepositoryTask(RepositoryRunOptions) -> Promise<RepositoryRunRecord>` owns
   attempts, evidence and final delivery. Exit zero and model prose cannot deliver.
-- **Planned D2; current stub always returns NEEDS_REVIEW:** `classifyFailure(VerificationReceipt) -> FailureRoute` chooses `CODE_REPAIR`,
+- **Implemented D2a, pending review:** `classifyFailure(VerificationReceipt) -> FailureRoute` chooses `CODE_REPAIR`,
   `WORLD_CHANGE_REQUIRED`, `CORE_MISMATCH`, `ENVIRONMENT_BLOCKED` or `NEEDS_REVIEW`.
   A route is evidence routing, never World or compiler authority.
 - **Planned E; current stub returns invalid pending digests:** `proposeWorldChange(WorldChangeInput) -> WorldChangeProposal` records a rationale
@@ -148,8 +149,8 @@ configured host-owned directory is persisted with run inputs. Activation receive
 that trusted root separately from the decisionPath to validate. World proposal
 artifactDir names the run root, not the revisions subdirectory.
 
-Planned compatibility projection (not current artifact paths; D2/E/F must
-explicitly design any projection). Actual D1 paths are listed in the
+D2a implements only the display-only `run.json` compatibility projection below.
+Other sketch paths remain planned; actual authoritative paths are listed in the
 "Internal complete-run publication" section below:
 
 ```text
@@ -215,17 +216,17 @@ against that exact snapshot, including modes and added/deleted regular files.
 It regenerates both TypeScript seam files in memory with the unchanged compiler.
 Ruling: v1 TS seam declarations may be directories or individual files but must
 cover exactly ports.d.ts and world_checker.ts once; extra/duplicate files refuse.
-This helper grants neither verifier success nor durable acceptance. Verifier and publication now use this capture; orchestration wiring remains D2.
+This helper grants neither verifier success nor durable acceptance. Verifier and publication now use this capture; D2a wires orchestration to this capture; CLI/live work remains D2b.
 
 
 ## Internal complete-run publication (D1f)
 
 The public v1 record/manifest interfaces above remain unchanged. The original
-`run.json` / `delivery.json` sketch is a future compatibility view; neither a
+`run.json` view is display-only; `delivery.json` remains a future sketch. Neither a
 projection file nor `validateDelivery` eligibility grants durable delivery.
 The host uses `publication.ts`: `initializeRun` before any attempts, then
 `readRunStart`, `checkpointRun`, `readRunCheckpoint`, `publishRun`, and
-`readCompleteRun`. The loop/CLI wiring remains Task D2.
+`readCompleteRun`. The loop is wired in D2a; CLI/live work remains D2b.
 
 All paths below are host-selected under an external artifact root, outside and
 not containing the source/candidate. No backend prose selects evidence paths.
@@ -300,3 +301,44 @@ create-once persistence; validated load paths check context integrity.
 Lifecycle sidecars are also create-once (`wx`): an existing sidecar refuses
 launch/qualification, preserves its bytes, and attempts known-PID cleanup.
 It does not overwrite telemetry or manufacture process-tree closure.
+
+## D2a fixed-World integration (pending physical D review)
+
+`runRepositoryTask` reserves one external artifact root for the entire run. A
+concurrent or stale fresh start refuses to overwrite its display/history. The
+disposable checkout lives at the sibling `<artifactDir>-workspace`; the clean
+original source remains unchanged. Original limits/start/deadline precede clone
+and attempt work; the host context and an incomplete checkpoint precede backend
+launch. Failed attempts remain immutable checkpoint history. `run.json` is first
+incomplete and becomes delivered only after `publishRun` completes exact readback.
+Clone/context/storage failures retain honest incomplete/blocked evidence.
+
+Only ordinary compile/functional/guard failures retry, up to the original total
+attempt limit. Requirement failure pauses awaiting World; core/environment or
+ambiguous/protected evidence stops. Nonzero/malformed/quota/timeout/cancelled or
+unknown backend closure cannot deliver or retry. Verification follows only a
+known stopped successful backend, independently captures policy identities and
+regenerates the unchanged seam, and returns actual protected-change receipts.
+
+Verifier stdout/stderr are retained in their raw host logs and bounded to 4096
+bytes per stream for diagnostic feedback. Feedback is JSON-quoted data appended
+to the next task's instructions because the physical backend sends instructions
+to stdin. It never supplies commands, approval, or permission.
+
+Repository-backed CodexBackend snapshots load the frozen policy from validated
+host context (run/revision/base/policy digest), preserving exact raw file/mode
+identity and exclusions in the stored backend receipt. There is no receipt rewrite
+or equality weakening. Standalone tasks without revision context retain C's
+empty-exclusion behavior; an existing malformed/mismatched context fails closed.
+
+D1 R2 Minor dispositions: M1's alleged finally-on-mkdir-throw is contradicted by
+JavaScript control flow and a repeated collision test; preserve the guard. M2
+rechecks the original deadline before complete creation, retaining any stranded
+partial manifest. M3 actual hardlinked-log sealing failure returns incomplete /
+environment while preserving the earlier raw after record. M4 allows exact
+WorldRevision keys only. M5 asserts the precise multiple-invocations refusal
+after restoring protected bytes. These are D2 changes, not retroactive D1 acceptance.
+
+A10's code-repair route is exercised independently; its later F settlement trace
+still intentionally fails. Task D remains IN_PROGRESS until D2b CLI/live and the
+shared settlement prerequisite are handled and physical review accepts the assembly.

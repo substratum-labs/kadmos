@@ -33,6 +33,7 @@ process.stdin.on('end', () => {
   }
   if (mode === 'receipt-collision') fs.mkdirSync(path.join(host,'artifacts/attempts/a1/stdout.jsonl.lifecycle.json'));
   if (mode.startsWith('tamper:')) fs.appendFileSync(path.join(cwd, mode.slice(7)), '\nTAMPER');
+  if (mode === 'output-edits') { fs.mkdirSync(path.join(cwd,'dist'),{recursive:true});fs.writeFileSync(path.join(cwd,'dist/output.bin'),Buffer.from([255,0]));fs.unlinkSync(path.join(cwd,'src/b.ts'));fs.writeFileSync(path.join(cwd,'src/new.bin'),Buffer.from([0,255,128]),{mode:0o755}); }
   if (mode === 'repair') {
     const countPath = path.join(host,'attempts');
     const n = fs.existsSync(countPath) ? Number(fs.readFileSync(countPath))+1 : 1;

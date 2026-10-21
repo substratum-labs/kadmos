@@ -18,9 +18,11 @@ node --test dist/tests/test_repository_contracts.test.js
 node --test dist/tests/test_coding_backend.test.js dist/tests/test_repository_loop.test.js dist/tests/test_world_revision.test.js dist/tests/test_repository_demo.test.js
 ```
 
-The contract gate currently passes 5 tests. The behavioral command currently
-runs 40 tests: 39 intentionally fail assertions against pending implementations;
-one conservative ambiguous-routing case passes. No tests are skipped. A20 remains
+Historical B checkpoint: the contract gate passed 5 tests. The behavioral command
+then ran 40 tests: 39 intentionally failed assertions against pending implementations;
+one conservative ambiguous-routing case passed. D2a now implements bounded fixed-World
+loop/feedback; current measured counts and exact remaining failures are archived in
+the coordination D2a evidence packet. CLI/live, E and F remain pending. No tests are skipped. A20 remains
 an unexecuted live gate. The unchanged legacy baseline is 268 passing tests,
 with packed NodeNext consumer and strict typecheck passing separately. The full
 suite is intentionally RED. Each future implementation phase must replace its

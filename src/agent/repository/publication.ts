@@ -52,6 +52,7 @@ function recordShape(input:RunStorage,r:RepositoryRunRecord,h:RunHeader):void {
  // D1 has no World activation authority. E must deliberately extend this with host approval evidence.
  insist(r.revisions.length===1,'D1 requires one initial fixed-World revision');
  const v=r.revisions[0]!;id(v.id);
+ insist(isDeepStrictEqual(Object.keys(v).sort(),['id','parentId','proposalId','seam','seamPaths','staleReceiptIds','state','world','worldPath']),'unexpected WorldRevision fields');
  insist(v.state==='active' && v.parentId===null && v.proposalId===null && isDeepStrictEqual(v.staleReceiptIds,[]),'unapproved D1 revision');
  const context=readVerificationContext({...input,revisionId:v.id});
  insist(v.world===context.baseline.world && v.seam===context.baseline.seam && v.worldPath===context.roles.worldPath && isDeepStrictEqual(v.seamPaths,context.roles.seamPaths),'initial revision differs from host context');
@@ -165,6 +166,7 @@ function publishUnlocked(input:RunStorage,record:RepositoryRunRecord):Repository
  const manifest=eligible(input,record,h,latest);
  createAtomicJson(join(root,'manifest'),{schema:'kadmos.delivery-manifest.v1',manifest});
  const c:Complete={schema:'kadmos.run-complete.v1',publishedAt:new Date().toISOString(),start:fileRef(input.artifactDir,join(root,'start','record.json')),checkpoint:fileRef(input.artifactDir,join(root,'checkpoints',String(latest.sequence).padStart(8,'0'),'record.json')),manifest:fileRef(input.artifactDir,join(root,'manifest','record.json')),record:copy(record)};
+ insist(Date.now()<h.deadlineEpochMs && Date.parse(c.publishedAt)<h.deadlineEpochMs,'publication deadline exhausted before complete marker');
  createAtomicJson(join(root,'complete'),c);return copy(record);
 }
 /** Durable readback does not renew or re-spend expired budgets. Checksums are not signatures. */

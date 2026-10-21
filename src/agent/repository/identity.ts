@@ -31,6 +31,7 @@ export function captureIdentity(input: IdentityRequest): InputBinding {
  const requirements = hashBytes(bytes(map(input.requirementsPath)));
  const worldBytes = bytes(map(input.worldPath));
  const world = hashBytes(worldBytes);
+ if(baseline)require(world===baseline.world && requirements===baseline.requirements,'frozen inputs changed');
  const projection = compileWorldSpec(parseWorldSpec(worldBytes.toString('utf8')));
  const generated: Record<string,string> = { 'ports.d.ts': projection.portsDts, 'world_checker.ts': projection.worldCheckerTs };
  const seamFiles: FileIdentity[] = [], seen = new Set<string>(), generatedSeen = new Set<string>();

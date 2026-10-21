@@ -1,5 +1,7 @@
 import { captureIdentity, type IdentityRequest } from './identity.js';
 import { isDeepStrictEqual } from 'node:util';
+import { existsSync } from 'node:fs';
+import type { CodingTask } from './contracts.js';
 import { isAbsolute, join } from 'node:path';
 import { containsPath, hashBytes, safePath } from './workspace.js';
 import { createAtomicJson, readAtomicJson } from './store.js';
@@ -80,4 +82,19 @@ export function loadVerificationContext(input: ContextRead): { readonly context:
  const context=readVerificationContext(input);
  const current=captureIdentity({...context.roles,workspace:input.workspace,policy:input.policy,revisionId:input.revisionId,baseline:context.baseline});
  return freeze({context:JSON.parse(JSON.stringify(context)) as VerificationContext,current});
+}
+
+/** Optional repository context for C-compatible standalone backends. Existing malformed records fail closed. */
+export function backendSnapshotPolicy(task: CodingTask): RepositoryPolicy {
+ const root=safePath(task.artifactDir);
+ for(const id of [task.runId,task.binding.revisionId])requireValue(/^[a-z0-9][a-z0-9_-]{0,127}$/.test(id),'unsafe host record id');
+ const revisions=safePath(join(root,'inputs','revisions'));
+ if(!existsSync(revisions))return {sourceRoot:task.workspace,baseCommit:task.binding.candidate.baseCommit,allowedPaths:[],protectedPaths:[],excludedOutputs:[],verifiers:[]};
+ const dir=safePath(join(revisions,task.runId,task.binding.revisionId,'verification-context'));
+ const envelope=object(readAtomicJson(dir)), context=object(envelope.context);
+ const policy=object(context.policy) as unknown as RepositoryPolicy;
+ requireValue(hashBytes(JSON.stringify(policy))===task.binding.policy,'backend policy digest mismatch');
+ const loaded=readVerificationContext({artifactDir:task.artifactDir,workspace:task.workspace,runId:task.runId,revisionId:task.binding.revisionId,policy});
+ requireValue(loaded.baseline.candidate.baseCommit===task.binding.candidate.baseCommit,'backend base mismatch');
+ return loaded.policy;
 }

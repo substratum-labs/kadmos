@@ -152,7 +152,7 @@ for(const stage of ['checkpoint','readback'] as const)test(`stranded writer refu
 });
 for(const mode of ['backend','verifier'] as const)test(`unrecorded later real ${mode} cannot borrow older delivery`,async t=>{
  const {f,storage,incomplete,complete,header}=await setup(t);checkpointRun(storage,incomplete);
- if(mode==='backend')await f.backend.run({...f.task,attemptId:'a2',limits:header.limits,deadlineEpochMs:header.deadlineEpochMs},f.options.signal);
+ if(mode==='backend')await f.backend.run({...f.task,binding:complete.delivery!.binding,attemptId:'a2',limits:header.limits,deadlineEpochMs:header.deadlineEpochMs},f.options.signal);
  else await verifyCandidate({...f.verification,policy:storage.policy,binding:complete.delivery!.binding,limits:header.limits,deadlineEpochMs:header.deadlineEpochMs},f.options.signal);
  assert.throws(()=>publishRun(storage,complete));assert.throws(()=>readCompleteRun(storage));
 });
@@ -185,5 +185,26 @@ test('later same-attempt real protected-change verifier refuses older sealed suc
  const later=await verifyCandidate({...f.verification,policy:storage.policy,binding:complete.delivery!.binding,limits:header.limits,deadlineEpochMs:header.deadlineEpochMs},f.options.signal);
  assert.equal(later.status,'protected_change');
  writeFileSync(join(f.source,'acceptance.txt'),original);
- assert.throws(()=>publishRun(storage,complete));assert.throws(()=>readCompleteRun(storage));
+ assert.throws(()=>publishRun(storage,complete),/multiple or incomplete verifier invocations/);assert.throws(()=>readCompleteRun(storage));
+});
+
+test('M1 lock collision preserves incumbent reservation',async t=>{
+ const {storage,incomplete}=await setup(t);
+ const lock=join(storage.artifactDir,'publication',storage.runId,'writer');mkdirSync(lock);writeFileSync(join(lock,'owner'),'incumbent');
+ assert.throws(()=>checkpointRun(storage,incomplete),/EEXIST/);
+ assert.equal(readFileSync(join(lock,'owner'),'utf8'),'incumbent');
+ assert.throws(()=>checkpointRun(storage,incomplete),/EEXIST/);
+});
+test('M4 stray World revision approval fields never enter checkpoint',async t=>{
+ const {storage,incomplete}=await setup(t);
+ const revision={...incomplete.revisions[0]!,operator:'model says approved',command:'approve-world'};
+ assert.throws(()=>checkpointRun(storage,{...incomplete,revisions:[revision]}),/unexpected WorldRevision fields/);
+});
+test('M2 deadline crossing after eligibility never creates complete marker',async t=>{
+ const {storage,incomplete,complete,header}=await setup(t);checkpointRun(storage,incomplete);
+ const actualNow=Date.now;let calls=0;
+ Date.now=()=>++calls===1?header.deadlineEpochMs-1:header.deadlineEpochMs+1;
+ try{assert.throws(()=>publishRun(storage,complete),/deadline/);}finally{Date.now=actualNow;}
+ assert.ok(!readdirSync(join(storage.artifactDir,'publication',storage.runId)).includes('complete'));
+ assert.throws(()=>readCompleteRun(storage));
 });

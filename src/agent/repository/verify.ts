@@ -67,7 +67,7 @@ export async function verifyCandidate(input: VerificationInput, signal: AbortSig
   else if(status!=='failed')failureKind='environment';
  } catch(error) {
   const message=String(error);diagnostics.push(message);
-  if(/frozen inputs changed|unauthorized edit/.test(message))status='protected_change';
+  if(/frozen inputs changed|unauthorized edit|generated seam differs/.test(message))status='protected_change';
   failureKind??='environment';
  }
  if(dir)try {createAtomicJson(join(dir,'after'),{after,receipt:receipt()});}catch(error){status='incomplete';failureKind='environment';diagnostics.push(`receipt publication: ${String(error)}`);}
@@ -76,6 +76,6 @@ export async function verifyCandidate(input: VerificationInput, signal: AbortSig
  if(dir)try {
   const evidence:VerificationEvidence={input:copy(input),invocation:dir,receipt:copy(result),refs:verificationFiles(input,dir,result).filter(path=>existsSync(path)).map(path=>fileRef(input.artifactDir,path))};
   checkVerificationEvidence(evidence);observedReceipts.set(result,evidence);
- }catch(error){diagnostics.push(`evidence sealing: ${String(error)}`);}
+ }catch(error){status='incomplete';failureKind='environment';diagnostics.push(`evidence sealing: ${String(error)}`);return receipt();}
  return result;
 }

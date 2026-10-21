@@ -98,3 +98,15 @@ test('verifier rejects missing finite limit fields before launching any process'
  const {f,input}=setup(t);const r=await verifyCandidate({...input,limits:{maxAttempts:1} as typeof input.limits},f.options.signal);
  assert.equal(r.checks.length,0);assert.match(r.diagnostics.join(' '),/limits/);
 });
+
+test('M3 actual evidence sealing failure clears passed receipt',async t=>{
+ const f=fixture();t.after(f.cleanup);
+ const code=`const fs=require('node:fs'),p=require('node:path');const parent=${JSON.stringify(join(f.options.artifactDir,'verification/run-1/a1'))};const dir=p.join(parent,fs.readdirSync(parent)[0],'acceptance');fs.linkSync(p.join(dir,'stdout'),${JSON.stringify(join(f.host,'aliased-log'))});console.log('passed check, unsafe evidence');`;
+ writeFileSync(join(f.host,'verify.cjs'),code);
+ const policy={...f.policy,verifiers:[{...f.policy.verifiers[0]!,programDigest:hashBytes(code)}]};
+ const binding=captureIdentity({...f.options,workspace:f.source,policy,revisionId:'r0'});
+ createVerificationContext({...f.options,workspace:f.source,policy,revisionId:'r0',expected:binding});
+ const r=await verifyCandidate({...f.verification,policy,binding},f.options.signal);
+ assert.equal(r.checks[0]?.status,'passed');assert.equal(r.status,'incomplete');assert.equal(r.failureKind,'environment');assert.match(r.diagnostics.join(' '),/evidence sealing/);
+ assert.equal(validateDelivery({workspace:f.source,policy,receipt:r,expected:binding,requiredCheckIds:['acceptance'],unresolvedEffects:[]}).status,'refused');
+});

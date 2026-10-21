@@ -1,3 +1,4 @@
+import { backendSnapshotPolicy } from './context.js';
 import { supervise, quotaPattern, type Observation } from './host_process.js';
 import { mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
@@ -44,7 +45,7 @@ export class CodexBackend implements CodingBackend {
       const artifacts = safePath(task.artifactDir);
       if (containsPath(workspace, artifacts) || containsPath(artifacts, workspace)) throw new Error('artifacts must be outside candidate');
       // Validate all candidate entries before launching; no aliases/special files.
-      snapshotCandidate(workspace, { sourceRoot: workspace, baseCommit: task.binding.candidate.baseCommit, allowedPaths: [], protectedPaths: [], excludedOutputs: [], verifiers: [] });
+      snapshotCandidate(workspace, backendSnapshotPolicy(task));
       executable = executablePath(this.options.executable);
       attemptDir = join(artifacts, 'attempts', task.attemptId); safePath(attemptDir);
       mkdirSync(join(artifacts, 'attempts'), { recursive: true }); mkdirSync(attemptDir);
@@ -73,7 +74,7 @@ export class CodexBackend implements CodingBackend {
     if (status !== 'exited') diagnostics.push(`backend ${status}`);
     if (observed.exitCode !== null && observed.exitCode !== 0) diagnostics.push(`exit ${observed.exitCode}`);
     if (status === 'exited' && observed.exitCode === 0 && observed.treeStopped === true) {
-      try { candidate = snapshotCandidate(workspace, { sourceRoot: workspace, baseCommit: task.binding.candidate.baseCommit, allowedPaths: [], protectedPaths: [], excludedOutputs: [], verifiers: [] }); }
+      try { candidate = snapshotCandidate(workspace, backendSnapshotPolicy(task)); }
       catch (error) { status = 'malformed'; diagnostics.push(String(error)); }
     }
     const result: CodingResult = { runId: task.runId, attemptId: task.attemptId, status, process: evidence, candidate, diagnostics };
