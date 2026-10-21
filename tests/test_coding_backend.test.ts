@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync, symlinkSync, realpathSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, symlinkSync, realpathSync, unlinkSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { spawnSync } from 'node:child_process';
@@ -106,4 +106,47 @@ test('C incomplete runtime limits refuse before any executable launch',async t=>
 test('C scripted backend uses the same physical evidence contract',async t=>{
  const f=fixture();t.after(f.cleanup);const r=await new ScriptedBackend(f.backend.options).run(f.task,f.options.signal);
  assert.equal(r.status,'exited');assert.equal(r.process.exitCode,0);assert.equal('accepted' in r,false);
+});
+
+for (const mode of ['natural-group','natural-subtree','reparented-group'] as const) test(`CQ ${mode} distinguishes observed natural closure from lost lineage`,{timeout:20_000},async t=>{
+ const f=fixture(mode);t.after(f.cleanup);
+ const task={...f.task,limits:{...f.task.limits,attemptMs:2500}};
+ const r=await f.backend.run(task,f.options.signal);
+ assert.equal(r.process.exitCode,0);
+ assert.equal(r.process.treeStopped,mode!=='reparented-group'?true:'unknown');
+ assert.equal(r.status,mode!=='reparented-group'?'exited':'launch_failed');
+ assert.equal(Boolean(r.candidate),mode!=='reparented-group');
+ const lifecycle=JSON.parse(readFileSync(r.process.stdoutPath+'.lifecycle.json','utf8'));
+ assert.equal(lifecycle.escaped,true);assert.equal(lifecycle.inventoryFailed,false);
+ assert.ok(lifecycle.observations.length>2);
+ assert.ok(lifecycle.observations.some((o:{members:{group:number}[]})=>o.members.some(p=>p.group!==r.process.pid)));
+ if(mode!=='reparented-group')assert.ok(lifecycle.naturallyClosed.includes(Number(f.read('child.pid'))));
+ else assert.equal(lifecycle.lineageLost,true);
+});
+
+for(const failure of ['unavailable','malformed'] as const)test(`CQ ${failure} inventory never qualifies an empty remaining set`,async t=>{
+ const f=fixture();t.after(f.cleanup);
+ const ps=join(f.host,'ps');writeFileSync(ps,failure==='unavailable'?'#!/bin/sh\nexit 1\n':'#!/bin/sh\nprintf "bad inventory\\n"\n');chmodSync(ps,0o700);
+ const previous=process.env.PATH;process.env.PATH=f.host+':'+(previous??''); t.after(()=>{if(previous===undefined)delete process.env.PATH;else process.env.PATH=previous;});
+ const r=await f.backend.run(f.task,f.options.signal);
+ assert.equal(r.status,'launch_failed');assert.equal(r.process.treeStopped,'unknown');assert.equal(r.candidate,null);
+ const lifecycle=JSON.parse(readFileSync(join(f.task.artifactDir,'attempts/a1/version.stdout.lifecycle.json'),'utf8'));
+ assert.equal(lifecycle.inventoryFailed,true);assert.deepEqual(lifecycle.remaining,[]);
+ assert.ok(lifecycle.observations.some((o:{members:unknown})=>o.members===null));
+});
+
+test('CQ ordinary exit with surviving departed child stays unknown even after cleanup',{timeout:20_000},async t=>{
+ const f=fixture('escape-linger');t.after(f.cleanup);
+ const r=await f.backend.run(f.task,f.options.signal);
+ assert.equal(r.process.exitCode,0);assert.equal(r.status,'launch_failed');
+ assert.equal(r.process.treeStopped,'unknown');assert.equal(r.candidate,null);
+ const lifecycle=JSON.parse(readFileSync(r.process.stdoutPath+'.lifecycle.json','utf8'));
+ assert.equal(lifecycle.lineageLost,true);assert.ok(lifecycle.observations.some((o:{phase:string})=>o.phase==='cleanup'));
+ assert.throws(()=>process.kill(Number(f.read('child.pid')),0));
+});
+test('CQ missing lifecycle receipt cannot return a candidate',async t=>{
+ const f=fixture('receipt-collision');t.after(f.cleanup);
+ await assert.rejects(f.backend.run(f.task,f.options.signal),/EEXIST/);
+ assert.equal(existsSync(join(f.task.artifactDir,'attempts/a1/process.json')),false);
+ assert.equal(existsSync(join(f.task.artifactDir,'attempts/a1/stdout.jsonl')),true);
 });

@@ -38,3 +38,23 @@ intentionally RED. A single Codex 0.163.0 smoke actually edited the disposable
 file (41→42) and exited 0. Its child-group escape conservatively produced
 `launch_failed` / `treeStopped: unknown`; this is failed qualification evidence,
 not a delivered task or an A20 substitute. No auth/quota block was reported.
+
+### C-Q qualification clarification (pending independent review)
+
+For the existing single trusted operator, non-adversarial local profile,
+`treeStopped: true` means sampled tracked-lineage closure, not universal process
+containment. A PGID departure alone is not unresolved work: it may qualify only
+when a later successful inventory observes that PID absent, before supervisor
+cleanup, while its last observed chain reaches an ancestor still present and rooted in the
+launched process. Missing intermediate links must all be tracked departures also
+observed absent in that inventory; nested tools may close in the same sample. Every observed departure must meet that condition. Reparenting,
+a departure surviving to cleanup (even if killed), inventory failure/malformed
+inventory, or remaining tracked members yields unknown. Cancellation and timeout
+remain failures regardless of closure. Missing lifecycle writes throw rather
+than returning a candidate. Full timestamped inventories, natural closures and
+lineage-loss flags are retained beside stdout. Sampling cannot detect an
+unobserved rapid double-fork/escape; no adversarial containment is claimed.
+The literal argv, stdin, inherited operator configuration and finite limits are
+unchanged. The original C failed smoke remains failed qualification evidence.
+This bounded clarification of B's tracked-tree wording requires physical Grok
+review before D; it grants no software delivery, World approval or A20 result.

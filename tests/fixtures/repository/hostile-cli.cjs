@@ -13,12 +13,25 @@ process.stdin.on('end', () => {
   console.log(JSON.stringify({ type: 'thread.started', thread_id: 'fixture' }));
   if (mode === 'quota') { console.error('usage_limit_reached'); process.exitCode = 1; return; }
   if (mode === 'malformed') { console.log('not-json'); return; }
-  if (['hang','linger','stubborn','escape'].includes(mode)) {
-    const child = spawn(process.execPath, ['-e', `${mode==='stubborn'?"process.on('SIGTERM',()=>{});":''}setInterval(()=>require('fs').appendFileSync(${JSON.stringify(path.join(host,'heartbeat'))},'x'),20);setTimeout(()=>process.exit(),8000)`], { stdio: 'ignore', detached:mode==='escape' });
+  if (mode === 'natural-group' || mode === 'natural-subtree') {
+    const child = spawn(process.execPath, ['-e', mode==='natural-subtree'?`const {spawn}=require('child_process'); const c=spawn(process.execPath,['-e','setTimeout(()=>process.exit(0),180)'],{stdio:'ignore'});c.on('exit',()=>process.exit(0));`:'setTimeout(()=>process.exit(0),180)'], {stdio:'ignore',detached:true});
+    fs.writeFileSync(path.join(host,'child.pid'),String(child.pid));
+    child.on('exit',()=>setTimeout(()=>{console.log(JSON.stringify({type:'turn.completed'}));},180));
+    return;
+  }
+  if (mode === 'reparented-group') {
+    const child = spawn(process.execPath, ['-e', `const {spawn}=require('child_process'); const c=spawn(process.execPath,['-e',"setTimeout(()=>process.exit(0),600)"],{stdio:'ignore'}); require('fs').writeFileSync(${JSON.stringify(path.join(host,'grandchild.pid'))},String(c.pid));setTimeout(()=>process.exit(0),180);`], {stdio:'ignore',detached:true});
+    fs.writeFileSync(path.join(host,'child.pid'),String(child.pid));
+    setTimeout(()=>console.log(JSON.stringify({type:'turn.completed'})),1000);
+    return;
+  }
+  if (['hang','linger','stubborn','escape','escape-linger'].includes(mode)) {
+    const child = spawn(process.execPath, ['-e', `${mode==='stubborn'?"process.on('SIGTERM',()=>{});":''}setInterval(()=>require('fs').appendFileSync(${JSON.stringify(path.join(host,'heartbeat'))},'x'),20);setTimeout(()=>process.exit(),8000)`], { stdio: 'ignore', detached:mode==='escape'||mode==='escape-linger' });
     fs.writeFileSync(path.join(host, 'child.pid'), String(child.pid));
-    if(mode==='linger') { console.log(JSON.stringify({type:'turn.completed'})); setTimeout(()=>process.exit(0),150); return; }
+    if(mode==='linger'||mode==='escape-linger') { console.log(JSON.stringify({type:'turn.completed'})); setTimeout(()=>process.exit(0),150); return; }
     setInterval(() => {}, 1000); setTimeout(()=>process.exit(8),8000); return;
   }
+  if (mode === 'receipt-collision') fs.mkdirSync(path.join(host,'artifacts/attempts/a1/stdout.jsonl.lifecycle.json'));
   if (mode.startsWith('tamper:')) fs.appendFileSync(path.join(cwd, mode.slice(7)), '\nTAMPER');
   if (mode === 'repair') {
     const countPath = path.join(host,'attempts');
