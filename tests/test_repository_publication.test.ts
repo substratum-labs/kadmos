@@ -11,9 +11,9 @@ import { verifyCandidate } from '../src/agent/repository/verify.js';
 import { validateDelivery } from '../src/agent/repository/artifacts.js';
 import { hashBytes } from '../src/agent/repository/workspace.js';
 import type { RepositoryRunRecord } from '../src/agent/repository/contracts.js';
-async function setup(t: import('node:test').TestContext) {
+async function setup(t: import('node:test').TestContext, mutateLater=false, initialCheckpoint=true) {
  const f=fixture();t.after(f.cleanup);
- const code='console.log("actual publication verifier")';writeFileSync(join(f.host,'verify.cjs'),code);
+ const code=mutateLater?`const fs=require('node:fs');if(fs.existsSync(${JSON.stringify(join(f.host,'trigger'))}))fs.writeFileSync(${JSON.stringify(join(f.source,'acceptance.txt'))},'changed protected input');console.log('actual publication verifier')`:'console.log("actual publication verifier")';writeFileSync(join(f.host,'verify.cjs'),code);
  const policy={...f.policy,verifiers:[{...f.policy.verifiers[0]!,programDigest:hashBytes(code)}]};
  const storage={...f.options,workspace:f.source,policy};
  let header!:ReturnType<typeof initializeRun>;
@@ -21,7 +21,7 @@ async function setup(t: import('node:test').TestContext) {
  const binding=captureIdentity({...f.options,workspace:f.source,policy,revisionId:'r0'});
  createVerificationContext({...storage,revisionId:'r0',expected:binding});
  const empty:RepositoryRunRecord={schema:'kadmos.repository.v1',runId:f.options.runId,status:'incomplete',limits:header.limits,startedAt:header.startedAt,deadlineEpochMs:header.deadlineEpochMs,attempts:[],revisions:[f.revision],effects:[],delivery:null,diagnostics:[]};
- checkpointRun(storage,empty);
+ if(initialCheckpoint)checkpointRun(storage,empty);
  // Both processes are real. Backend exit alone never grants authority.
  const backend=await f.backend.run({...f.task,binding,limits:header.limits,deadlineEpochMs:header.deadlineEpochMs},f.options.signal);
  assert.equal(backend.status,'exited');assert.equal(backend.process.treeStopped,true);
@@ -88,14 +88,22 @@ for(const mode of ['candidate','manifest','receipt','log','lifecycle','checkpoin
  if(mode==='symlink'){const out=p.stdoutPath+'.copy';writeFileSync(out,readFileSync(p.stdoutPath));rmSync(p.stdoutPath);symlinkSync(out,p.stdoutPath);}
  assert.throws(()=>readCompleteRun(storage));
 });
-test('original budget survives revision checkpoints and expired incomplete replay',async t=>{
- const {storage,empty,header}=await setup(t);
- const next={...empty,revisions:[...empty.revisions,{...empty.revisions[0]!,id:'r1',parentId:'r0'}]};
- checkpointRun(storage,next);
- assert.throws(()=>checkpointRun(storage,{...next,deadlineEpochMs:header.deadlineEpochMs+1000}));
- assert.throws(()=>checkpointRun(storage,empty),'cannot drop revision history');
- const names=readdirSync(join(storage.artifactDir,'publication',storage.runId,'checkpoints'));
- assert.equal(names.length,2);
+// Break caught: unsanctioned World history must never become D1 host authority.
+for(const mode of ['extra-revision','proposal','initial-parent','world-role','seam-role','world-digest','seam-digest','stale-receipt'] as const)test(`D1 refuses unapproved revision ${mode}`,async t=>{
+ const {storage,empty,incomplete,complete}=await setup(t,false,false);
+ let revision={...empty.revisions[0]!};
+ if(mode==='proposal')revision={...revision,proposalId:'unapproved'};
+ if(mode==='initial-parent')revision={...revision,parentId:'invented'};
+ if(mode==='world-role')revision={...revision,worldPath:revision.worldPath+'.other'};
+ if(mode==='seam-role')revision={...revision,seamPaths:[]};
+ if(mode==='world-digest')revision={...revision,world:hashBytes('unapproved')};
+ if(mode==='seam-digest')revision={...revision,seam:hashBytes('unapproved')};
+ if(mode==='stale-receipt')revision={...revision,staleReceiptIds:['invented']};
+ const revisions=mode==='extra-revision'?[revision,{...revision,id:'r1',parentId:'r0'}]:[revision];
+ assert.throws(()=>checkpointRun(storage,{...empty,revisions}));
+ checkpointRun(storage,incomplete);
+ assert.throws(()=>publishRun(storage,{...complete,revisions}));
+ assert.deepEqual(readRunCheckpoint(storage),incomplete);
 });
 for(const mode of ['id','inside-source','alias'] as const)test(`publication refuses unsafe ${mode}`,t=>{
  const f=fixture();t.after(f.cleanup);let artifactDir=f.options.artifactDir,runId=f.options.runId;
@@ -105,23 +113,23 @@ for(const mode of ['id','inside-source','alias'] as const)test(`publication refu
 });
 
 // Break caught: recovery must reuse persisted real authority without resetting budget or requiring old JS object identity.
-test('recovered host checkpoint extends history and publishes with original budget',async t=>{
- const {f,storage,incomplete,header}=await setup(t);checkpointRun(storage,incomplete);
- let recovered!:RepositoryRunRecord;assert.doesNotThrow(()=>{recovered=readRunCheckpoint(storage)!;});assert.deepEqual(recovered,incomplete);
- const revision={...f.revision,id:'r1',parentId:'r0'};
- const binding=captureIdentity({...f.options,workspace:f.source,policy:storage.policy,revisionId:'r1'});
- createVerificationContext({...storage,revisionId:'r1',expected:binding});
- const backend=await f.backend.run({...f.task,attemptId:'a2',binding,limits:header.limits,deadlineEpochMs:header.deadlineEpochMs},f.options.signal);
- const verification=await verifyCandidate({...f.verification,attemptId:'a2',binding,policy:storage.policy,limits:header.limits,deadlineEpochMs:header.deadlineEpochMs},f.options.signal);
- assert.equal(verification.status,'passed');assert.equal(backend.status,'exited');
- const next:RepositoryRunRecord={...recovered,revisions:[...recovered.revisions,revision],attempts:[...recovered.attempts,{id:'a2',revisionId:'r1',backend,verification,route:'NEEDS_REVIEW'}]};
- assert.doesNotThrow(()=>checkpointRun(storage,next));
- const manifest=validateDelivery({workspace:f.source,policy:storage.policy,receipt:verification,expected:binding,requiredCheckIds:['acceptance'],unresolvedEffects:[]}).manifest;
- const done=publishRun(storage,{...next,status:'delivered',delivery:manifest});assert.equal(done.attempts.length,2);assert.equal(done.deadlineEpochMs,header.deadlineEpochMs);assert.equal(done.startedAt,header.startedAt);
+test('fresh process reads incomplete checkpoint extends history and publishes original budget',async t=>{
+ const {storage,incomplete,header}=await setup(t);checkpointRun(storage,incomplete);
+ const module=new URL('../src/agent/repository/publication.js',import.meta.url).href;
+ const artifacts=new URL('../src/agent/repository/artifacts.js',import.meta.url).href;
+ const script=`import assert from 'node:assert/strict';import {readRunCheckpoint,checkpointRun,publishRun,readCompleteRun,readRunStart} from ${JSON.stringify(module)};import {validateDelivery} from ${JSON.stringify(artifacts)};
+ const storage=${JSON.stringify(storage)};const r=readRunCheckpoint(storage);assert.equal(r.status,'incomplete');
+ const next={...r,diagnostics:[...r.diagnostics,'recovered in fresh host process']};checkpointRun(storage,next);
+ const receipt=next.attempts.at(-1).verification;
+ const delivery=validateDelivery({workspace:storage.workspace,policy:storage.policy,receipt,expected:receipt.before,requiredCheckIds:['acceptance'],unresolvedEffects:[]}).manifest;
+ const done=publishRun(storage,{...next,status:'delivered',delivery});assert.deepEqual(readCompleteRun(storage),done);assert.equal(done.deadlineEpochMs,${header.deadlineEpochMs});assert.equal(done.startedAt,${JSON.stringify(header.startedAt)});assert.deepEqual(done.limits,readRunStart(storage).limits);console.log('fresh recovery delivered');`;
+ const child=spawnSync(process.execPath,['--input-type=module','-e',script],{encoding:'utf8'});
+ assert.equal(child.status,0,child.stderr);assert.equal(child.stdout.trim(),'fresh recovery delivered');
+ assert.equal(readCompleteRun(storage).diagnostics.at(-1),'recovered in fresh host process');
 });
 test('expired original header replays incomplete history and refuses budget renewal',async t=>{
  const f=fixture();t.after(f.cleanup);const storage={...f.options,workspace:f.source,limits:{...f.options.limits,overallMs:1}};
- const h=initializeRun(storage);await new Promise(resolve=>setTimeout(resolve,10));
+ const h=initializeRun(storage);createVerificationContext({...storage,revisionId:'r0',expected:f.binding});await new Promise(resolve=>setTimeout(resolve,10));
  const r:RepositoryRunRecord={schema:'kadmos.repository.v1',runId:storage.runId,status:'incomplete',limits:h.limits,startedAt:h.startedAt,deadlineEpochMs:h.deadlineEpochMs,attempts:[],revisions:[f.revision],effects:[],delivery:null,diagnostics:[]};
  checkpointRun(storage,r);assert.deepEqual(readRunCheckpoint(storage),r);assert.deepEqual(readRunStart(storage),h);assert.throws(()=>initializeRun(storage));
  assert.throws(()=>checkpointRun(storage,{...r,deadlineEpochMs:Date.now()+10000}));assert.throws(()=>publishRun(storage,{...r,status:'delivered'}));
@@ -137,7 +145,7 @@ test('incomplete launch evidence is preserved but never grants delivery',async t
  assert.doesNotThrow(()=>checkpointRun(storage,r));assert.throws(()=>publishRun(storage,{...r,status:'delivered'}));
 });
 for(const stage of ['checkpoint','readback'] as const)test(`stranded writer refuses ${stage} until trusted host recovery`,async t=>{
- const {storage,empty,incomplete,complete}=await setup(t);
+ const {storage,empty,incomplete,complete}=await setup(t,false,false);
  if(stage==='readback'){checkpointRun(storage,incomplete);publishRun(storage,complete);}
  mkdirSync(join(storage.artifactDir,'publication',storage.runId,'writer'));
  if(stage==='checkpoint')assert.throws(()=>checkpointRun(storage,empty));else assert.throws(()=>readCompleteRun(storage));
@@ -154,6 +162,28 @@ test('real pre-allocation refusal remains checkpointable without inventing recei
  // Deliberately no host context: the real verifier cannot allocate an invocation.
  const verification=await verifyCandidate({...f.verification,limits:h.limits,deadlineEpochMs:h.deadlineEpochMs},f.options.signal);
  assert.equal(verification.status,'incomplete');assert.equal(verification.checks.length,0);
+ // Freeze the legitimate initial context before checkpointing the early failure; no success is manufactured.
+ createVerificationContext({...storage,revisionId:'r0',expected:f.binding});
  const r:RepositoryRunRecord={schema:'kadmos.repository.v1',runId:storage.runId,status:'blocked',limits:h.limits,startedAt:h.startedAt,deadlineEpochMs:h.deadlineEpochMs,attempts:[{id:'a1',revisionId:'r0',backend,verification,route:'ENVIRONMENT_BLOCKED'}],revisions:[f.revision],effects:[],delivery:null,diagnostics:verification.diagnostics};
  assert.doesNotThrow(()=>checkpointRun(storage,r));assert.deepEqual(readRunCheckpoint(storage),r);assert.throws(()=>publishRun(storage,{...r,status:'delivered'}));
+});
+
+// Break caught: appended unsealed history must not borrow earlier verification.
+for(const mode of ['attempt','effect','diagnostic'] as const)test(`publication refuses appended unsealed ${mode}`,async t=>{
+ const {storage,incomplete,complete}=await setup(t);checkpointRun(storage,incomplete);
+ let r=complete;
+ if(mode==='attempt')r={...r,attempts:[...r.attempts,{...r.attempts[0]!,id:'a2',verification:null,backend:{...r.attempts[0]!.backend,attemptId:'a2'}}]};
+ if(mode==='effect')r={...r,effects:[{operationId:'op1',outcome:'not_committed',effectCount:0,reconciliation:'not_needed',checkerRollback:false,trace:[]}]};
+ if(mode==='diagnostic')r={...r,diagnostics:['unsealed']};
+ assert.throws(()=>publishRun(storage,r),/complete differs from latest checkpoint/);
+ assert.throws(()=>readCompleteRun(storage));
+});
+test('later same-attempt real protected-change verifier refuses older sealed success',async t=>{
+ const {f,storage,incomplete,complete,header}=await setup(t,true);checkpointRun(storage,incomplete);
+ const original=readFileSync(join(f.source,'acceptance.txt'));
+ writeFileSync(join(f.host,'trigger'),'go');
+ const later=await verifyCandidate({...f.verification,policy:storage.policy,binding:complete.delivery!.binding,limits:header.limits,deadlineEpochMs:header.deadlineEpochMs},f.options.signal);
+ assert.equal(later.status,'protected_change');
+ writeFileSync(join(f.source,'acceptance.txt'),original);
+ assert.throws(()=>publishRun(storage,complete));assert.throws(()=>readCompleteRun(storage));
 });

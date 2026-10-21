@@ -5,7 +5,7 @@ import type { RepositoryPolicy, RepositoryRunRecord, RunLimits, DeliveryManifest
 import { createAtomicJson } from './store.js';
 import { hostPath } from './verifier_command.js';
 import { containsPath, safePath } from './workspace.js';
-import { loadVerificationContext } from './context.js';
+import { loadVerificationContext, readVerificationContext } from './context.js';
 import { validateDelivery } from './artifacts.js';
 import { verificationEvidence } from './verify.js';
 import { atomic, copy, insist, fileRef, readRef, checkVerificationEvidence, type FileRef, type VerificationEvidence } from './evidence.js';
@@ -49,8 +49,12 @@ function recordShape(input:RunStorage,r:RepositoryRunRecord,h:RunHeader):void {
  insist(['incomplete','blocked','awaiting_world','delivered'].includes(r.status) && Array.isArray(r.attempts) && Array.isArray(r.revisions) && Array.isArray(r.effects) && Array.isArray(r.diagnostics) && r.diagnostics.every(x=>typeof x==='string'),'invalid run shape');
  insist(isDeepStrictEqual(Object.keys(r).sort(),['attempts','deadlineEpochMs','delivery','diagnostics','effects','limits','revisions','runId','schema','startedAt','status']),'unexpected run fields');
  insist(r.attempts.length<=h.limits.maxAttempts && new Set(r.attempts.map(a=>a.id)).size===r.attempts.length,'attempt budget/identity mismatch');
- insist(r.revisions.length>0 && new Set(r.revisions.map(v=>v.id)).size===r.revisions.length,'missing/duplicate revision');
- for(const [i,v] of r.revisions.entries()) {id(v.id);insist(v.state==='active' && (i===0?v.parentId===null:v.parentId===r.revisions[i-1]!.id),'invalid revision history');}
+ // D1 has no World activation authority. E must deliberately extend this with host approval evidence.
+ insist(r.revisions.length===1,'D1 requires one initial fixed-World revision');
+ const v=r.revisions[0]!;id(v.id);
+ insist(v.state==='active' && v.parentId===null && v.proposalId===null && isDeepStrictEqual(v.staleReceiptIds,[]),'unapproved D1 revision');
+ const context=readVerificationContext({...input,revisionId:v.id});
+ insist(v.world===context.baseline.world && v.seam===context.baseline.seam && v.worldPath===context.roles.worldPath && isDeepStrictEqual(v.seamPaths,context.roles.seamPaths),'initial revision differs from host context');
  let lastRevision=-1;
  for(const a of r.attempts) {
   id(a.id);id(a.revisionId);const ri=r.revisions.findIndex(v=>v.id===a.revisionId);insist(ri>=lastRevision && ri>=0,'attempt revision order');lastRevision=ri;

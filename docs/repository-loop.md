@@ -1,10 +1,12 @@
-# Repository loop interface (v1, pre-implementation)
+# Repository loop interface (v1, D1 foundation)
 
-This contract adds a future repository workflow. The existing `kadmos run`
-and `kadmos.compiler.k02.v1` are unchanged. The physical backend, scripted executable backend and disposable workspace now
-produce process/snapshot evidence. Verification, orchestration, World revision
-and delivery modules still return pending/incomplete results. Later behavioral
-tests intentionally fail. No usable repository CLI is claimed yet.
+Implemented D1 host APIs provide disposable workspaces, physical/scripted backend
+process evidence, frozen verification contexts, real verification, delivery
+eligibility, original run budgets, immutable checkpoints and complete-run
+publication/readback. D1 assembled independent acceptance is still pending.
+D2 orchestration/feedback and repository CLI, E World proposal/activation, and F
+effect reconciliation remain planned stubs. Later behavioral tests intentionally
+fail. Existing `kadmos run` and `kadmos.compiler.k02.v1` are unchanged.
 
 The TypeScript wire shapes are in `src/agent/repository/contracts.ts`.
 Persisted objects use UTF-8 JSON; run records/manifests and command inputs carry
@@ -15,25 +17,27 @@ backend object or checker; these are process-local dependencies.
 
 ## Calls and authority
 
-- `CodingBackend.run(CodingTask, AbortSignal) -> Promise<CodingResult>` edits
+Status below describes current implementation; planned behavior grants no authority.
+
+- **Implemented D1:** `CodingBackend.run(CodingTask, AbortSignal) -> Promise<CodingResult>` edits
   a disposable workspace and reports process evidence; it cannot approve code.
-- `createWorkspace(WorkspaceRequest) -> WorkspaceResult` refuses a dirty source,
+- **Implemented D1:** `createWorkspace(WorkspaceRequest) -> WorkspaceResult` refuses a dirty source,
   escaping paths, symlinks, special files and an existing destination.
-- `snapshotCandidate(workspace, RepositoryPolicy) -> CandidateIdentity` includes
+- **Implemented D1:** `snapshotCandidate(workspace, RepositoryPolicy) -> CandidateIdentity` includes
   tracked/untracked regular files, executable bits and base-relative deletions.
-- `verifyCandidate(VerificationInput, AbortSignal) -> Promise<VerificationReceipt>`
+- **Implemented D1:** `verifyCandidate(VerificationInput, AbortSignal) -> Promise<VerificationReceipt>`
   runs host-frozen argv commands, never diagnostic instructions. The exact whole
   argv token `<candidate>` is replaced with the captured workspace path; no other
   interpolation is allowed. The same token may select the command cwd. A receipt binds
   the exact before/after input tuple, commands, actual exits and raw log paths.
-- `runRepositoryTask(RepositoryRunOptions) -> Promise<RepositoryRunRecord>` owns
+- **Planned D2; current stub returns incomplete without executing:** `runRepositoryTask(RepositoryRunOptions) -> Promise<RepositoryRunRecord>` owns
   attempts, evidence and final delivery. Exit zero and model prose cannot deliver.
-- `classifyFailure(VerificationReceipt) -> FailureRoute` chooses `CODE_REPAIR`,
+- **Planned D2; current stub always returns NEEDS_REVIEW:** `classifyFailure(VerificationReceipt) -> FailureRoute` chooses `CODE_REPAIR`,
   `WORLD_CHANGE_REQUIRED`, `CORE_MISMATCH`, `ENVIRONMENT_BLOCKED` or `NEEDS_REVIEW`.
   A route is evidence routing, never World or compiler authority.
-- `proposeWorldChange(WorldChangeInput) -> WorldChangeProposal` records a rationale
+- **Planned E; current stub returns invalid pending digests:** `proposeWorldChange(WorldChangeInput) -> WorldChangeProposal` records a rationale
   and exact replacement World YAML bytes (no executable patch language).
-- `activateWorldRevision(ApprovedWorldChange) -> WorldRevision` loads a trusted
+- **Planned E; current stub returns pending, never activates:** `activateWorldRevision(ApprovedWorldChange) -> WorldRevision` loads a trusted
   operator record, validates all bound IDs/digests and that decisionPath is inside the separately
   trusted decisionsDir (with no symlink traversal), freezes a new World and
   independently regenerated seam, and marks historical receipt IDs stale.
@@ -144,7 +148,9 @@ configured host-owned directory is persisted with run inputs. Activation receive
 that trusted root separately from the decisionPath to validate. World proposal
 artifactDir names the run root, not the revisions subdirectory.
 
-Host-owned layout:
+Planned compatibility projection (not current artifact paths; D2/E/F must
+explicitly design any projection). Actual D1 paths are listed in the
+"Internal complete-run publication" section below:
 
 ```text
 <artifactDir>/run.json                 # incomplete first; original budget/start
@@ -209,8 +215,7 @@ against that exact snapshot, including modes and added/deleted regular files.
 It regenerates both TypeScript seam files in memory with the unchanged compiler.
 Ruling: v1 TS seam declarations may be directories or individual files but must
 cover exactly ports.d.ts and world_checker.ts once; extra/duplicate files refuse.
-This helper grants neither verifier success nor durable acceptance. Wiring capture
-into orchestration and final delivery remains pending.
+This helper grants neither verifier success nor durable acceptance. Verifier and publication now use this capture; orchestration wiring remains D2.
 
 
 ## Internal complete-run publication (D1f)
@@ -242,7 +247,10 @@ once. Checkpoints contain incomplete/blocked/awaiting-world v1 records, the star
 reference, preceding checkpoint reference, verifier authority and backend file
 references. References contain artifact-relative path, raw-byte SHA256 and
 executable mode. Histories retain immutable prefixes of attempts, revisions,
-effects and diagnostics; budgets cannot renew across revisions. Expiry refuses
+effects and diagnostics. Current D1 accepts exactly one initial active revision
+with null parent/proposal and no stale receipts, bound to the original host
+context World/seam identities and role paths. E must deliberately extend that
+boundary using host approval evidence; no approval or budget reset is inferred. Expiry refuses
 new publication, but does not prevent incomplete replay or readback of a record
 that was published before its original deadline.
 
@@ -279,3 +287,16 @@ old JavaScript object identity. Checksums provide integrity, not signatures. The
 trust boundary remains the existing single-operator host storage and sampled
 process supervision; no universal relocation, power-loss atomicity, adversarial
 same-user filesystem protection, World approval or effect settlement is claimed.
+
+D1 verifier paths use the same literal executable/cwd strings recorded by the
+supervisor. Callers must supply canonical host paths (including the local macOS
+`/private/var` form); aliases or normalized equivalents may safely refuse exact
+receipt matching. `<candidate>` is the only supported substitution.
+
+Context envelope digests hash the compact JSON context value; evidence FileRef
+digests hash exact stored bytes, including whitespace. These integrity checks
+have separate meanings and are not signatures. The atomic store handles
+create-once persistence; validated load paths check context integrity.
+Lifecycle sidecars are also create-once (`wx`): an existing sidecar refuses
+launch/qualification, preserves its bytes, and attempts known-PID cleanup.
+It does not overwrite telemetry or manufacture process-tree closure.

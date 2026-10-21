@@ -64,7 +64,7 @@ export function createVerificationContext(input: ContextCreate): VerificationCon
  return freeze(copy);
 }
 /** Load only from host artifact storage, validate frozen context, then capture the current candidate against its original baseline. */
-export function loadVerificationContext(input: ContextRead): { readonly context: VerificationContext; readonly current: InputBinding } {
+export function readVerificationContext(input: ContextRead): VerificationContext {
  const envelope=object(readAtomicJson(location(input))), c=object(envelope.context), roles=object(c.roles);
  requireValue(envelope.digest===hashBytes(JSON.stringify(c)) && isDeepStrictEqual(envelope,{context:c,digest:envelope.digest}),'context integrity mismatch');
  requireValue(c.schema===schema && c.runId===input.runId && c.revisionId===input.revisionId && isDeepStrictEqual(c.policy,input.policy),'host context identity mismatch');
@@ -73,6 +73,11 @@ export function loadVerificationContext(input: ContextRead): { readonly context:
  const context: VerificationContext={schema,runId:input.runId,revisionId:input.revisionId,policy:input.policy,
   roles:{requirementsPath:roles.requirementsPath,worldPath:roles.worldPath,seamPaths:roles.seamPaths as string[]},baseline:c.baseline};
  requireValue(isDeepStrictEqual(c,context),'invalid context shape');
+ return freeze(JSON.parse(JSON.stringify(context)) as VerificationContext);
+}
+/** Capture current inputs separately so incomplete checkpoints can retain failed/drifted evidence. */
+export function loadVerificationContext(input: ContextRead): { readonly context: VerificationContext; readonly current: InputBinding } {
+ const context=readVerificationContext(input);
  const current=captureIdentity({...context.roles,workspace:input.workspace,policy:input.policy,revisionId:input.revisionId,baseline:context.baseline});
  return freeze({context:JSON.parse(JSON.stringify(context)) as VerificationContext,current});
 }
