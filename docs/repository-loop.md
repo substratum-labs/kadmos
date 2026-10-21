@@ -4,11 +4,13 @@ Implemented host APIs provide disposable workspaces, physical/scripted backend
 process evidence, frozen verification contexts, real verification, delivery
 eligibility, original run budgets, immutable checkpoints and complete-run
 publication/readback. Tasks D and E received independent physical Grok acceptance;
-E acceptance is frozen at59885a5. Host commands include run, inspect, propose-world,
+E acceptance is frozen at59885a5. Host commands include run, propose-world,
 approve-world, reject-world and continue, with runtime validation. F1 adds local
 settlement reconciliation. F2 connects a trusted host effect journal to the runtime
-fence and adds a bounded SCRIPTED repair example; whole Task F and live A20 remain pending. Existing
+fence and adds a bounded SCRIPTED repair example; the installed-backend A20 delivered on the original bf1bbc4 engine (see [receipt](repository-loop-verification.md)). Assembled Task F review and final human acceptance remain pending. Existing
 `kadmos run` and `kadmos.compiler.k02.v1` are unchanged.
+
+Current A20 result and command/receipt details appear in the verification receipt. Later dated sections preserve historical implementation checkpoints.
 
 The TypeScript wire shapes are in `src/agent/repository/contracts.ts`.
 Persisted objects use UTF-8 JSON; run records/manifests and command inputs carry
@@ -32,14 +34,14 @@ Status below describes current implementation; planned behavior grants no author
   argv token `<candidate>` is replaced with the captured workspace path; no other
   interpolation is allowed. The same token may select the command cwd. A receipt binds
   the exact before/after input tuple, commands, actual exits and raw log paths.
-- **Implemented D2a, pending review:** `runRepositoryTask(RepositoryRunOptions) -> Promise<RepositoryRunRecord>` owns
+- **Implemented D2a, physically accepted:** `runRepositoryTask(RepositoryRunOptions) -> Promise<RepositoryRunRecord>` owns
   attempts, evidence and final delivery. Exit zero and model prose cannot deliver.
-- **Implemented D2a, pending review:** `classifyFailure(VerificationReceipt) -> FailureRoute` chooses `CODE_REPAIR`,
+- **Implemented D2a, physically accepted:** `classifyFailure(VerificationReceipt) -> FailureRoute` chooses `CODE_REPAIR`,
   `WORLD_CHANGE_REQUIRED`, `CORE_MISMATCH`, `ENVIRONMENT_BLOCKED` or `NEEDS_REVIEW`.
   A route is evidence routing, never World or compiler authority.
-- **Implemented E, pending independent review:** `proposeWorldChange(WorldChangeInput) -> WorldChangeProposal` records a rationale
+- **Implemented E, physically accepted:** `proposeWorldChange(WorldChangeInput) -> WorldChangeProposal` records a rationale
   and exact replacement World YAML bytes (no executable patch language).
-- **Implemented E, pending independent review:** `activateWorldRevision(ApprovedWorldChange) -> WorldRevision` loads a trusted
+- **Implemented E, physically accepted:** `activateWorldRevision(ApprovedWorldChange) -> WorldRevision` loads a trusted
   operator record, validates all bound IDs/digests and that decisionPath is inside the separately
   trusted decisionsDir (with no symlink traversal), freezes a new World and
   independently regenerated seam, and marks historical receipt IDs stale.
@@ -644,3 +646,24 @@ and a separate fixture ledger, not the business run's effect journal. The exampl
 uses the source-checkout HTTP fixture in `tests/fixtures/repository/`; it is not an
 npm-installed service. It demonstrates SCRIPTED repair, not actual installed R3,
 live A20, human World approval, physical reviewer acceptance or whole-Epic delivery.
+
+
+## F4 replay and verifier correction — 2026-10-21
+
+Known settlement replay binds both the exact stored actuator and query configuration.
+Changed host argv returns reconstructed unknown without a new step, process launch,
+effect or evidence rewrite. With exclusive checker ownership and a synchronous step,
+a successful reconstruction whose poststate differs from the saved authorization
+rolls back only that newly successful step. Denied steps never roll back unrelated
+undo state. A failed rollback remains unknown; historical external commit evidence
+is retained.
+
+The SCRIPTED HTTP verifier uses exit-v1: import/setup/infrastructure failures exit86,
+host-selected functional assertions exit1, and success exits0. Fabric settle exceptions
+are wrapped as intentional functional assertions; arbitrary model prose does not
+choose the route. Infrastructure stops without another CODE_REPAIR attempt.
+
+Actual installed-backend A20 delivered on bf1bbc4 in two original attempts after exact
+Yong World approval; see the measured receipt. This F4 source was locally verified
+and fresh-read the original complete evidence for compatibility; it did not rerun the
+installed coding backend. Whole-Epic human acceptance remains pending.

@@ -120,3 +120,24 @@ test('FIFO and relative record paths refuse without opening an effect channel',a
  const h=await setup(t);const p=spawnSync('mkfifo',[h.input.recordPath],{encoding:'utf8',timeout:1000});assert.equal(p.status,0,p.stderr);
  assert.equal((await settleOperation(h.input)).outcome,'unknown');assert.equal((await settleOperation({...h.input,recordPath:'relative.json'})).outcome,'unknown');assert.equal(h.trace().length,0);
 });
+
+// F4: replay has exclusive synchronous ownership of the newly successful step.
+for(const rollbackFails of [false,true])test(`committed reconstruction mismatch undoes only its new step; rollback failure=${rollbackFails}`,async t=>{
+ const h=await setup(t,'normal');await settleOperation(h.input);
+ const beforeFiles=Object.fromEntries(readdirSync(h.input.recordPath+'.dispatch').map(n=>[n,readFileSync(join(h.input.recordPath+'.dispatch',n),'utf8')]));
+ const fresh=createWorldChecker(parseWorldSpec(readFileSync(h.f.options.worldPath,'utf8')));
+ const before={state:fresh.getState(),context:fresh.getContext()};let stepped=false,undos=0;
+ const checker={...fresh,getContext(){return stepped?{...fresh.getContext(),reconstructionMismatch:1}:fresh.getContext();},step(input:Parameters<typeof fresh.step>[0]){const v=fresh.step(input);if(v.allowed)stepped=true;return v;},rollbackLastStep(){undos++;if(rollbackFails)throw Error('undo unavailable');fresh.rollbackLastStep();stepped=false;}};
+ const r=await settleOperation({...h.input,checker});assert.equal(r.outcome,'unknown');assert.equal(r.effectCount,'unknown');assert.equal(r.checkerRollback,false);assert.equal(undos,1);
+ if(!rollbackFails)assert.deepEqual({state:checker.getState(),context:checker.getContext()},before);
+ else assert.equal(checker.getState(),'PAYMENT_PENDING');
+ assert.equal(h.count(),1);assert.equal(h.trace().length,1,'no replay actuation');
+ assert.deepEqual(Object.fromEntries(readdirSync(h.input.recordPath+'.dispatch').map(n=>[n,readFileSync(join(h.input.recordPath+'.dispatch',n),'utf8')])),beforeFiles);
+});
+for(const command of ['actuator','query'] as const)test(`committed replay refuses changed ${command} argv and preserves raw evidence`,async t=>{
+ const h=await setup(t,'normal');await settleOperation(h.input);
+ const journal=()=>Object.fromEntries([h.input.recordPath,...readdirSync(h.input.recordPath+'.dispatch').map(n=>join(h.input.recordPath+'.dispatch',n))].map(n=>[n,readFileSync(n,'utf8')]));const before=journal();
+ const fresh=createWorldChecker(parseWorldSpec(readFileSync(h.f.options.worldPath,'utf8')));
+ const r=await settleOperation({...h.input,checker:fresh,[command]:{...h.input[command],argv:[...h.input[command].argv,'changed-host-argument']}});
+ assert.equal(r.outcome,'unknown');assert.equal(r.effectCount,'unknown');assert.equal(fresh.getState(),'CREATED');assert.equal(h.count(),1);assert.equal(h.trace().length,1);assert.deepEqual(journal(),before);
+});

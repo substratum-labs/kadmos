@@ -18,21 +18,24 @@ const fabric=(fixedOrder:boolean)=>fixedOrder?template('fabric.mjs'):template('f
 /** Independent verifier uses host-selected World/checker/HTTP endpoint and raw server ledger. */
 function verifier(dist:string,world:string):string {return `
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+let checking=false;
 (async()=>{const root=process.argv[2],port=Number(process.argv[3]),httpRoot=process.argv[4];
 const {createWorldChecker}=await import(${JSON.stringify(pathToFileURL(join(dist,'src/world_checker.js')).href)});
 const {parseWorldSpec}=await import(${JSON.stringify(pathToFileURL(join(dist,'src/world_compiler.js')).href)});
 const {settle}=await import(require('node:url').pathToFileURL(path.join(root,'src/fabric.mjs')).href);
 const traces=()=>fs.readdirSync(path.join(httpRoot,'requests')).sort().map(n=>JSON.parse(fs.readFileSync(path.join(httpRoot,'requests',n))));
 for(const [mode,query,expected,count] of [['refuse','normal','not_committed',0],['drop','normal','committed',1],['drop','unavailable','unknown',1]]){
+checking=false;
 const id='negative-fixture-'+mode+'-'+query+'-'+traces().length,checker=createWorldChecker(parseWorldSpec(fs.readFileSync(${JSON.stringify(world)},'utf8')));
-const result=await settle(checker,port,id,mode,query);
+checking=true;let result;
+await assert.doesNotReject(async()=>{result=await settle(checker,port,id,mode,query);},'FABRIC_SETTLEMENT');
 const observed=traces().filter(x=>x.id===id);assert.equal(observed.filter(x=>x.action==='apply').length,1,'NO_RETRY_AFTER_AMBIGUOUS_APPLY');
 assert.deepEqual(observed.map(x=>x.action),mode==='refuse'?['apply']:['apply','query'],'QUERY_BEFORE_SETTLEMENT');
 assert.equal(result,expected,'UNKNOWN_IS_NOT_ZERO');assert.equal(checker.getState(),mode==='refuse'?'CREATED':'PAYMENT_PENDING','SOUND_ROLLBACK');
 const ledger=fs.existsSync(path.join(httpRoot,'ledger.json'))?JSON.parse(fs.readFileSync(path.join(httpRoot,'ledger.json'))):{operations:[]};assert.equal(ledger.operations.includes(id)?1:0,count,'INDEPENDENT_EFFECT_COUNT');
 console.log(JSON.stringify({scope:'expected-negative-fixture',id,mode,query,result,effectCount:count,trace:observed}));
 }
-})().catch(e=>{console.error(e.stack);process.exitCode=1});`;
+})().catch(e=>{console.error(e.stack);process.exitCode=checking&&e?.code==='ERR_ASSERTION'?1:86});`;
 }
 export async function runScriptedOrderDemo(declared:string) {
  const root=safePath(declared);mkdirSync(root,{recursive:true});const source=join(root,'source'),host=join(root,'host');mkdirSync(join(source,'src'),{recursive:true});mkdirSync(host);

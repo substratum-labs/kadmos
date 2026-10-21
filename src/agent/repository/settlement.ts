@@ -58,8 +58,8 @@ export async function settleOperation(input: SettlementInput): Promise<EffectRec
   if(existsSync(directory)||existsSync(recordPath)) {
    if(!existsSync(directory)||!lstatSync(directory).isDirectory())return reconstructed;
    // Never repair or steal an interrupted reservation. Unknown history is retained.
-   const binding=read(join(directory,'binding.json')) as {operationId:string;before:ReturnType<typeof snapshot>};
-   if(binding.operationId!==input.operationId)return reconstructed;
+   const binding=read(join(directory,'binding.json')) as {operationId:string;before:ReturnType<typeof snapshot>;actuator:SettlementInput['actuator'];query:SettlementInput['query']};
+   if(binding.operationId!==input.operationId||!isDeepStrictEqual(binding.actuator,input.actuator)||!isDeepStrictEqual(binding.query,input.query))return reconstructed;
    const v=read(join(directory,'outcome.json')) as EffectRecord & {delivery:null};
    if(Object.keys(v).sort().join(',')!=='checkerRollback,delivery,effectCount,operationId,outcome,reconciliation,trace'||v.operationId!==input.operationId||v.delivery!==null||!Array.isArray(v.trace)||v.trace.some(x=>typeof x!=='string'))return reconstructed;
    const committed=v.outcome==='committed'&&v.effectCount===1&&v.checkerRollback===false&&(v.reconciliation==='queried'||v.reconciliation==='not_needed')&&v.trace.at(-1)==='settle';
@@ -83,7 +83,11 @@ export async function settleOperation(input: SettlementInput): Promise<EffectRec
     if(!isDeepStrictEqual(current,authorized.after)) {
      if(!isDeepStrictEqual(current,binding.before))return reconstructed;
      const verdict=input.checker.step(step);if(!verdict.allowed)return reconstructed;
-     if(!isDeepStrictEqual(snapshot(input.checker),authorized.after))return reconstructed;
+     if(!isDeepStrictEqual(snapshot(input.checker),authorized.after)) {
+      // Exclusive ownership and synchronous step: undo only this successful
+      // reconstruction, never a denied step or an unrelated saved transition.
+      input.checker.rollbackLastStep();return reconstructed;
+     }
     }
    }
    return v;

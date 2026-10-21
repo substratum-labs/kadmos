@@ -1,5 +1,65 @@
 # Repository contract preflight receipt
 
+## Current measured receipt — F4 owner verification, 2026-10-21
+
+Owner build/typecheck and full `pnpm run verify`: **772/772**, no failures/skips/
+cancellations, including the existing packed NodeNext consumer. Relevant HTTP,
+journal, replay, SCRIPTED and contract checks: **75/75**. Finite order-World fuzz:
+30 runs, no divergence; package and public SCRIPTED demo passed. Four bounded
+corrections cover documented verbs, verifier environment/functional classification,
+reconstruction undo, and exact host-command replay binding. Compiling RED reproduced
+the behavior faults before correction; the original 767 baseline remains green.
+
+Actual installed-backend A20 ran engine **bf1bbc47f1566064b58e4b22ba6865614c4e0f10**,
+Codex CLI **0.163.0**, on macOS with Node26. Two of the original three attempts were
+used. Attempt1 backend exited0, independent requirement-law exited1 and routed
+WORLD_CHANGE_REQUIRED. After explicit chat approval “同意。”, actual `approve-world`
+and `continue` retained the installed descriptor; attempt2 backend exited0 and
+requirement-law/typecheck/functional checks all exited0. Fresh independent complete
+readback delivered revision
+`r-83ecdc64a5fd02b2f995733156a1574d5f2e42ee9d7d8aa0822d2080423a01b9`.
+Independent HTTP ledger recorded `a20-payment`, committed, count1. CLI/server exited0;
+sampled tracked process closure left no remaining members. A20 is real two-attempt
+execution; the separate public SCRIPTED repair still uses three iterations.
+
+Exact approval: proposal `order-cap-50000-v1`, proposal digest
+`sha256:83ecdc64a5fd02b2f995733156a1574d5f2e42ee9d7d8aa0822d2080423a01b9`,
+patch digest `sha256:87b9cf97bcf26aec027ec604bb978f64f99bac1ef2284b8442dda6b7c6770450`,
+base `r0` World `sha256:13cbb953c1cd720256eb59f7972e981ed43b7f8e0321488970f12511ae06634e`.
+Original trusted decision timestamp: **2026-10-21T22:52:05.703Z**. The successor
+marks receipt `epic55-a20-live/a1` stale and reruns every check; old evidence is
+historical, never approval for the new binding.
+
+Original start **2026-10-21T21:43:41.686Z**, deadline **23:13:41.686Z**;
+maxAttempts3, attempt1200000ms, verifier300000ms, overall5400000ms, killGrace2000ms.
+Approval renewed neither deadline nor attempts; attempt1 remained unchanged.
+Backend argv: `exec --json --color never --sandbox workspace-write --cd
+/private/tmp/epic55-a20-live/host/artifacts-workspace -`, executable
+`/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js`. Instructions use stdin;
+operator model/auth/default configuration is inherited, with no model override.
+The host CLI invokes `node bin/kadmos.js repo continue --input <host-input.json>`.
+
+The initial launcher's supplementary raw-wire policy readback had an ordering
+mismatch; canonical readControl-derived policy later verified the same paused
+checkpoint without another model call. A first continuation launcher stopped
+before server/model/ONCE because its gate included committed coordination ledgers
+as frozen business inputs; its corrected successor consumed no extra attempt.
+Both diagnostics and original exits are preserved. Earlier failed smoke/root3/3
+unknown and successful R3 observations remain separate history.
+
+F4 verified local regressions and fresh-read compatibility with those original live
+artifacts; **this F4 head did not run the installed backend**. Actual business World
+approval is recorded; final assembled physical review and whole-Epic Yong acceptance
+remain pending. Later sections below preserve dated historical checkpoints.
+
+Qualification is bounded to the measured local macOS setup. Linux/Windows live CLI
+qualification is pending; portable argv tests are not platform qualification.
+One successor/default finite budget, one scoped host operation, exclusive checker
+ownership, trusted same-user filesystem and sampled process lineage are explicit
+limits. Missing evidence/power-loss outcomes can remain unknown. No universal
+exactly-once theorem, arbitrary network-effect census or hostile OS isolation claim.
+
+
 Current owner checkpoint (2026-10-21, F2): repository loop and Task E commands are
 implemented; D/E physical review receipts remain scoped to their frozen commits.
 F1 owner full suite was 750/750; F2 adds runtime host-journal and SCRIPTED repair

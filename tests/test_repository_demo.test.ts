@@ -19,7 +19,7 @@ test('A18 commit then lost response reconciles before same-ID retry settles exac
  assert.equal(first.reconciliation,'queried');assert.equal(first.outcome,'committed');
  const physical=readFileSync(join(f.host,'effects.json.trace.jsonl'),'utf8').trim().split('\n').map(x=>JSON.parse(x));
  assert.deepEqual(physical.map(x=>x.action),['apply','query'],'reconciliation must physically precede settlement');
- const retry=await settleOperation({...input,actuator:{...input.actuator,argv:[actuatorFixture,join(f.host,'effects.json'),'apply','op-1','normal']}});
+ const retry=await settleOperation(input);
  assert.equal(retry.outcome,'committed');assert.equal(JSON.parse(readFileSync(join(f.host,'effects.json'),'utf8')).effects,1);
  const queried=first.trace.indexOf('query:committed');assert.ok(queried>=0);assert.ok(first.trace.indexOf('settle')>queried);
 });
