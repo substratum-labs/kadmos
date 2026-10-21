@@ -20,9 +20,9 @@ test('A11 legal predecessor guard failure routes to code repair without World we
 });
 test('A12 unsatisfied requirement pauses with content-bound patch and rationale',{timeout:20_000},async t=>{
  const f=fixture('noop','requirement');t.after(f.cleanup);assert.equal(classifyFailure(failed(f,'requirement')),'WORLD_CHANGE_REQUIRED');
- const p=proposal(f);assert.equal(p.patchDigest,d(p.patch));assert.ok(p.rationale);
  const r=await runRepositoryTask({...f.options,instructions:'New requirement requires REVIEW_ORDER not in current World.'});
  assert.equal(r.status,'awaiting_world');assert.equal(r.delivery,null);
+ const p=proposal(f);assert.equal(p.patchDigest,d(p.patch));assert.ok(p.rationale);
 });
 for(const command of ['reject-world','missing','candidate-forged'] as const)test(`A13 ${command} cannot activate a new World`,t=>{
  const f=fixture();t.after(f.cleanup);const old=readFileSync(f.options.worldPath,'utf8');const {p,path}=decide(f,'reject-world');

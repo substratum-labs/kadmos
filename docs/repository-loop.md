@@ -430,3 +430,53 @@ Wrong output paths/cwd/missing tools block launch with zero model calls. Recheck
 these hashes, source cleanliness and current source head at the separate manual
 budget gate. Preflight alone never authorizes a live run or grants delivery to
 historical failed evidence. Freeze all final bytes only after successful preflight.
+
+
+## E1 World archive foundation (SCRIPTED qualification)
+
+The library `proposeWorldChange` and `activateWorldRevision` implement standalone
+host archives. A proposal contains exact complete replacement YAML, rationale,
+requirements digest and an exact base revision. Initial base raw World and both
+TypeScript seam files are re-read and compared with the unchanged compiler.
+Proposal storage is create-once at `proposals/<run>/<proposal>/`, with `patch.yaml`
+and a final `record.json` (`kadmos.host-world-proposal.v1`). Host roots must be
+outside source roles; symlinks, unsafe lowercase IDs and existing reservations
+refuse. Partial reservations remain evidence and cannot be silently recovered.
+
+Activation re-reads the retained proposal and raw patch, checks every digest,
+compares the current base, then reads the exact `OperatorDecision` shape above
+from a separately trusted `decisionsDir`. Unknown decision fields, missing or
+reject records, mismatched IDs/digests, invalid operator/time and symlinks reject.
+The frozen decision shape has no extra schema field. Operator time is canonical
+UTC ISO milliseconds. JSON host records assume one trusted local operator;
+checksums are not signatures or malicious same-user exclusion. Tests explicitly
+label operators SCRIPTED. No business World decision is implied.
+
+The revision ID is `r-` plus the proposal SHA-256 hex. The archive is
+`inputs/revisions/<run>/<revision>/activation/{world.yaml,seam/ports.d.ts,seam/world_checker.ts,record.json}`.
+World and exactly the two unchanged compiler outputs are written exclusively;
+the `kadmos.host-world-activation.v1` record is committed last. It retains exact
+proposal/requirements/decision bindings, decision bytes digest and revision.
+Repeated activation, even with a new decision file, refuses the existing revision
+reservation. All provided historical receipt IDs plus prior stale IDs are retained
+as a sorted unique list. Rejection returns the current revision with explicit
+`rejected` state, preserving its identity and source bytes.
+
+The sibling `verification-context` directory is independently reserved by the
+host verifier; the archive never reserves or overwrites that directory.
+Returned revision worldPath/seamPaths are physical archive paths. Existing source
+role declarations remain lexical source paths. E2 must materialize archived bytes
+into those same candidate roles, load the frozen controller and decision root,
+verify the activation record/bytes again, and deliberately extend D1's initial
+revision gate. Caller `state: active` and standalone archives grant neither a
+running controller nor delivery. E2 must record decision consumption at its
+controller transition and preserve original attempts/start/deadline/budgets.
+
+CLI `propose-world --input`, `approve-world --input`, `reject-world --input` and
+`continue --input` remain unavailable in this E1 library slice. The frozen
+proposal wire shape has base IDs but no physical base paths; the decision wire
+shape has no trusted storage root. Wiring them coherently requires E2's frozen
+controller lookup rather than a caller-provided active revision or inferred root.
+No actual approve command is automatically invoked. A12 first pauses a real
+scripted run, then persists its proposal; D's fresh-start refusal for preexisting
+standalone artifacts remains unchanged.
