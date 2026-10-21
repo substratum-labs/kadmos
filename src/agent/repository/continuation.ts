@@ -1,3 +1,4 @@
+import { assertEffectCensus } from './effects.js';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -15,7 +16,7 @@ import { ScriptedBackend } from './backend.js';
 export function prepareContinuation(options:RepositoryRunOptions,onHistory:(record:RepositoryRunRecord)=>void):{options:RepositoryRunOptions;record:RepositoryRunRecord;baseline:InputBinding;workspace:string} {
  const c=readControl({artifactDir:options.artifactDir,runId:options.runId});
  const storage={artifactDir:c.artifactDir,runId:c.runId,workspace:c.header.workspace,policy:c.policy};
- const old=readRunCheckpoint(storage);insist(old,'missing original checkpoint');onHistory(old);
+ const old=readRunCheckpoint(storage);insist(old,'missing original checkpoint');onHistory(old);assertEffectCensus(storage,old);
  insist(old.revisions.length===1 && !existsSync(join(c.artifactDir,'publication',c.runId,'generations')),'bounded v1 supports one successor; no automatic generation recovery');
  for(const [actual,expected] of [[options.source,c.sourceDeclared],[options.requirementsPath,c.roles.requirementsPath],[options.instructions,c.instructions],[options.policy,c.policy],[options.limits,c.header.limits],[safePath(options.decisionsDir),c.decisionsDir]])insist(isDeepStrictEqual(actual,expected),'caller differs from original control');
  insist(options.worldPath===options.revision.worldPath && isDeepStrictEqual(options.seamPaths,options.revision.seamPaths),'requested archive role mismatch');

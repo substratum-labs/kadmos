@@ -1,3 +1,4 @@
+import { observeHostEffect, censusEffects } from './effects.js';
 import { isDeepStrictEqual } from 'node:util';
 import { mkdirSync, mkdtempSync, lstatSync, existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
@@ -46,6 +47,7 @@ export async function verifyCandidate(input: VerificationInput, signal: AbortSig
    const stdoutPath=join(checkDir,'stdout'),stderrPath=join(checkDir,'stderr');
    if(signal.aborted || Date.now()>=deadline) {diagnostics.push(signal.aborted?'verification cancelled before check':'verification deadline exhausted before check');failureKind='environment';break;}
    if(!isDeepStrictEqual(resolveVerifier(command,input.workspace,input.policy),invocation))throw new Error('host program changed before check');
+   if(censusEffects(input).some(e=>e.outcome==='unknown'))throw new Error('unresolved host effects before check');
    const startedAt=new Date().toISOString();
    const observed=await supervise(invocation.executable,invocation.argv,invocation.cwd,'',stdoutPath,stderrPath,signal,deadline,input.limits.killGraceMs,false);
    diagnostics.push(...observed.diagnostics);
@@ -58,7 +60,9 @@ export async function verifyCandidate(input: VerificationInput, signal: AbortSig
    // Recapture after every real process, even a failed one.
    after=loadVerificationContext(read).current;
    if(!isDeepStrictEqual(after,input.binding)){status='drift';throw new Error('candidate changed during verification');}
+   if(observed.treeStopped===true)await observeHostEffect(input,command,signal,deadline);
    if(checkStatus!=='passed') {status='failed';failureKind=observed.reason===null&&observed.signal===null&&observed.exitCode!==null&&observed.treeStopped===true&&(command.resultProtocol!=='exit-v1'||observed.exitCode===1)?command.failureKind:'environment';break;}
+   if(censusEffects(input).some(e=>e.outcome==='unknown')){diagnostics.push('unresolved host effect; later checks fenced');break;}
   }
   after=loadVerificationContext(read).current;
   if(!isDeepStrictEqual(after,input.binding)){status='drift';throw new Error('final binding drift');}

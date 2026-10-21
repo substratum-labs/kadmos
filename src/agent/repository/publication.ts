@@ -1,3 +1,4 @@
+import { assertEffectCensus } from './effects.js';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -151,6 +152,7 @@ function eligible(input:RunStorage,r:RepositoryRunRecord,h:RunHeader,s:Snapshot)
  }
  insist(r.status==='delivered' && r.delivery!==null,'not complete');
  insist(isDeepStrictEqual({...r,status:s.record.status,delivery:null},s.record),'complete differs from latest checkpoint');
+ assertEffectCensus(input,r);
  insist(r.effects.every(e=>e.outcome!=='unknown' && e.effectCount!=='unknown' && e.reconciliation!=='unavailable' && (e.outcome==='not_committed'?e.effectCount===0:e.effectCount===1)),'unresolved effects fence');
  const a=r.attempts[r.attempts.length-1],v=r.revisions[r.revisions.length-1];insist(a && v && a.verification && a.revisionId===v.id,'no latest current-revision verification');
  const receipt=a.verification,p=a.backend.process;
@@ -244,6 +246,7 @@ export function beginRevision(input:RunStorage,revision:WorldRevision,binding:In
  mutate(input,()=>{
   insist(!existsSync(join(location(input),'generations')),'generation already reserved; bounded v1 requires host recovery');
   const all=snapshots(input,start(input)),last=all.at(-1);insist(last,'missing original history');
+  assertEffectCensus(input,last.record);
   insist(Date.now()<start(input).deadlineEpochMs && last.record.attempts.length<start(input).limits.maxAttempts,'original budget exhausted before intent');
   const c=readControl({artifactDir:input.artifactDir,runId:input.runId});readApprovedActivation({control:c,currentRevision:c.initialRevision,requestedRevision:revision});
   const root=generationPath(input);mkdirSync(root,{recursive:true,mode:0o700});

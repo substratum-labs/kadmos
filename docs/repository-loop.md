@@ -1,4 +1,4 @@
-# Repository loop interface (v1, D2a integration checkpoint)
+# Repository loop interface (v1)
 
 Implemented host APIs provide disposable workspaces, physical/scripted backend
 process evidence, frozen verification contexts, real verification, delivery
@@ -6,7 +6,8 @@ eligibility, original run budgets, immutable checkpoints and complete-run
 publication/readback. Tasks D and E received independent physical Grok acceptance;
 E acceptance is frozen at59885a5. Host commands include run, inspect, propose-world,
 approve-world, reject-world and continue, with runtime validation. F1 adds local
-settlement reconciliation; whole Task F and live A20 remain pending. Existing
+settlement reconciliation. F2 connects a trusted host effect journal to the runtime
+fence and adds a bounded SCRIPTED repair example; whole Task F and live A20 remain pending. Existing
 `kadmos run` and `kadmos.compiler.k02.v1` are unchanged.
 
 The TypeScript wire shapes are in `src/agent/repository/contracts.ts`.
@@ -230,7 +231,7 @@ cover exactly ports.d.ts and world_checker.ts once; extra/duplicate files refuse
 This helper grants neither verifier success nor durable acceptance. Verifier and publication now use this capture; D2a wires orchestration to this capture; CLI/live work remains D2b.
 
 
-## Internal complete-run publication (D1f)
+## Historical 2026-10-21 D1f: complete-run publication
 
 The public v1 record/manifest interfaces above remain unchanged. The original
 `run.json` view is display-only; `delivery.json` remains a future sketch. Neither a
@@ -313,7 +314,7 @@ Lifecycle sidecars are also create-once (`wx`): an existing sidecar refuses
 launch/qualification, preserves its bytes, and attempts known-PID cleanup.
 It does not overwrite telemetry or manufacture process-tree closure.
 
-## D2a fixed-World integration (pending physical D review)
+## Historical 2026-10-21 D2a: fixed-World integration
 
 `runRepositoryTask` reserves one external artifact root for the entire run. A
 concurrent or stale fresh start refuses to overwrite its display/history. The
@@ -354,7 +355,7 @@ A10's code-repair route is exercised independently; its later F settlement trace
 still intentionally fails. Task D remains IN_PROGRESS until D2b CLI/live and the
 shared settlement prerequisite are handled and physical review accepts the assembly.
 
-## Early F precommit-refusal prerequisite (D2b)
+## Historical 2026-10-21 D2b: early F precommit prerequisite
 
 The example order-service settlement seam authorizes INITIATE_PAYMENT with the
 fixed directive before invoking its trusted host actuator argv through the shared
@@ -428,7 +429,7 @@ budget gate. Preflight alone never authorizes a live run or grants delivery to
 historical failed evidence. Freeze all final bytes only after successful preflight.
 
 
-## E1 World archive foundation (SCRIPTED qualification)
+## Historical 2026-10-21 E1: World archive foundation
 
 The library `proposeWorldChange` and `activateWorldRevision` implement standalone
 host archives. A proposal contains exact complete replacement YAML, rationale,
@@ -486,7 +487,7 @@ The approved-archive loader supports one exact successor of the frozen initial r
 
 Continuation, fresh candidate reconstruction/materialization, revised verification context, versioned publication and host CLI commands remain pending. They must preserve the original header, all attempts and deadline, serialize/quiesce workspace replacement, and fence previous complete authority before switching revision intent. Archive physical World/seam paths must be materialized into the original lexical role locations. An archived stale-ID list may be a historical subset; later current-revision tuple validation must invalidate every actual old receipt, with any additional derived staleness retained separately.
 
-### E2b direct continuation (bounded v1)
+### Historical 2026-10-21 E2b: direct continuation
 
 `runRepositoryTask` can continue an original controlled run into **one exact approved successor**. Supply the original options and the approved archive's `revision`, `worldPath` and `seamPaths`. It acquires the existing run's exclusive controller, validates original control/header/checkpoint/evidence, and retains the original start, deadline, limits and attempt numbering. Operator wait consumes the original deadline. Missing control, overrides, exhausted/expired budgets, unresolved effects/processes, blocked infrastructure/core/unknown routes, changed candidates/source or partial history refuse continuation. No automatic recovery, lock stealing or budget renewal is provided.
 
@@ -497,7 +498,7 @@ A create-once generation reservation under `publication/<run>/generations/000000
 Compatibility ruling: public `RepositoryRunRecord` and `WorldRevision` shapes stay unchanged. Initial D fixed-World readback remains supported. This internal v1 supports only one successor rooted in the initial durable history; a second successor is explicitly refused even if independently approved. An interrupted reservation requires trusted host recovery; no automatic crash repair is claimed. Host records are integrity evidence under the existing trusted local operator assumption, not signatures or malicious same-user isolation. Direct continuation does not add `propose`/`approve`/`reject`/`continue` CLI commands; E2c owns those. No business World approval or installed coding-agent invocation is implied by SCRIPTED tests.
 
 
-## E2c host CLI and seam frames (pending independent review)
+## Historical 2026-10-21 E2c: host CLI and seam frames
 
 The four commands above are implemented. Proposal and continuation JSON use the exact frozen schema; decision JSON remains the exact nine-field object with no schema or artifact locator. **Class C CLI-context clarification:** `approve-world` and `reject-world` require `--artifact-dir <hostRoot>` after `--input <decision.json>`. This flag only locates the original control for the stated run. It is not operator permission and cannot override the original `decisionsDir`. The previously underspecified locator is explicit rather than inferred from cwd, global registries, candidate metadata or filesystem scans. Unknown arguments/fields refuse. Host input files must be absolute, regular, unaliased, and outside source/candidate; system `/var` and `/tmp` aliases retain existing canonical handling.
 
@@ -512,10 +513,10 @@ New archives preserve the existing seam hash frame: declared role index, root-re
 All worker demonstrations are SCRIPTED backend/operator fixtures. No actual business World decision, Yong approval, installed coding-agent qualification or production mutation is implied. Parent physical Grok reviews assembled Task E; F still owns HTTP reconciliation/A18 and the later A20 live gate.
 
 
-## F1: local settlement and independent HTTP fault acceptance
+## Historical 2026-10-21 F1: local settlement and independent HTTP faults
 
-`examples/repository-order-service/settlement.ts` preserves the frozen
-`SettlementInput` shape. The HOST supplies executable/argv capabilities; generated
+`examples/repository-order-service/settlement.ts` preserves the required
+`SettlementInput` fields. The HOST supplies executable/argv capabilities; generated
 Fabric/model stdout cannot select an actuator or grant authority. The independent
 HTTP server and argv adapter in `tests/fixtures/repository/http-{actuator,client}.cjs`
 use actual loopback sockets and separate processes. The server serializes requests,
@@ -572,3 +573,74 @@ separately hardened; F1 makes no broader approval-history claim.
 The legacy file actuator keeps its original default JSON reply shapes. Settlement
 acceptance opts into `--bound` host receipts; original contract assertions remain
 unchanged. Legacy unbound stdout cannot resolve settlement.
+
+
+## 2026-10-21 F2: frozen host effect journal (Class C runtime evidence extension)
+
+Required DTOs, `EffectRecord`, exact operator decisions, original limits, and K-02
+semantics are unchanged. A frozen verifier argv may end with two literal arguments:
+`--kadmos-order-effect-v1` and a JSON object with exactly `operationId`, `actuator`,
+and `query`. The two commands use the existing `VerifierCommand` contract, with
+absolute host executable/script paths, frozen program digests and literal endpoint
+arguments. Candidate cwd/argv placeholders, nested effect markers, and candidate
+paths cannot supply these commands. This is the single order-settlement observer,
+not a generic effect executor. The host selects it when freezing policy. The
+functional verifier still runs independently and has its original exit semantics.
+The runtime then uses the frozen World to instantiate its own host checker and
+observes the selected apply/query processes. Candidate stdout and candidate-returned
+`EffectRecord` objects are never journal authority.
+
+`<artifactDir>/effects/<operationId>/reservation/record.json` binds run, revision,
+attempt, check, complete input identity, frozen verifier and host commands, with an
+unknown reservation **before** checker authorization or actual launch. The sibling
+`settlement.dispatch/` retains F1's original unknown, authorized checker state,
+actuator/query observations, raw stdout/stderr and sampled lifecycle traces. The
+create-once `outcome/record.json` seals the observed result and exact file references.
+Immediate drop followed by a qualified committed query can seal known commit while
+retaining raw ambiguous evidence. The optional host settlement deadline caps its
+existing five-second limit by the original verifier/run deadline. The optional host
+command cwd is honored explicitly; default legacy cwd remains the record directory. The example
+`settlement.ts` reexports this source-owned implementation.
+
+The current journal is censused before retries/checks, after verification, before
+revision intent, and during publication and every complete readback. Missing,
+malformed, stale, foreign, aliased, duplicate, incomplete or altered evidence refuses
+acceptance. Missing journal means no effects only for pure runs with no dispatched
+reserved check; a missing expected reservation is never zero. Late reservations or
+receipt changes invalidate an old complete grant, including in a fresh reader.
+Incomplete/unknown observations block later checks, model attempts, actuation and
+World continuation. Unknown overrides CODE_REPAIR even when the functional verifier
+fails. Exact SCRIPTED archive approval cannot erase it or renew the original budget.
+There is no automatic unknown recovery. Known same-operation observations may be
+reused after rechecking their original evidence without another actuation.
+
+The existing trusted single-operator filesystem/process assumption still applies:
+create-once records and digests detect observed drift; they do not provide OS
+isolation against hostile same-user mutation, arbitrary candidate network effects,
+power-loss durability or a universal savepoint-token/exactly-once guarantee.
+Only the configured host-mediated operation is qualified. Exclusive checker
+ownership during await remains required; detected state/context drift refuses
+rollback.
+
+Reproduce from this source checkout (Node and the frozen lockfile installed):
+
+```sh
+pnpm run build
+node --test dist/tests/test_repository_effect_journal.test.js
+node --test dist/tests/test_repository_scripted_order.test.js
+node dist/examples/repository-order-service/scripted-demo.js /private/tmp/kadmos-scripted-order-demo
+```
+
+The last command requires a new output directory. It creates a disposable Git
+repository, three editable Fabric/client/persistence modules, a host SCRIPTED
+backend and frozen independent HTTP verifier. Three real backend/check iterations
+observe illegal guard order, then forbidden retry after ambiguous apply, then a
+passing repaired repository. The verifier measures refusal/rollback, drop/query
+commit and unavailable-query retention using the separate HTTP server ledger and
+request traces. `summary.json`, feedback, candidate identities, process logs and
+complete evidence remain under the output directory. The server exits before the
+command returns. Expected negative test operations use `negative-fixture-*` IDs
+and a separate fixture ledger, not the business run's effect journal. The example
+uses the source-checkout HTTP fixture in `tests/fixtures/repository/`; it is not an
+npm-installed service. It demonstrates SCRIPTED repair, not actual installed R3,
+live A20, human World approval, physical reviewer acceptance or whole-Epic delivery.

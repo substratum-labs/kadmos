@@ -1,3 +1,4 @@
+import { censusEffects, assertEffectCensus } from './effects.js';
 import { constants, closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -64,6 +65,7 @@ export async function runRepositoryTask(given: RepositoryRunOptions): Promise<Re
   checkpointRun(storage,record);
   for(let index=record.attempts.length;index<header.limits.maxAttempts;index++) {
    if(options.signal.aborted || Date.now()>=header.deadlineEpochMs){diagnose(options.signal.aborted?'controller cancelled before attempt':'original run deadline exhausted','incomplete');checkpointRun(storage,record);break;}
+   assertEffectCensus(storage,record);
    const id=`a${index+1}`;
    const binding=captureIdentity({...identity,baseline});
    const feedback=record.diagnostics.slice(-12).map(s=>s.slice(0,8192));
@@ -85,9 +87,12 @@ export async function runRepositoryTask(given: RepositoryRunOptions): Promise<Re
     }else{route='NEEDS_REVIEW';diagnostics.push('backend snapshot differs from independent host candidate');}
    }else diagnostics.push(`backend ${backend.status}; exit ${backend.process.exitCode}; stopped ${backend.process.treeStopped}; no code acceptance`);
    record={...record,attempts:[...record.attempts,{id,revisionId:options.revision.id,backend,verification,route}],diagnostics:[...record.diagnostics,...diagnostics]};
+   const effects=censusEffects(storage,record);
+   record={...record,effects};
+   if(effects.some(e=>e.outcome==='unknown')){route='NEEDS_REVIEW';record={...record,attempts:[...record.attempts.slice(0,-1),{id,revisionId:options.revision.id,backend,verification,route}]};diagnose('unresolved host effect: no retry or delivery');checkpointRun(storage,record);break;}
    checkpointRun(storage,record);display();
    if(verification?.status==='passed') {
-    const verdict=validateDelivery({workspace,policy:options.policy,receipt:verification,expected:verification.before,requiredCheckIds:options.policy.verifiers.map(c=>c.id),unresolvedEffects:[]});
+    const verdict=validateDelivery({workspace,policy:options.policy,receipt:verification,expected:verification.before,requiredCheckIds:options.policy.verifiers.map(c=>c.id),unresolvedEffects:record.effects.filter(e=>e.outcome==='unknown')});
     if(verdict.status!=='eligible' || !verdict.manifest){diagnose(verdict.diagnostics.join('\n'));checkpointRun(storage,record);break;}
     const complete={...record,status:'delivered' as const,delivery:verdict.manifest};
     // publishRun returns only after complete readback independently validates current evidence.
