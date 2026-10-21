@@ -25,8 +25,8 @@ process.stdin.on('end', () => {
     setTimeout(()=>console.log(JSON.stringify({type:'turn.completed'})),1000);
     return;
   }
-  if (['hang','linger','stubborn','escape','escape-linger'].includes(mode)) {
-    const child = spawn(process.execPath, ['-e', `${mode==='stubborn'?"process.on('SIGTERM',()=>{});":''}setInterval(()=>require('fs').appendFileSync(${JSON.stringify(path.join(host,'heartbeat'))},'x'),20);setTimeout(()=>process.exit(),8000)`], { stdio: 'ignore', detached:mode==='escape'||mode==='escape-linger' });
+  if (['hang-delayed-heartbeat','hang','linger','stubborn','escape','escape-linger'].includes(mode)) {
+    const child = spawn(process.execPath, ['-e', `${mode==='stubborn'?"process.on('SIGTERM',()=>{});":''}setTimeout(()=>setInterval(()=>require('fs').appendFileSync(${JSON.stringify(path.join(host,'heartbeat'))},'x'),20),${mode==='hang-delayed-heartbeat'?1000:0});setTimeout(()=>process.exit(),8000)`], { stdio: 'ignore', detached:mode==='escape'||mode==='escape-linger' });
     fs.writeFileSync(path.join(host, 'child.pid'), String(child.pid));
     if(mode==='linger'||mode==='escape-linger') { console.log(JSON.stringify({type:'turn.completed'})); setTimeout(()=>process.exit(0),150); return; }
     setInterval(() => {}, 1000); setTimeout(()=>process.exit(8),8000); return;

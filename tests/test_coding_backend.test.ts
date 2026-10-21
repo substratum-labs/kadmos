@@ -25,10 +25,35 @@ test('A02 zero exit and done prose are process evidence without delivery authori
   assert.ok(r.candidate,'candidate identity must be independently inspectable');assert.equal(r.candidate.digest,f.binding.candidate.digest);
 });
 for(const mode of ['timeout','cancel','quota','malformed'] as const) test(`A03 ${mode} is bounded and retains diagnostics with no live descendants`,{timeout:20_000},async t=>{
-  const f=fixture(mode==='timeout'||mode==='cancel'?'hang':mode);t.after(f.cleanup);
-  const controller=new AbortController();t.after(()=>controller.abort());const timer=mode==='cancel'?setTimeout(()=>controller.abort(),250):null;
-  t.after(()=>{if(timer)clearTimeout(timer);});
-  const start=Date.now();const r=await f.backend.run(f.task,controller.signal);
+  const f=fixture(mode==='cancel'?'hang-delayed-heartbeat':mode==='timeout'?'hang':mode);t.after(f.cleanup);
+  const controller=new AbortController();
+  // Cancellation must exercise a live descendant, even when its first sample is delayed.
+  // Only this fixture gets startup headroom; production/default limits stay unchanged.
+  const task=mode==='cancel'?{...f.task,limits:{...f.task.limits,attemptMs:3000}}:f.task;
+  const start=Date.now();
+  const r=await (async()=>{
+    const running=f.backend.run(task,controller.signal);
+    // Readiness assertions can fail before we await the result. Always reap the run.
+    void running.catch(()=>{});
+    try {
+      if(mode==='cancel') {
+        const startupDeadline=Date.now()+2500;
+        while(!f.exists('heartbeat')||f.read('heartbeat').length===0) {
+          assert.ok(Date.now()<startupDeadline,'live descendant heartbeat startup deadline');
+          await delay(10);
+        }
+        assert.ok(f.exists('child.pid'),'fixture spawned a descendant before cancellation');
+        const pid=Number(f.read('child.pid'));
+        assert.ok(Number.isSafeInteger(pid)&&pid>0,'recorded descendant PID');
+        process.kill(pid,0);
+        controller.abort();
+      }
+      return await running;
+    } finally {
+      controller.abort();
+      await running;
+    }
+  })();
   assert.equal(r.status,mode==='cancel'?'cancelled':mode,'failure must reflect physical observation');
   assert.ok(Date.now()-start<4000);assert.ok(r.diagnostics.length>0);assert.ok(existsSync(r.process.stdoutPath));assert.ok(existsSync(r.process.stderrPath));assert.equal(f.read('launches').trim().split('\n').length,1,'no automatic retry');
   if(mode==='timeout'||mode==='cancel') {
