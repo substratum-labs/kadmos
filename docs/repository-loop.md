@@ -7,7 +7,8 @@ verify candidates, activate World revisions or deliver code. Behavioral tests
 are intentionally failing. No usable repository CLI is claimed yet.
 
 The TypeScript wire shapes are in `src/agent/repository/contracts.ts`.
-All persisted objects use JSON, UTF-8, with schema `kadmos.repository.v1`.
+Persisted objects use UTF-8 JSON; run records/manifests and command inputs carry
+schema `kadmos.repository.v1` (operator decisions have their own exact shape).
 Unknown process/usage/effect observations are explicit `null` or `unknown`;
 zero is reserved for an observed zero. JSON never serializes an AbortSignal,
 backend object or checker; these are process-local dependencies.
@@ -33,7 +34,8 @@ backend object or checker; these are process-local dependencies.
 - `proposeWorldChange(WorldChangeInput) -> WorldChangeProposal` records a rationale
   and exact replacement World YAML bytes (no executable patch language).
 - `activateWorldRevision(ApprovedWorldChange) -> WorldRevision` loads a trusted
-  operator record, validates all bound IDs/digests, freezes a new World and
+  operator record, validates all bound IDs/digests and that decisionPath is inside the separately
+  trusted decisionsDir (with no symlink traversal), freezes a new World and
   independently regenerated seam, and marks historical receipt IDs stale.
   Rejected activation preserves the old revision. No compiler changes are allowed.
 
@@ -58,17 +60,26 @@ Candidate digest is SHA-256 of compact JSON with keys in this order:
 base tree. Include all regular input files and untracked additions, excluding
 only `.git/` metadata and explicitly declared output paths. Record deletions
 rather than hashing only surviving files. Requirements and World hash raw
-bytes. Seam digest hashes a sorted file-entry array with seam-root-relative
-paths; policy digest hashes the frozen policy JSON bytes, retained verbatim.
+bytes. Seam digest hashes a sorted file-entry array with paths prefixed by the
+zero-based declared seamPaths index (`0/ports.d.ts`, for example), then the
+root-relative path (or basename for a single file); policy digest hashes the frozen policy JSON bytes, retained verbatim.
 
 `allowedPaths` and `protectedPaths` are exact paths or prefixes ending `/`.
 Protected paths take precedence; unknown edits fail closed. World, requirements,
-generated core, acceptance tests and verifier policy are protected. Frozen
+generated core, acceptance tests and verifier policy are protected. A frozen verifier command declares its failure kind; a failed trusted
+requirement check may request World review. Diagnostic prose cannot invent a
+classification or grant authority. Launch/timeout/cancellation override that kind
+with environment failure. Frozen
 verifier programs, commands, digests and host decision records live outside the
 candidate edit set. Candidate tests cannot replace required checks. Independently
 regenerate the core; compare protected bytes and all identities before and after
 checks and again at final manifest readback. A missing check, late write or
 unresolved physical effect clears delivery eligibility.
+
+`validateDelivery(DeliveryValidationInput) -> DeliveryValidation` performs the
+last fresh snapshot/readback against the exact receipt, required check IDs and
+retained unresolved effects; pending/failed/drifted/incomplete evidence cannot
+produce an eligible manifest.
 
 ## Installed CLI invocation and process lifecycle
 
@@ -116,9 +127,18 @@ The trusted operator deliberately executes `approve-world`; this records
 command/operator/time, run ID, proposal ID/digest, base revision ID/World digest
 and patch digest. Activation recomputes digests from exact bytes, checks the
 current base and trusted record location, then creates a new immutable directory.
+Proposal digest is SHA-256 over compact JSON with keys in this order:
+`{runId,proposalId,baseRevisionId,baseWorld,requirements,patchDigest,rationale}`.
+Patch digest hashes exact UTF-8 replacement YAML bytes. The recorded base revision
+and World must match the current immutable revision before parsing/applying a patch.
 Backend prose and a candidate-written lookalike JSON file cannot grant approval.
 Local filesystem access by the operator remains a trust assumption. This contract
 itself grants no authority to approve an actual business World.
+
+The default trusted decisionsDir is `<artifactDir>/decisions`; an explicitly
+configured host-owned directory is persisted with run inputs. Activation receives
+that trusted root separately from the decisionPath to validate. World proposal
+artifactDir names the run root, not the revisions subdirectory.
 
 Host-owned layout:
 
@@ -132,6 +152,11 @@ Host-owned layout:
 <artifactDir>/effects/<operation>/   # retained committed/not_committed/unknown
 <artifactDir>/delivery.json           # only complete, revalidated manifest
 ```
+
+Manifest check receipt IDs are derived as `<runId>/<attemptId>/<checkId>`;
+overall verification receipt IDs use the final component `verification`. IDs
+are immutable within the run and all referenced raw records/hashes are read back.
+A new revision cannot borrow an old tuple or its receipt IDs.
 
 Write artifacts atomically (temporary sibling plus rename), retain failures and
 read back all referenced hashes. Partial records after crash/cancel are incomplete.

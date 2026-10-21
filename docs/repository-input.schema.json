@@ -171,6 +171,17 @@
         "programDigest": {
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "failureKind": {
+          "enum": [
+            "compile",
+            "functional",
+            "guard",
+            "requirement",
+            "core",
+            "environment",
+            "ambiguous"
+          ]
         }
       },
       "required": [
@@ -178,7 +189,8 @@
         "executable",
         "argv",
         "cwd",
-        "programDigest"
+        "programDigest",
+        "failureKind"
       ],
       "additionalProperties": false
     },

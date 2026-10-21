@@ -1,6 +1,7 @@
 // Independent local file actuator, intentionally bounded (not crash-durable).
 const fs = require('node:fs');
 const [file, action, id, mode] = process.argv.slice(2);
+fs.appendFileSync(file+'.trace.jsonl',JSON.stringify({action,id,mode})+'\n');
 const state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file,'utf8')) : { operations:{}, effects:0 };
 if (action === 'query') {
   if (mode === 'unavailable') { console.error('reconciliation unavailable'); process.exit(3); }

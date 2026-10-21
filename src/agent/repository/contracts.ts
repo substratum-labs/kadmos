@@ -18,6 +18,7 @@ export interface InputBinding {
 export interface VerifierCommand {
   readonly id: string; readonly executable: string; readonly argv: readonly string[];
   readonly cwd: string; readonly programDigest: Digest;
+  readonly failureKind: 'compile' | 'functional' | 'guard' | 'requirement' | 'core' | 'environment' | 'ambiguous';
 }
 export interface RepositoryPolicy {
   readonly sourceRoot: string; readonly baseCommit: string;
@@ -90,7 +91,7 @@ export interface OperatorDecision {
 export interface ApprovedWorldChange {
   readonly proposal: WorldChangeProposal; readonly current: WorldRevision;
   /** Host-controlled record path, outside candidate edit set; never model prose. */
-  readonly decisionPath: string; readonly runId: string;
+  readonly decisionPath: string; readonly decisionsDir: string; readonly runId: string;
   readonly historicalReceiptIds: readonly string[];
 }
 export interface AttemptRecord { readonly id: string; readonly revisionId: string; readonly backend: CodingResult; readonly verification: VerificationReceipt | null; readonly route: FailureRoute }
@@ -118,4 +119,12 @@ export interface RepositoryRunRecord {
   readonly attempts: readonly AttemptRecord[]; readonly revisions: readonly WorldRevision[];
   readonly effects: readonly EffectRecord[]; readonly delivery: DeliveryManifest | null;
   readonly diagnostics: readonly string[];
+}
+
+export interface DeliveryValidationInput {
+ readonly workspace: string; readonly policy: RepositoryPolicy; readonly receipt: VerificationReceipt;
+ readonly expected: InputBinding; readonly requiredCheckIds: readonly string[]; readonly unresolvedEffects: readonly EffectRecord[];
+}
+export interface DeliveryValidation {
+ readonly status: 'pending' | 'eligible' | 'refused'; readonly manifest: DeliveryManifest | null; readonly diagnostics: readonly string[];
 }

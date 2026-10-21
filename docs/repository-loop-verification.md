@@ -19,7 +19,7 @@ node --test dist/tests/test_coding_backend.test.js dist/tests/test_repository_lo
 ```
 
 The contract gate currently passes 5 tests. The behavioral command currently
-runs 37 tests: 36 intentionally fail assertions against pending implementations;
+runs 40 tests: 39 intentionally fail assertions against pending implementations;
 one conservative ambiguous-routing case passes. No tests are skipped. A20 remains
 an unexecuted live gate. The unchanged legacy baseline is 268 passing tests,
 with packed NodeNext consumer and strict typecheck passing separately. The full
