@@ -1,0 +1,32 @@
+// Host-owned process fixture: Codex argv/stdin shape, real file/process effects.
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+const [mode, host, ...argv] = process.argv.slice(2);
+const cwd = argv[argv.indexOf('--cd') + 1] || process.cwd();
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', chunk => input += chunk);
+process.stdin.on('end', () => {
+  fs.appendFileSync(path.join(host, 'launches'), '1\n');
+  fs.writeFileSync(path.join(host, 'invocation.json'), JSON.stringify({ argv, cwd: process.cwd(), selectedCwd: cwd, input }));
+  console.log(JSON.stringify({ type: 'thread.started', thread_id: 'fixture' }));
+  if (mode === 'quota') { console.error('usage_limit_reached'); process.exitCode = 1; return; }
+  if (mode === 'malformed') { console.log('not-json'); return; }
+  if (mode === 'hang') {
+    const child = spawn(process.execPath, ['-e', `setInterval(()=>require('fs').appendFileSync(${JSON.stringify(path.join(host,'heartbeat'))},'x'),20);setTimeout(()=>process.exit(),8000)`], { stdio: 'ignore' });
+    fs.writeFileSync(path.join(host, 'child.pid'), String(child.pid));
+    setInterval(() => {}, 1000); setTimeout(()=>process.exit(8),8000); return;
+  }
+  if (mode.startsWith('tamper:')) fs.appendFileSync(path.join(cwd, mode.slice(7)), '\nTAMPER');
+  if (mode === 'repair') {
+    const countPath = path.join(host,'attempts');
+    const n = fs.existsSync(countPath) ? Number(fs.readFileSync(countPath))+1 : 1;
+    fs.writeFileSync(countPath, String(n));
+    fs.writeFileSync(path.join(cwd,'src/a.ts'), n === 1 ? 'export const a: number = "bad";' : 'export const a: number = 1;');
+    fs.writeFileSync(path.join(cwd,'src/b.ts'), 'export const b = 2;');
+    fs.appendFileSync(path.join(host,'feedback.txt'), input+'\n');
+  }
+  console.log(JSON.stringify({ type:'item.completed',item:{ type:'agent_message',text:'done' } }));
+  console.log(JSON.stringify({ type:'turn.completed',usage:{input_tokens:1,output_tokens:1} }));
+});

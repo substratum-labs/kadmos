@@ -1,0 +1,466 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kadmos.dev/schema/repository-input.v1.json",
+  "title": "Repository loop v1 host input files",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/runInput"
+    },
+    {
+      "$ref": "#/$defs/proposalInput"
+    },
+    {
+      "$ref": "#/$defs/continueInput"
+    },
+    {
+      "$ref": "#/$defs/decision"
+    }
+  ],
+  "$defs": {
+    "limits": {
+      "type": "object",
+      "properties": {
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "attemptMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "verifierMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "overallMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "killGraceMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "maxAttempts",
+        "attemptMs",
+        "verifierMs",
+        "overallMs",
+        "killGraceMs"
+      ],
+      "additionalProperties": false
+    },
+    "file": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "executable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "executable"
+      ],
+      "additionalProperties": false
+    },
+    "candidate": {
+      "type": "object",
+      "properties": {
+        "baseCommit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          }
+        },
+        "deleted": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "baseCommit",
+        "digest",
+        "files",
+        "deleted"
+      ],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "requirements": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "world": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "seam": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "policy": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "candidate": {
+          "$ref": "#/$defs/candidate"
+        },
+        "revisionId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "requirements",
+        "world",
+        "seam",
+        "policy",
+        "candidate",
+        "revisionId"
+      ],
+      "additionalProperties": false
+    },
+    "verifier": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "programDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "executable",
+        "argv",
+        "cwd",
+        "programDigest"
+      ],
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "sourceRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseCommit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allowedPaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "protectedPaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "excludedOutputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "verifiers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/verifier"
+          }
+        }
+      },
+      "required": [
+        "sourceRoot",
+        "baseCommit",
+        "allowedPaths",
+        "protectedPaths",
+        "excludedOutputs",
+        "verifiers"
+      ],
+      "additionalProperties": false
+    },
+    "decision": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "approve-world",
+            "reject-world"
+          ]
+        },
+        "operator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proposalId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proposalDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "baseRevisionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseWorld": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "patchDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "recordedAt": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "command",
+        "operator",
+        "runId",
+        "proposalId",
+        "proposalDigest",
+        "baseRevisionId",
+        "baseWorld",
+        "patchDigest",
+        "recordedAt"
+      ],
+      "additionalProperties": false
+    },
+    "backend": {
+      "type": "object",
+      "properties": {
+        "executable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prefixArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "executable",
+        "prefixArgs"
+      ],
+      "additionalProperties": false
+    },
+    "runInput": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "enum": [
+            "kadmos.repository.v1"
+          ]
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifactDir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requirementsPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "worldPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seamPaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/policy"
+        },
+        "backend": {
+          "$ref": "#/$defs/backend"
+        },
+        "limits": {
+          "$ref": "#/$defs/limits"
+        },
+        "revisionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decisionsDir": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema",
+        "runId",
+        "source",
+        "artifactDir",
+        "requirementsPath",
+        "worldPath",
+        "seamPaths",
+        "instructions",
+        "policy",
+        "backend",
+        "limits",
+        "revisionId",
+        "decisionsDir"
+      ],
+      "additionalProperties": false
+    },
+    "proposalInput": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "enum": [
+            "kadmos.repository.v1"
+          ]
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proposalId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseRevisionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseWorld": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "patch": {
+          "type": "string"
+        },
+        "artifactDir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requirements": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "schema",
+        "runId",
+        "proposalId",
+        "baseRevisionId",
+        "baseWorld",
+        "patch",
+        "artifactDir",
+        "rationale",
+        "requirements"
+      ],
+      "additionalProperties": false
+    },
+    "continueInput": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "enum": [
+            "kadmos.repository.v1"
+          ]
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifactDir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revisionId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema",
+        "runId",
+        "artifactDir",
+        "revisionId"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
