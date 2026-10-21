@@ -1,6 +1,6 @@
 # Kadmos World v0: Observed Semantics
 
-This documents the K-02 compiler contract `kadmos.compiler.k02.v1` implemented on 2026-10-09 from manifest version 0.1.2. It is a reference for using and testing the implementation, not a proof that a World captures domain intent or that Fabric implements it. [Conformance tests](../tests/test_world_semantics_conformance.test.ts) execute interpreted TypeScript, emitted TypeScript, and emitted Python against independent expected outcomes.
+This documents the compiler contract `kadmos.compiler.k02.v1` from manifest version 0.1.2. It is a reference for using and testing the implementation, not a proof that a World captures domain intent or that Fabric implements it. [Conformance tests](../tests/test_world_semantics_conformance.test.ts) execute interpreted TypeScript, emitted TypeScript, and emitted Python against independent expected outcomes.
 
 ## Model admission
 
@@ -32,4 +32,4 @@ The checker is synchronous and guards reentrant evaluation, but it does not seri
 
 `kadmos test` in `src/fuzzer.ts` uses seeded requests to compare an **interpreted TypeScript checker** with a **generated Python checker** on selected verdict fields and sampled traces. Passing runs are empirical differential evidence, not a proof of all-input bisimulation and not correspondence of emitted target code to the World. The tests named above additionally execute emitted TypeScript and Python against independent expected outcomes. Runtime invariant refusal for checked requests is narrower than model-wide reachability proof.
 
-Strict emitted TypeScript typechecks and Python imports cover empty context, invariant, transition, and directive sets. Three-path fixed traces cover accepted/refused transitions, ordered effects, directive presence, violation messages/history, constructor/reset, and rollback. These are finite empirical checks, not a compiler-correctness or bisimulation proof. The compiler contract marker is human-readable; an immutable source commit identifies the exact implementation for a later Harmonia pin.
+Strict emitted TypeScript typechecks and Python imports cover empty context, invariant, transition, and directive sets. Three-path fixed traces cover accepted/refused transitions, ordered effects, directive presence, violation messages/history, constructor/reset, and rollback. These are finite empirical checks, not a compiler-correctness or bisimulation proof. The compiler contract marker is human-readable; an immutable source commit identifies the exact implementation for formal verification.
