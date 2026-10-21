@@ -200,3 +200,14 @@ limits fail before launch. POSIX process inventory is a local best-effort measur
 not adversarial containment. Windows live execution remains refused; Linux live
 execution has not been measured. macOS system `/var` and `/tmp` aliases are
 canonicalized; candidate aliases and other symlink ancestors are refused.
+
+D1b host helper `captureIdentity` accepts source-declared absolute input paths, maps
+them into `workspace`, and returns the frozen v1 InputBinding. Its optional
+`baseline` must come from a host capture before backend execution. Call it again
+after execution and around verification; it enforces allowed/protected changes
+against that exact snapshot, including modes and added/deleted regular files.
+It regenerates both TypeScript seam files in memory with the unchanged compiler.
+Ruling: v1 TS seam declarations may be directories or individual files but must
+cover exactly ports.d.ts and world_checker.ts once; extra/duplicate files refuse.
+This helper grants neither verifier success nor durable acceptance. Wiring capture
+into orchestration and final delivery remains pending.
