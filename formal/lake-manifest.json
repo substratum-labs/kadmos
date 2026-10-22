@@ -5,7 +5,7 @@
    "type": "git",
    "subDir": null,
    "scope": "",
-   "rev": "dc7377b2dff0935b1fe700b788d1d64514443884",
+   "rev": "15c8a5fb0edf1970c692e0fa138c77c44e882cff",
    "name": "harmonia",
    "manifestFile": "lake-manifest.json",
    "inputRev": "v0.1.0",
