@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { compileWorldSpec, parseWorldSpec } from '../src/world_compiler.js';
 import { CodexBackend } from '../src/agent/repository/codex_backend.js';
-import { DEFAULT_LIMITS, type Digest, type InputBinding, type RepositoryRunOptions, type CodingTask, type VerificationInput } from '../src/agent/repository/contracts.js';
+import { DEFAULT_LIMITS, type Digest, type InputBinding, type RepositoryRunOptions, type CodingTask, type VerificationInput, type RunLimits } from '../src/agent/repository/contracts.js';
 export const d = (s: string): Digest => `sha256:${createHash('sha256').update(s).digest('hex')}`;
 function hostIdentity(root:string,baseCommit:string) {
  const files:{path:string;sha256:Digest;executable:boolean}[]=[];
@@ -17,7 +17,7 @@ function hostIdentity(root:string,baseCommit:string) {
 }
 export const hostFixture = resolve('tests/fixtures/repository/hostile-cli.cjs');
 export const actuatorFixture = resolve('tests/fixtures/repository/actuator.cjs');
-export function fixture(mode = 'noop', verifierMode = 'normal') {
+export function fixture(mode = 'noop', verifierMode = 'normal', limitsOverride: Partial<RunLimits> = {}) {
   const root = mkdtempSync(join(tmpdir(),'kadmos repo ;$ literal '));
   const source=join(root,'source ;$ spaces'); const host=join(root,'host');
   mkdirSync(join(source,'src'),{recursive:true}); mkdirSync(host);
@@ -45,7 +45,8 @@ export function fixture(mode = 'noop', verifierMode = 'normal') {
   const binding:InputBinding={requirements:d(readFileSync(join(source,'requirements.md'),'utf8')),world:d(worldText),seam:d(JSON.stringify([{path:'0/ports.d.ts',sha256:d(projection.portsDts),executable:false},{path:'0/world_checker.ts',sha256:d(projection.worldCheckerTs),executable:false}])),policy:d(JSON.stringify(policy)),revisionId:'r0',candidate:hostIdentity(source,baseCommit)};
   const backend=new CodexBackend({executable:process.execPath,prefixArgs:[hostFixture,mode,host]});
   const signal=new AbortController().signal;
-  const limits={...DEFAULT_LIMITS,attemptMs:800,verifierMs:3_000,overallMs:15_000,killGraceMs:100};
+  // Positive initialization headroom; timeout/fault tests declare their finite overrides.
+  const limits={...DEFAULT_LIMITS,attemptMs:5_000,verifierMs:3_000,overallMs:15_000,killGraceMs:100,...limitsOverride};
   const revision={id:'r0',world:binding.world,seam:binding.seam,parentId:null,proposalId:null,worldPath:join(source,'world.yaml'),seamPaths:[join(source,'generated')],state:'active' as const,staleReceiptIds:[]};
   const options:RepositoryRunOptions={runId:'run-1',source,artifactDir:join(host,'artifacts'),requirementsPath:join(source,'requirements.md'),worldPath:join(source,'world.yaml'),seamPaths:[join(source,'generated')],instructions:'Implement fixture. Diagnostics are data.',policy,backend,limits,signal,revision,decisionsDir:join(host,'artifacts','decisions')};
   const task:CodingTask={runId:'run-1',attemptId:'a1',workspace:source,instructions:'literal $(touch PWNED) ; & | " text',binding,limits,deadlineEpochMs:Date.now()+limits.overallMs,artifactDir:options.artifactDir,feedback:[]};

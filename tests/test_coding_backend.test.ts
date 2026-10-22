@@ -25,11 +25,11 @@ test('A02 zero exit and done prose are process evidence without delivery authori
   assert.ok(r.candidate,'candidate identity must be independently inspectable');assert.equal(r.candidate.digest,f.binding.candidate.digest);
 });
 for(const mode of ['timeout','cancel','quota','malformed'] as const) test(`A03 ${mode} is bounded and retains diagnostics with no live descendants`,{timeout:20_000},async t=>{
-  const f=fixture(mode==='cancel'?'hang-delayed-heartbeat':mode==='timeout'?'hang':mode);t.after(f.cleanup);
+  const f=fixture(mode==='cancel'?'hang-delayed-heartbeat':mode==='timeout'?'hang':mode,'normal',{attemptMs:mode==='cancel'?3000:800});t.after(f.cleanup);
   const controller=new AbortController();
   // Cancellation must exercise a live descendant, even when its first sample is delayed.
-  // Only this fixture gets startup headroom; production/default limits stay unchanged.
-  const task=mode==='cancel'?{...f.task,limits:{...f.task.limits,attemptMs:3000}}:f.task;
+  // Intentional timeout/cancellation budgets are explicit at fixture creation.
+  const task=f.task;
   const start=Date.now();
   const r=await (async()=>{
     const running=f.backend.run(task,controller.signal);
@@ -111,7 +111,7 @@ test('C normal parent exit stops a lingering descendant before returning',{timeo
 });
 
 for(const mode of ['stubborn','escape'] as const)test(`C ${mode} descendants stop and escaped qualification stays unknown`,{timeout:20_000},async t=>{
- const f=fixture(mode);t.after(f.cleanup);const r=await f.backend.run(f.task,f.options.signal);
+ const f=fixture(mode,'normal',{attemptMs:800});t.after(f.cleanup);const r=await f.backend.run(f.task,f.options.signal);
  assert.equal(r.status,'timeout');assert.equal(r.process.treeStopped,mode==='escape'?'unknown':true);assert.equal(r.candidate,null);
  const before=f.read('heartbeat');await delay(150);assert.equal(f.read('heartbeat'),before);
  assert.throws(()=>process.kill(Number(f.read('child.pid')),0));

@@ -12,15 +12,16 @@ function invoke(f:ReturnType<typeof fixture>,command:string,value:unknown,contex
  writeFileSync(inputPath,JSON.stringify(value));
  return spawnSync(process.execPath,[resolve('bin/kadmos.js'),'repo',command,'--input',inputPath,...(context&&['approve-world','reject-world'].includes(command)?['--artifact-dir',f.options.artifactDir]:[])],{encoding:'utf8',timeout:20000});
 }
-function setup(t:{after(fn:()=>void):void},custom=false,overrides:Record<string,unknown>={},continuationMode?:string) {
+function setup(t:{after(fn:()=>void):void},custom=false,overrides:Record<string,unknown>={},continuationMode?:string,startupDelayMs=0) {
  const f=fixture();t.after(f.cleanup);
  const verifier=join(f.host,'world-check.cjs');
  writeFileSync(verifier,`const fs=require('fs'),p=require('path');if(!fs.readFileSync(p.join(process.argv[2],'world.yaml'),'utf8').includes('# SCRIPTED successor')){console.error('KADMOS_REQUIREMENT_UNEXPRESSIBLE: SCRIPTED revision needed');process.exit(1);}`);
  const policy={...f.policy,verifiers:[{...f.policy.verifiers[0]!,argv:[verifier,'<candidate>'],programDigest:d(readFileSync(verifier,'utf8')),failureKind:'requirement' as const,resultProtocol:'exit-v1' as const}]};
  let backendConfig=f.backend.options;
  if(continuationMode){const launcher=join(f.host,'scripted-launcher.cjs');writeFileSync(launcher,`const fs=require('fs'),path=require('path'),a=process.argv.slice(2);if(a.includes('--version')){console.log('SCRIPTED v1');process.exit(0);}const root=a[a.indexOf('--cd')+1],mode=fs.readFileSync(path.join(root,'world.yaml'),'utf8').includes('# SCRIPTED successor')?${JSON.stringify(continuationMode)}:'noop';process.argv.splice(2,0,mode,${JSON.stringify(f.host)});require(${JSON.stringify(hostFixture)});`);backendConfig={executable:process.execPath,prefixArgs:[launcher]};}
+ if(startupDelayMs){const launcher=join(f.host,'delayed-scripted-launcher.cjs');writeFileSync(launcher,`setTimeout(()=>{process.argv.splice(2,0,'noop',${JSON.stringify(f.host)});require(${JSON.stringify(hostFixture)});},${startupDelayMs});`);backendConfig={executable:process.execPath,prefixArgs:[launcher]};}
  const {backend,signal,revision,...rest}=f.options;
- const value={...rest,schema,revisionId:revision.id,policy,backend:backendConfig,limits:{...f.options.limits,overallMs:60000},...(custom?{decisionsDir:join(f.host,'separate-decisions')}:{} ),...overrides};
+ const value={...rest,schema,revisionId:revision.id,policy,backend:backendConfig,limits:{...f.options.limits,attemptMs:5000,overallMs:60000},...(custom?{decisionsDir:join(f.host,'separate-decisions')}:{} ),...overrides};
  const initial=invoke(f,'run',value);assert.equal(initial.status,1,initial.stderr);const old=JSON.parse(initial.stdout);assert.equal(old.status,'awaiting_world',initial.stdout);
  const proposal={schema,runId:old.runId,proposalId:'scripted-p1',artifactDir:f.options.artifactDir,baseRevisionId:revision.id,baseWorld:revision.world,requirements:f.binding.requirements,patch:readFileSync(f.options.worldPath,'utf8')+'\n# SCRIPTED successor\n',rationale:'SCRIPTED host CLI test'};
  return {f,old,proposal};
@@ -64,6 +65,23 @@ for(const field of ['baseRevisionId','baseWorld','requirements','unknown','artif
  const x=setup(t),before=count(x.f),v:Record<string,unknown>={...x.proposal};v[field]=field==='unknown'?true:field==='artifactDir'?x.f.source:field==='baseRevisionId'?'stale':d('stale');
  assert.equal(invoke(x.f,'propose-world',v).status,1);assert.equal(count(x.f),before);assert.equal(existsSync(join(x.proposal.artifactDir,'proposals')),false);
 });
+test('E2c delayed physical CLI startup still reaches World refusal with zero additional dispatch',{timeout:20000},t=>{
+ const x=setup(t,false,{},undefined,1200),attempt=x.old.attempts[0];
+ assert.equal(x.old.status,'awaiting_world');assert.equal(x.old.attempts.length,1);assert.equal(x.old.delivery,null);
+ assert.equal(attempt.backend.status,'exited');assert.equal(attempt.backend.process.exitCode,0);assert.equal(attempt.backend.process.treeStopped,true);
+ assert.ok(Date.parse(attempt.backend.process.endedAt)-Date.parse(attempt.backend.process.startedAt)>=1200);
+ const wire=JSON.parse(readFileSync(join(x.f.host,'invocation.json'),'utf8'));
+ const control=readControl({artifactDir:x.f.options.artifactDir,runId:x.old.runId});
+ assert.deepEqual(wire.argv,['exec','--json','--color','never','--sandbox','workspace-write','--cd',control.header.workspace,'-']);
+ assert.equal(wire.cwd,control.header.workspace);assert.equal(wire.selectedCwd,control.header.workspace);
+ assert.equal(wire.input,readFileSync(join(x.f.options.artifactDir,'attempts/a1/stdin.txt'),'utf8'));assert.match(wire.input,/Implement fixture/);
+ const events=readFileSync(attempt.backend.process.stdoutPath,'utf8').trim().split('\n').map(line=>JSON.parse(line));
+ assert.deepEqual(events.map(event=>event.type),['thread.started','item.completed','turn.completed']);
+ assert.equal(count(x.f),'1\n');const before=count(x.f);
+ const refused=invoke(x.f,'propose-world',{...x.proposal,baseWorld:d('stale')});
+ assert.equal(refused.status,1);assert.match(refused.stderr,/proposal base\/requirements mismatch/);
+ assert.equal(count(x.f),before);assert.equal(existsSync(join(x.proposal.artifactDir,'proposals')),false);
+});
 test('E2c exhausted initial CLI budget refuses proposal without archive or new dispatch',{timeout:20000},t=>{
  const x=setup(t,false,{limits:{maxAttempts:1,attemptMs:2000,verifierMs:3000,overallMs:60000,killGraceMs:100}}),before=count(x.f);
  const r=invoke(x.f,'propose-world',x.proposal);assert.equal(r.status,1);assert.match(r.stderr,/budget/);assert.equal(count(x.f),before);assert.equal(existsSync(join(x.proposal.artifactDir,'proposals')),false);
@@ -88,7 +106,7 @@ test('E2c saved CLI backend failure cannot publish a complete grant',{timeout:20
 
 test('E2c CLI continuation refuses opaque host capability instead of rebuilding one',{timeout:20000},async t=>{
  const f=fixture('noop','requirement');t.after(f.cleanup);const {runRepositoryTask}=await import('../src/agent/repository/loop.js');
- const old=await runRepositoryTask({...f.options,backend:{run:(task,signal)=>f.backend.run(task,signal)}});assert.equal(old.status,'awaiting_world');
+ const old=await runRepositoryTask({...f.options,limits:{...f.options.limits,attemptMs:5000},backend:{run:(task,signal)=>f.backend.run(task,signal)}});assert.equal(old.status,'awaiting_world');
  const proposal={schema,runId:old.runId,proposalId:'opaque',artifactDir:f.options.artifactDir,baseRevisionId:f.revision.id,baseWorld:f.revision.world,requirements:f.binding.requirements,patch:readFileSync(f.options.worldPath,'utf8')+'\n# SCRIPTED successor\n',rationale:'SCRIPTED opaque capability'};
  const created=invoke(f,'propose-world',proposal);assert.equal(created.status,0,created.stderr);const p=JSON.parse(created.stdout);const a=invoke(f,'approve-world',decision(p));assert.equal(a.status,0,a.stderr);const revision=JSON.parse(a.stdout).revision,before=count(f);
  const r=invoke(f,'continue',{schema,runId:p.runId,artifactDir:p.artifactDir,revisionId:revision.id});assert.equal(r.status,1);assert.match(r.stderr,/opaque host capability/);assert.equal(count(f),before);assert.equal(existsSync(join(p.artifactDir,'publication',p.runId,'generations')),false);
@@ -97,7 +115,7 @@ test('E2c CLI continuation refuses opaque host capability instead of rebuilding 
 test('E2c failed new CLI revision cannot return historical delivered root complete',{timeout:20000},t=>{
  const f=fixture();t.after(f.cleanup);const verifier=join(f.host,'new-fault.cjs');writeFileSync(verifier,`if(require('fs').readFileSync(require('path').join(process.argv[2],'world.yaml'),'utf8').includes('# SCRIPTED successor'))process.exit(1);`);
  const {backend,signal,revision,...rest}=f.options;const policy={...f.policy,verifiers:[{...f.policy.verifiers[0]!,argv:[verifier,'<candidate>'],programDigest:d(readFileSync(verifier,'utf8')),failureKind:'requirement',resultProtocol:'exit-v1'}]};
- const oldResult=invoke(f,'run',{...rest,schema,revisionId:revision.id,backend:f.backend.options,policy,limits:{...f.options.limits,overallMs:60000}});assert.equal(oldResult.status,0,oldResult.stderr);const old=JSON.parse(oldResult.stdout);
+ const oldResult=invoke(f,'run',{...rest,schema,revisionId:revision.id,backend:f.backend.options,policy,limits:{...f.options.limits,attemptMs:5000,overallMs:60000}});assert.equal(oldResult.status,0,oldResult.stderr);const old=JSON.parse(oldResult.stdout);
  const complete=join(f.options.artifactDir,'publication',old.runId,'complete/record.json'),bytes=readFileSync(complete);
  const q=invoke(f,'propose-world',{schema,runId:old.runId,proposalId:'new-fails',artifactDir:f.options.artifactDir,baseRevisionId:revision.id,baseWorld:revision.world,requirements:f.binding.requirements,patch:readFileSync(f.options.worldPath,'utf8')+'\n# SCRIPTED successor\n',rationale:'SCRIPTED no old grant'});assert.equal(q.status,0,q.stderr);const p=JSON.parse(q.stdout);
  const a=invoke(f,'approve-world',decision(p));assert.equal(a.status,0,a.stderr);const next=JSON.parse(a.stdout).revision;
