@@ -3,14 +3,11 @@
 Implemented host APIs provide disposable workspaces, physical/scripted backend
 process evidence, frozen verification contexts, real verification, delivery
 eligibility, original run budgets, immutable checkpoints and complete-run
-publication/readback. Tasks D and E received independent physical Grok acceptance;
-E acceptance is frozen at59885a5. Host commands include run, propose-world,
-approve-world, reject-world and continue, with runtime validation. F1 adds local
-settlement reconciliation. F2 connects a trusted host effect journal to the runtime
-fence and adds a bounded SCRIPTED repair example; the installed-backend A20 delivered on the original bf1bbc4 engine (see [receipt](repository-loop-verification.md)). Assembled Task F review and final human acceptance remain pending. Existing
+publication/readback. Host commands include `run`, `propose-world`,
+`approve-world`, `reject-world` and `continue`, with runtime validation, local
+settlement reconciliation, a trusted host effect journal connected to the runtime
+fence, and a bounded scripted repair example. Existing
 `kadmos run` and `kadmos.compiler.k02.v1` are unchanged.
-
-Current A20 result and command/receipt details appear in the verification receipt. Later dated sections preserve historical implementation checkpoints.
 
 The TypeScript wire shapes are in `src/agent/repository/contracts.ts`.
 Persisted objects use UTF-8 JSON; run records/manifests and command inputs carry
@@ -23,25 +20,25 @@ backend object or checker; these are process-local dependencies.
 
 Status below describes current implementation; planned behavior grants no authority.
 
-- **Implemented D1:** `CodingBackend.run(CodingTask, AbortSignal) -> Promise<CodingResult>` edits
+- `CodingBackend.run(CodingTask, AbortSignal) -> Promise<CodingResult>` edits
   a disposable workspace and reports process evidence; it cannot approve code.
-- **Implemented D1:** `createWorkspace(WorkspaceRequest) -> WorkspaceResult` refuses a dirty source,
+- `createWorkspace(WorkspaceRequest) -> WorkspaceResult` refuses a dirty source,
   escaping paths, symlinks, special files and an existing destination.
-- **Implemented D1:** `snapshotCandidate(workspace, RepositoryPolicy) -> CandidateIdentity` includes
+- `snapshotCandidate(workspace, RepositoryPolicy) -> CandidateIdentity` includes
   tracked/untracked regular files, executable bits and base-relative deletions.
-- **Implemented D1:** `verifyCandidate(VerificationInput, AbortSignal) -> Promise<VerificationReceipt>`
+- `verifyCandidate(VerificationInput, AbortSignal) -> Promise<VerificationReceipt>`
   runs host-frozen argv commands, never diagnostic instructions. The exact whole
   argv token `<candidate>` is replaced with the captured workspace path; no other
   interpolation is allowed. The same token may select the command cwd. A receipt binds
   the exact before/after input tuple, commands, actual exits and raw log paths.
-- **Implemented D2a, physically accepted:** `runRepositoryTask(RepositoryRunOptions) -> Promise<RepositoryRunRecord>` owns
+- `runRepositoryTask(RepositoryRunOptions) -> Promise<RepositoryRunRecord>` owns
   attempts, evidence and final delivery. Exit zero and model prose cannot deliver.
-- **Implemented D2a, physically accepted:** `classifyFailure(VerificationReceipt) -> FailureRoute` chooses `CODE_REPAIR`,
+- `classifyFailure(VerificationReceipt) -> FailureRoute` chooses `CODE_REPAIR`,
   `WORLD_CHANGE_REQUIRED`, `CORE_MISMATCH`, `ENVIRONMENT_BLOCKED` or `NEEDS_REVIEW`.
   A route is evidence routing, never World or compiler authority.
-- **Implemented E, physically accepted:** `proposeWorldChange(WorldChangeInput) -> WorldChangeProposal` records a rationale
+- `proposeWorldChange(WorldChangeInput) -> WorldChangeProposal` records a rationale
   and exact replacement World YAML bytes (no executable patch language).
-- **Implemented E, physically accepted:** `activateWorldRevision(ApprovedWorldChange) -> WorldRevision` loads a trusted
+- `activateWorldRevision(ApprovedWorldChange) -> WorldRevision` loads a trusted
   operator record, validates all bound IDs/digests and that decisionPath is inside the separately
   trusted decisionsDir (with no symlink traversal), freezes a new World and
   independently regenerated seam, and marks historical receipt IDs stale.
@@ -512,10 +509,10 @@ A deliberate host `approve-world` or `reject-world` validates command, nonempty 
 
 New archives preserve the existing seam hash frame: declared role index, root-relative path (basename for individual files), and executable bit. Standard single-directory archive paths/bytes remain compatible. Individual files in either order, nested directories and multiple nonempty roots retain their exact frame. Strict readback derives expected archive locations and the entire directory/file set from validated original roles, then validates compiler bytes, modes, hashes and decision evidence. Continuation materializes by those logical generated slots at the original lexical roles. An empty declared role root is outside this bounded archive format and is refused before archive reservation or continuation intent; no hashes or old contexts are rewritten. Empty subdirectories within a nonempty role are not part of the identity frame and are not archived.
 
-All worker demonstrations are SCRIPTED backend/operator fixtures. No actual business World decision, Yong approval, installed coding-agent qualification or production mutation is implied. Parent physical Grok reviews assembled Task E; F still owns HTTP reconciliation/A18 and the later A20 live gate.
+All worker demonstrations are SCRIPTED backend/operator fixtures. No actual business World decision, installed coding-agent qualification or production mutation is implied.
 
 
-## Historical 2026-10-21 F1: local settlement and independent HTTP faults
+## Local settlement and independent HTTP faults
 
 `examples/repository-order-service/settlement.ts` preserves the required
 `SettlementInput` fields. The HOST supplies executable/argv capabilities; generated
@@ -559,25 +556,13 @@ Scope: trusted local host capabilities/filesystem and one serialized mock server
 process crash/restart fencing only, not fsync/power-loss recovery, multi-host safety,
 malicious same-user tampering protection or universal exactly-once delivery. Retained
 files are create-once by this controller; permissions are not an OS security boundary.
-The repository runtime still initializes `effects:[]`: F2 must collect/fence genuine
-host effects through the actual run path and prove unknown blocks delivery there.
-F1 settlement tests do not establish that broader integration. Task F's faulty
-Fabric→SCRIPTED loop repair, live installed-backend A20 with explicit exact human
-World approval, assembled physical Grok and cognitive delivery remain pending.
-
-E review Minor2 is safely deferred: approval may archive a decision/activation while
-orphan attempt/verifier directories or inconsistent committed counts exist. Owner
-F1 reproduction confirms continuation refuses before generation reservation,
-workspace mutation or backend dispatch. The archive alone grants no continuation or
-delivery. Frozen E acceptance did not execute those tests. Earlier rejection can be
-separately hardened; F1 makes no broader approval-history claim.
 
 The legacy file actuator keeps its original default JSON reply shapes. Settlement
 acceptance opts into `--bound` host receipts; original contract assertions remain
 unchanged. Legacy unbound stdout cannot resolve settlement.
 
 
-## 2026-10-21 F2: frozen host effect journal (Class C runtime evidence extension)
+## Frozen host effect journal
 
 Required DTOs, `EffectRecord`, exact operator decisions, original limits, and K-02
 semantics are unchanged. A frozen verifier argv may end with two literal arguments:
@@ -595,7 +580,7 @@ observes the selected apply/query processes. Candidate stdout and candidate-retu
 `<artifactDir>/effects/<operationId>/reservation/record.json` binds run, revision,
 attempt, check, complete input identity, frozen verifier and host commands, with an
 unknown reservation **before** checker authorization or actual launch. The sibling
-`settlement.dispatch/` retains F1's original unknown, authorized checker state,
+`settlement.dispatch/` retains the original unknown, authorized checker state,
 actuator/query observations, raw stdout/stderr and sampled lifecycle traces. The
 create-once `outcome/record.json` seals the observed result and exact file references.
 Immediate drop followed by a qualified committed query can seal known commit while
@@ -644,11 +629,10 @@ complete evidence remain under the output directory. The server exits before the
 command returns. Expected negative test operations use `negative-fixture-*` IDs
 and a separate fixture ledger, not the business run's effect journal. The example
 uses the source-checkout HTTP fixture in `tests/fixtures/repository/`; it is not an
-npm-installed service. It demonstrates SCRIPTED repair, not actual installed R3,
-live A20, human World approval, physical reviewer acceptance or whole-Epic delivery.
+npm-installed service.
 
 
-## F4 replay and verifier correction — 2026-10-21
+## Settlement replay and verifier exit protocol
 
 Known settlement replay binds both the exact stored actuator and query configuration.
 Changed host argv returns reconstructed unknown without a new step, process launch,
@@ -663,43 +647,13 @@ host-selected functional assertions exit1, and success exits0. Fabric settle exc
 are wrapped as intentional functional assertions; arbitrary model prose does not
 choose the route. Infrastructure stops without another CODE_REPAIR attempt.
 
-Actual installed-backend A20 delivered on bf1bbc4 in two original attempts after exact
-Yong World approval; see the measured receipt. This F4 source was locally verified
-and fresh-read the original complete evidence for compatibility; it did not rerun the
-installed coding backend. Whole-Epic human acceptance remains pending.
+## Platform CI qualification boundary
 
-## F5 platform CI qualification boundary
-
-The default live target remains macOS; the frozen A20 installed Codex run used
-engine bf1bbc4. Linux CI exercises the real POSIX fixture supervisor, not an
-installed Codex backend. Linux installed-backend delivery remains unqualified.
+The default live target remains macOS. Linux CI exercises the real POSIX fixture supervisor, not an
+installed CLI backend. Linux installed-backend delivery remains unqualified.
 Windows does not support process-tree qualification: the backend refuses before
 launch, with no candidate or delivery. Its CI suite runs every legacy test plus
 repository contracts and portable argv/stdin/snapshot boundary checks, including
 the actual unsupported-platform no-launch check. POSIX runtime qualification
 files are listed as NOT_EXECUTED / unqualified on Windows and never counted PASS.
 macOS/Linux run every test, with no skips or expected failures.
-
-F4 local 772/772 did not establish remote matrix success: run39691008888 failed.
-F5 corrects PGID0 inventory validation (positive PID still required; malformed
-rows still poison qualification), adds explicit Windows test selection and gives
-finite verifier fixtures startup headroom while preserving deadline assertions.
-At F5 source check-in, local macOS Node26 verification passed 780/780.
-Configured matrix scope is 780 cases per macOS/Linux job and 276 per Windows
-job (268 unchanged legacy + five contracts + three portable boundary cases).
-Remote counts and qualification require the exact-head terminal PR checks;
-this check-in does not assert remote success. No new
-Windows supervision, model installation, runtime authority or A20 rerun.
-
-The first F5 matrix at bbb42a1 confirmed actual Linux PGID0 rows and reduced
-Linux failures from213–216 to1–2; Windows275 passed on the synthetic merge. Residual actual failures
-identified a noncanonical /bin/echo test fixture and finite strict-timeout /
-split-seam readiness budgets. The follow-up canonicalizes that frozen fixture
-path and gives only those fixtures3000ms; production limits and assertions
-stay unchanged. Remote qualification still requires terminal exact-head CI.
-
-CI now checks out the exact PR source head. The earlier synthetic merge had
-picked up a concurrent main cleanup removing one legacy assertion, yielding
-779 POSIX /275 Windows cases. Exact-head qualification preserves all original
-source assertions:780 POSIX /276 Windows, with separately executed packed
-NodeNext consumer checks. No branch/main merge or legacy-test edit is made.
