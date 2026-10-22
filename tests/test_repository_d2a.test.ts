@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
-import { fixture, d } from './repository_test_support.js';
+import { fixture, d, hostFixture } from './repository_test_support.js';
+import { CodexBackend } from '../src/agent/repository/codex_backend.js';
 import { runRepositoryTask } from '../src/agent/repository/loop.js';
 import { createVerificationContext } from '../src/agent/repository/context.js';
 import { snapshotCandidate, safePath } from '../src/agent/repository/workspace.js';
@@ -15,12 +16,12 @@ for (const [kind,route] of Object.entries({compile:'CODE_REPAIR',functional:'COD
  const f=fixture('noop','nonzero');t.after(f.cleanup);
  const policy={...f.policy,verifiers:f.policy.verifiers.map(c=>({...c,failureKind:kind as NonNullable<VerificationReceipt['failureKind']>}))};
  const r=await runRepositoryTask({...f.options,policy});
- assert.equal(r.attempts[0]?.route,route);
+ assert.equal(r.attempts[0]?.route,route,JSON.stringify(r,null,2));
  assert.equal(r.attempts.length,route==='CODE_REPAIR'?3:1);
  assert.equal(r.status,kind==='requirement'?'awaiting_world':'blocked');assert.equal(r.delivery,null);
 });
 for(const mode of ['quota','malformed','hang']) test(`D2a ${mode} launches once, never verifies or delivers`,async t=>{
- const f=fixture(mode);t.after(f.cleanup);const r=await runRepositoryTask(f.options);
+ const f=fixture(mode,'normal',{attemptMs:800});t.after(f.cleanup);const r=await runRepositoryTask(f.options);
  assert.equal(r.attempts.length,1);assert.equal(r.attempts[0]?.verification,null);
  assert.equal(f.read('launches').trim(),'1');assert.equal(r.delivery,null);assert.notEqual(r.status,'delivered');
 });
@@ -73,4 +74,28 @@ test('D2a loop delivers exact raw additions and deletions while excluding genera
  assert.ok(r.delivery?.binding.candidate.deleted.includes('src/b.ts'));assert.ok(r.delivery?.files.some(x=>x.path==='src/new.bin'&&x.executable));
  assert.ok(!r.delivery?.files.some(x=>x.path.startsWith('dist/')));assert.deepEqual(r.attempts[0]?.backend.candidate,r.delivery?.binding.candidate);
  assert.equal(snapshotCandidate(f.source,f.policy).digest,f.binding.candidate.digest);
+});
+
+// The real shared positive fixture must reach its frozen independent check even
+// when physical SCRIPTED initialization takes longer than the old 800ms budget.
+test('D2a delayed shared positive startup reaches actual ambiguous host check', {timeout:20_000},async t=>{
+ const f=fixture('noop','nonzero');t.after(f.cleanup);
+ const launcher=join(f.host,'delayed-start.cjs');
+ writeFileSync(launcher,`setTimeout(()=>require(${JSON.stringify(hostFixture)}),1200);`);
+ const backend=new CodexBackend({executable:process.execPath,prefixArgs:[launcher,'noop',f.host]});
+ const policy={...f.policy,verifiers:f.policy.verifiers.map(c=>({...c,failureKind:'ambiguous' as const}))};
+ const r=await runRepositoryTask({...f.options,backend,policy});
+ console.log('delayed shared fixture complete record '+JSON.stringify(r));
+ for(const receipt of r.attempts.flatMap(a=>[a.backend.process,...(a.verification?.checks.map(c=>c.process)??[])])) {
+  console.log('delayed shared fixture raw process '+JSON.stringify({receipt,stdout:readFileSync(receipt.stdoutPath,'utf8'),stderr:readFileSync(receipt.stderrPath,'utf8')}));
+ }
+ assert.equal(r.attempts[0]?.route,'NEEDS_REVIEW',JSON.stringify(r,null,2));
+ assert.equal(r.attempts.length,1);assert.equal(r.status,'blocked');assert.equal(r.delivery,null);
+ const a=r.attempts[0]!;
+ assert.equal(a.backend.status,'exited');assert.equal(a.backend.process.exitCode,0);assert.equal(a.backend.process.treeStopped,true);
+ assert.match(readFileSync(a.backend.process.stdoutPath,'utf8'),/turn.completed/);
+ assert.equal(f.read('launches').trim(),'1');assert.ok(f.exists('invocation.json'));
+ assert.equal(a.verification?.failureKind,'ambiguous');assert.equal(a.verification?.checks.length,1);
+ assert.equal(a.verification?.checks[0]?.status,'failed');assert.equal(a.verification?.checks[0]?.process.exitCode,9);
+ assert.deepEqual(JSON.parse(readFileSync(join(f.options.artifactDir,'attempts/a1/process.json'),'utf8')),a.backend);
 });
