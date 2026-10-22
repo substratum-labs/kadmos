@@ -4,6 +4,7 @@ import { runCli } from "../dist/src/cli.js";
 try {
   const output = await runCli(process.argv.slice(2));
   process.stdout.write(output);
+  if (process.argv[2] === "repo" && ["run", "continue"].includes(process.argv[3]) && JSON.parse(output).status !== "delivered") process.exitCode = 1;
   if (process.argv[2] === "run" && !process.argv.includes("--dry-run") && JSON.parse(output).success === false) process.exitCode = 1;
   if (process.argv[2] === "test" && (process.argv.includes("--json") ? JSON.parse(output).passed === false : output.includes("Result: sampled verdicts differed"))) process.exitCode = 1;
 } catch (error) {

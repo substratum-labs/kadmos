@@ -18,6 +18,8 @@ jobs:
         python: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: pnpm/action-setup@v3
         with:
           version: 10.32.1
@@ -30,5 +32,9 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
+      - name: Record actual POSIX PGID0 inventory rows
+        if: runner.os != 'Windows'
+        run: |
+          python -c "import subprocess,json,os; rows=subprocess.check_output(['ps','-axo','pid=,ppid=,pgid=,stat='],text=True).splitlines(); print(json.dumps({'echoPath':'/bin/echo','echoRealpath':os.path.realpath('/bin/echo'),'binIsAlias':os.path.islink('/bin'),'inventoryRows':len(rows),'pgid0Rows':[r for r in rows if len(r.split())==4 and r.split()[2]=='0']}))"
       - run: pnpm test
       - run: node bin/kadmos.js test conformance/fixtures/order_settlement.world.yaml --runs 30
