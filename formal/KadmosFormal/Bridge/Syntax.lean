@@ -48,16 +48,16 @@ private def lexStep (fuel : Nat) (cs : List Char) (acc : List String) : Except B
       if c.isWhitespace then lexStep fuel rest acc
       else if identStart c then
         let tail := rest.takeWhile identRest
-        lexStep fuel (rest.dropWhile identRest) ((String.mk (c :: tail)) :: acc)
+        lexStep fuel (rest.dropWhile identRest) ((String.ofList (c :: tail)) :: acc)
       else if c.isDigit then
         let tail := rest.takeWhile Char.isDigit
-        lexStep fuel (rest.dropWhile Char.isDigit) ((String.mk (c :: tail)) :: acc)
+        lexStep fuel (rest.dropWhile Char.isDigit) ((String.ofList (c :: tail)) :: acc)
       else if c == '\'' then
         let tail := rest.takeWhile (· != '\'')
         if tail.contains '\\' then .error (.unsupported "string escape")
         else match rest.dropWhile (· != '\'') with
           | [] => .error (.syntax 0)
-          | _ :: after => lexStep fuel after (("'" ++ String.mk tail ++ "'") :: acc)
+          | _ :: after => lexStep fuel after (("'" ++ String.ofList tail ++ "'") :: acc)
       else
         match c, rest with
         | '=', '>' :: after => lexStep fuel after ("=>" :: acc)
@@ -100,7 +100,7 @@ private def quotedContent (s : String) : Option String :=
   match s.toList with
   | '\'' :: tail =>
     match tail.reverse with
-    | '\'' :: inner => some (String.mk inner.reverse)
+    | '\'' :: inner => some (String.ofList inner.reverse)
     | _ => none
   | _ => none
 

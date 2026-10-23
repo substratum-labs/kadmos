@@ -73,13 +73,13 @@ def check(root):
     inventory = {module_name(root, p) for p in product | probes if not trap(module_name(root, p))}
     if not MANDATORY <= inventory:
         raise AuditInventoryError(f'missing required application source: {sorted(MANDATORY-inventory)}')
-    manifest = application_manifest(module_path(root, 'HarmoniaTests.AuditPolicy').read_text())
+    manifest = application_manifest(module_path(root, 'HarmoniaTests.KadmosAuditPolicy').read_text())
     if manifest != inventory:
         raise AuditInventoryError(f'Kadmos manifest mismatch: missing={sorted(inventory-manifest)}, extra={sorted(manifest-inventory)}')
     closure = import_closure(root, 'HarmoniaTests.KadmosWorldAxiomAudit')
     if inventory - closure:
         raise AuditInventoryError(f'unimported certified application source: {sorted(inventory-closure)}')
-    unexpected = closure - inventory - FOUNDATION - {'HarmoniaTests.AuditPolicy'}
+    unexpected = closure - inventory - FOUNDATION - {'HarmoniaTests.KadmosAuditPolicy'}
     if unexpected:
         raise AuditInventoryError(f'unknown certified application import: {sorted(unexpected)}')
     audit_closures = {

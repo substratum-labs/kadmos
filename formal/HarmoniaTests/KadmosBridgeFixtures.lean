@@ -14,8 +14,8 @@ private def initializedPhase (x : Except SpecError (State p v)) : Option (Fin p)
 private def initializedField (x : Except SpecError (State p v)) (j : Fin v) : Option Int :=
   match x with | .ok s => some (s.context j) | .error _ => none
 theorem balance_initialized : «initialize» balanceCandidate = .ok (balanceState 100) := by
-  have hp : initializedPhase («initialize» balanceCandidate) = some 0 := by decide +kernel
-  have hc : initializedField («initialize» balanceCandidate) 0 = some 100 := by decide +kernel
+  have hp : initializedPhase («initialize» balanceCandidate) = some 0 := by decide_cbv
+  have hc : initializedField («initialize» balanceCandidate) 0 = some 100 := by decide_cbv
   cases hi : «initialize» balanceCandidate with
   | error e => simp [initializedPhase,hi] at hp
   | ok st =>
@@ -36,9 +36,9 @@ theorem balance_initialized : «initialize» balanceCandidate = .ok (balanceStat
     rfl
 theorem balance_30 : interpret balanceCandidate (balanceState 100) (balanceRequest 30) =
   ⟨balanceState 70,⟨.accepted,none⟩⟩ := by
-  have hp : (interpret balanceCandidate (balanceState 100) (balanceRequest 30)).state.phase = 0 := by decide +kernel
-  have hc : (interpret balanceCandidate (balanceState 100) (balanceRequest 30)).state.context 0 = 70 := by decide +kernel
-  have ho : (interpret balanceCandidate (balanceState 100) (balanceRequest 30)).observation = ⟨.accepted,none⟩ := by decide +kernel
+  have hp : (interpret balanceCandidate (balanceState 100) (balanceRequest 30)).state.phase = 0 := by decide_cbv
+  have hc : (interpret balanceCandidate (balanceState 100) (balanceRequest 30)).state.context 0 = 70 := by decide_cbv
+  have ho : (interpret balanceCandidate (balanceState 100) (balanceRequest 30)).observation = ⟨.accepted,none⟩ := by decide_cbv
   have hs : (interpret balanceCandidate (balanceState 100) (balanceRequest 30)).state = balanceState 70 := by
     cases h : (interpret balanceCandidate (balanceState 100) (balanceRequest 30)).state with
     | mk phase ctx =>
@@ -60,9 +60,9 @@ theorem balance_30 : interpret balanceCandidate (balanceState 100) (balanceReque
     rfl
 theorem balance_20 : interpret balanceCandidate (balanceState 70) (balanceRequest 20) =
   ⟨balanceState 50,⟨.accepted,none⟩⟩ := by
-  have hp : (interpret balanceCandidate (balanceState 70) (balanceRequest 20)).state.phase = 0 := by decide +kernel
-  have hc : (interpret balanceCandidate (balanceState 70) (balanceRequest 20)).state.context 0 = 50 := by decide +kernel
-  have ho : (interpret balanceCandidate (balanceState 70) (balanceRequest 20)).observation = ⟨.accepted,none⟩ := by decide +kernel
+  have hp : (interpret balanceCandidate (balanceState 70) (balanceRequest 20)).state.phase = 0 := by decide_cbv
+  have hc : (interpret balanceCandidate (balanceState 70) (balanceRequest 20)).state.context 0 = 50 := by decide_cbv
+  have ho : (interpret balanceCandidate (balanceState 70) (balanceRequest 20)).observation = ⟨.accepted,none⟩ := by decide_cbv
   have hs : (interpret balanceCandidate (balanceState 70) (balanceRequest 20)).state = balanceState 50 := by
     cases h : (interpret balanceCandidate (balanceState 70) (balanceRequest 20)).state with
     | mk phase ctx =>
@@ -98,14 +98,14 @@ private def oldWrongBangCandidate : World 1 1 1 1 :=
   { balanceCandidate with transitions := fun _ =>
       ⟨0,0,.not (.and (.bool true) (.not (.le (.request 0) (.int 0)))),
         [⟨0,.sub (.context 0) (.request 0)⟩],none⟩ }
-example : (checkBridge bangRaw bangCandidate).toOption.isSome = true := by decide +kernel
-example : (checkBridge bangRaw oldWrongBangCandidate).toOption.isSome = false := by decide +kernel
+example : (checkBridge bangRaw bangCandidate).toOption.isSome = true := by decide_cbv
+example : (checkBridge bangRaw oldWrongBangCandidate).toOption.isSome = false := by decide_cbv
 example : interpret bangCandidate (balanceState 100) (balanceRequest 0) =
     ⟨balanceState 100,⟨.rejected .guardFalse,none⟩⟩ := rfl
 example : (interpret oldWrongBangCandidate (balanceState 100) (balanceRequest 0)).observation =
-    ⟨.accepted,none⟩ := by decide +kernel
+    ⟨.accepted,none⟩ := by decide_cbv
 example : (interpret oldWrongBangCandidate (balanceState 100) (balanceRequest 0)).state.context 0 =
-    100 := by decide +kernel
+    100 := by decide_cbv
 end Harmonia.Applications.Kadmos.BridgeFixtures.Tests
 namespace Harmonia.Applications.Kadmos.BridgeFixtures.Tests
 
@@ -113,9 +113,9 @@ def orderInitial : State 2 2 := ⟨0,fun j => if j == 0 then 1 else 0⟩
 def orderFinal : State 2 2 := ⟨1,fun _ => 2⟩
 def orderRequest : Request 0 := ⟨"STEP",Fin.elim0,none⟩
 theorem order_initialized : «initialize» orderCandidate = .ok orderInitial := by
-  have hp : initializedPhase («initialize» orderCandidate) = some 0 := by decide +kernel
-  have hx : initializedField («initialize» orderCandidate) 0 = some 1 := by decide +kernel
-  have hy : initializedField («initialize» orderCandidate) 1 = some 0 := by decide +kernel
+  have hp : initializedPhase («initialize» orderCandidate) = some 0 := by decide_cbv
+  have hx : initializedField («initialize» orderCandidate) 0 = some 1 := by decide_cbv
+  have hy : initializedField («initialize» orderCandidate) 1 = some 0 := by decide_cbv
   cases hi : «initialize» orderCandidate with
   | error e => simp [initializedPhase,hi] at hp
   | ok st =>
@@ -142,10 +142,10 @@ theorem order_initialized : «initialize» orderCandidate = .ok orderInitial := 
     rfl
 theorem order_step : interpret orderCandidate orderInitial orderRequest =
   ⟨orderFinal,⟨.accepted,none⟩⟩ := by
-  have hp : (interpret orderCandidate orderInitial orderRequest).state.phase = 1 := by decide +kernel
-  have hx : (interpret orderCandidate orderInitial orderRequest).state.context 0 = 2 := by decide +kernel
-  have hy : (interpret orderCandidate orderInitial orderRequest).state.context 1 = 2 := by decide +kernel
-  have ho : (interpret orderCandidate orderInitial orderRequest).observation = ⟨.accepted,none⟩ := by decide +kernel
+  have hp : (interpret orderCandidate orderInitial orderRequest).state.phase = 1 := by decide_cbv
+  have hx : (interpret orderCandidate orderInitial orderRequest).state.context 0 = 2 := by decide_cbv
+  have hy : (interpret orderCandidate orderInitial orderRequest).state.context 1 = 2 := by decide_cbv
+  have ho : (interpret orderCandidate orderInitial orderRequest).observation = ⟨.accepted,none⟩ := by decide_cbv
   have hs : (interpret orderCandidate orderInitial orderRequest).state = orderFinal := by
     cases h : (interpret orderCandidate orderInitial orderRequest).state with
     | mk phase ctx =>
@@ -176,8 +176,8 @@ private def reversedRaw : RawWorld :=
 private def reversedCandidate : World 2 2 0 1 :=
   { orderCandidate with transitions := fun _ =>
     ⟨0,1,.bool true,[⟨1,.context 0⟩,⟨0,.add (.context 0) (.int 1)⟩],none⟩ }
-example : (checkBridge orderRaw reversedCandidate).toOption.isSome = false := by decide +kernel
-example : (checkBridge reversedRaw reversedCandidate).toOption.isSome = true := by decide +kernel
+example : (checkBridge orderRaw reversedCandidate).toOption.isSome = false := by decide_cbv
+example : (checkBridge reversedRaw reversedCandidate).toOption.isSome = true := by decide_cbv
 theorem reversed_order_reject : interpret reversedCandidate orderInitial orderRequest =
   ⟨orderInitial,⟨.rejected (.invariant 0),none⟩⟩ := rfl
 end Harmonia.Applications.Kadmos.BridgeFixtures.Tests
@@ -198,12 +198,12 @@ theorem balance_trace : Foundation.Execution (system balanceCandidate) (balanceS
 end Harmonia.Applications.Kadmos.BridgeFixtures.Tests
 namespace Harmonia.Applications.Kadmos.BridgeFixtures.Tests
 private def rawRequest (r : RawPrimitive) : Request 1 := ⟨"DEBIT",fun _ => r,none⟩
-example : (interpret balanceCandidate (balanceState 100) (rawRequest .missing)).observation.verdict = .rejected (.inputType 0) := by decide +kernel
-example : (interpret balanceCandidate (balanceState 100) (rawRequest .null)).observation.verdict = .rejected (.inputType 0) := by decide +kernel
-example : (interpret balanceCandidate (balanceState 100) (rawRequest (.bool true))).observation.verdict = .rejected (.inputType 0) := by decide +kernel
-example : (interpret balanceCandidate (balanceState 100) (rawRequest (.string "30"))).observation.verdict = .rejected (.inputType 0) := by decide +kernel
-example : (interpret balanceCandidate (balanceState 100) (rawRequest .invalidNumber)).observation.verdict = .rejected (.inputRange 0) := by decide +kernel
-example : (interpret balanceCandidate (balanceState 100) (rawRequest (.int (S+1)))).observation.verdict = .rejected (.inputRange 0) := by decide +kernel
+example : (interpret balanceCandidate (balanceState 100) (rawRequest .missing)).observation.verdict = .rejected (.inputType 0) := by decide_cbv
+example : (interpret balanceCandidate (balanceState 100) (rawRequest .null)).observation.verdict = .rejected (.inputType 0) := by decide_cbv
+example : (interpret balanceCandidate (balanceState 100) (rawRequest (.bool true))).observation.verdict = .rejected (.inputType 0) := by decide_cbv
+example : (interpret balanceCandidate (balanceState 100) (rawRequest (.string "30"))).observation.verdict = .rejected (.inputType 0) := by decide_cbv
+example : (interpret balanceCandidate (balanceState 100) (rawRequest .invalidNumber)).observation.verdict = .rejected (.inputRange 0) := by decide_cbv
+example : (interpret balanceCandidate (balanceState 100) (rawRequest (.int (S+1)))).observation.verdict = .rejected (.inputRange 0) := by decide_cbv
 private def andOverflowRaw : RawWorld :=
   { balanceRaw with transitions := [⟨"DEBIT","Ready","Ready",
       .expr "false && (9007199254740991 + 1 < 0)",
@@ -212,8 +212,8 @@ private def andOverflowCandidate : World 1 1 1 1 :=
   { balanceCandidate with transitions := fun _ =>
       ⟨0,0,.and (.bool false) (.lt (.add (.int S) (.int 1)) (.int 0)),
         [⟨0,.sub (.context 0) (.request 0)⟩],none⟩ }
-example : (checkBridge andOverflowRaw andOverflowCandidate).toOption.isSome = true := by decide +kernel
-example : (interpret andOverflowCandidate (balanceState 100) (balanceRequest 30)).observation.verdict = .rejected (.guardError .overflow) := by decide +kernel
+example : (checkBridge andOverflowRaw andOverflowCandidate).toOption.isSome = true := by decide_cbv
+example : (interpret andOverflowCandidate (balanceState 100) (balanceRequest 30)).observation.verdict = .rejected (.guardError .overflow) := by decide_cbv
 private def orOverflowRaw : RawWorld :=
   { balanceRaw with transitions := [⟨"DEBIT","Ready","Ready",
       .expr "true || (9007199254740991 + 1 < 0)",
@@ -222,8 +222,8 @@ private def orOverflowCandidate : World 1 1 1 1 :=
   { balanceCandidate with transitions := fun _ =>
       ⟨0,0,.or (.bool true) (.lt (.add (.int S) (.int 1)) (.int 0)),
         [⟨0,.sub (.context 0) (.request 0)⟩],none⟩ }
-example : (checkBridge orOverflowRaw orOverflowCandidate).toOption.isSome = true := by decide +kernel
-example : (interpret orOverflowCandidate (balanceState 100) (balanceRequest 30)).observation.verdict = .rejected (.guardError .overflow) := by decide +kernel
+example : (checkBridge orOverflowRaw orOverflowCandidate).toOption.isSome = true := by decide_cbv
+example : (interpret orOverflowCandidate (balanceState 100) (balanceRequest 30)).observation.verdict = .rejected (.guardError .overflow) := by decide_cbv
 private def effectOverflowRaw : RawWorld :=
   { balanceRaw with transitions := [⟨"DEBIT","Ready","Ready",
       .expr "event.amount > 0",["balance = (9007199254740991 + 1) - 1"],none⟩] }
@@ -231,7 +231,7 @@ private def effectOverflowCandidate : World 1 1 1 1 :=
   { balanceCandidate with transitions := fun _ =>
       ⟨0,0,.not (.le (.request 0) (.int 0)),
         [⟨0,.sub (.add (.int S) (.int 1)) (.int 1)⟩],none⟩ }
-example : (checkBridge effectOverflowRaw effectOverflowCandidate).toOption.isSome = true := by decide +kernel
-example : (interpret effectOverflowCandidate (balanceState 100) (balanceRequest 30)).observation.verdict = .rejected (.effectError .overflow) := by decide +kernel
-example : (lowerExpr balanceRaw balanceRaw.fields (.int (S+1))).toOption.isSome = false := by decide +kernel
+example : (checkBridge effectOverflowRaw effectOverflowCandidate).toOption.isSome = true := by decide_cbv
+example : (interpret effectOverflowCandidate (balanceState 100) (balanceRequest 30)).observation.verdict = .rejected (.effectError .overflow) := by decide_cbv
+example : (lowerExpr balanceRaw balanceRaw.fields (.int (S+1))).toOption.isSome = false := by decide_cbv
 end Harmonia.Applications.Kadmos.BridgeFixtures.Tests

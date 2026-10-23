@@ -8,7 +8,7 @@ example : decode (fun _ : Fin 1 => .invalidNumber) = .error (.inputRange 0) := b
 example : decode (fun _ : Fin 1 => .int (S+1)) = .error (.inputRange 0) := by rfl
 example : decode (Fin.elim0 : Fin 0 → RawPrimitive) = .ok Fin.elim0 := by
   have h : ∀ j : Fin 0, inputValid (Fin.elim0 j) := fun j => Fin.elim0 j
-  rw [decode, if_pos h]
+  rw [decode, ite_eq_left h]
   congr 1; funext j; exact Fin.elim0 j
 example : decode (fun j : Fin 2 => if j = 0 then .int 30 else .missing) =
     .error (.inputType 1) := by rfl

@@ -47,12 +47,12 @@ def check(root):
         raise AuditInventoryError(f'bridge rejection disk mismatch: {sorted(trap_sources^expected_traps)}')
     if inventory!=EXPECTED:
         raise AuditInventoryError(f'bridge disk mismatch: missing={sorted(EXPECTED-inventory)}, extra={sorted(inventory-EXPECTED)}')
-    declared=manifest((root/'HarmoniaTests/AuditPolicy.lean').read_text())
+    declared=manifest((root/'HarmoniaTests/KadmosAuditPolicy.lean').read_text())
     if declared!=inventory: raise AuditInventoryError(f'bridge manifest mismatch: {sorted(inventory-declared)} {sorted(declared-inventory)}')
     closure=import_closure(root,'HarmoniaTests.KadmosBridgeAxiomAudit')
     if inventory-closure: raise AuditInventoryError(f'unimported bridge source: {sorted(inventory-closure)}')
-    old_manifest=application_manifest((root/'HarmoniaTests/AuditPolicy.lean').read_text())
-    allowed=old_manifest|inventory|FOUNDATION|{'HarmoniaTests.AuditPolicy'}
+    old_manifest=application_manifest((root/'HarmoniaTests/KadmosAuditPolicy.lean').read_text())
+    allowed=old_manifest|inventory|FOUNDATION|{'HarmoniaTests.KadmosAuditPolicy'}
     if closure-allowed: raise AuditInventoryError(f'unknown bridge audit import: {sorted(closure-allowed)}')
     lake=(root/'lakefile.lean').read_text()
     for target in NEW_CERTIFIED:

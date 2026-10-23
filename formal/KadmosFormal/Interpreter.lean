@@ -85,10 +85,10 @@ theorem runAction_decode_error {w : World p v f a} {s : State p v} {r : Request 
     (k : Fin a) (hd : decode r.payload = .error e) :
     ∃ reason, runAction w k s r = .error reason := by
   by_cases hs : (w.transitions k).source ≠ s.phase
-  · exact ⟨.wrongPhase, by simp [runAction,hs,Bind.bind,Pure.pure,Except.bind,Except.pure]⟩
+  · exact ⟨.wrongPhase, by simp [runAction, hs, throw, throwThe, MonadExceptOf.throw, Bind.bind, Except.bind]⟩
   · by_cases hp : r.proposedDirective ≠ (w.transitions k).directive
-    · exact ⟨.unauthorizedDirective, by simp [runAction,hs,hp,Bind.bind,Pure.pure,Except.bind,Except.pure]⟩
-    · exact ⟨e, by simp [runAction,hs,hp,hd,Bind.bind,Pure.pure,Except.bind,Except.pure]⟩
+    · exact ⟨.unauthorizedDirective, by simp [runAction, hs, hp, throw, throwThe, MonadExceptOf.throw, Bind.bind, Except.bind]⟩
+    · exact ⟨e, by simp [runAction, hs, hp, hd, Bind.bind, Except.bind]⟩
 
 def attempt (w : World p v f a) (s : State p v) (r : Request f) :
     Except RejectReason (Fin a × {t : State p v // Good w t}) :=

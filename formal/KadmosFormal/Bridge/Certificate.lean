@@ -182,7 +182,9 @@ theorem requireBool_source (v : Value) : requireBool v = srcBool v := by
 theorem names_injective {n : Nat} (names : Fin n → String)
     (hn : (List.ofFn names).Nodup) (i j : Fin n) (h : names i = names j) : i = j := by
   apply Fin.ext
-  apply List.getElem?_inj (xs := List.ofFn names) (by simpa using i.isLt) hn
+  have hlt : i.val < (List.ofFn names).length := by
+    simpa [List.length_ofFn] using i.isLt
+  refine (List.Nodup.getElem?_inj (xs := List.ofFn names) hlt hn).mp ?_
   simpa using congrArg some h
 
 def EnvsAgree (raw : RawWorld) (fieldNames : List String) (ρ : SourceEnv)
@@ -593,18 +595,27 @@ def lowerInvariant (raw : RawWorld) (s : String) : Except BridgeError (Expr raw.
   lowerExpr raw [] e
 
 private def trimWS (s : String) : String :=
-  String.mk (((s.toList.dropWhile Char.isWhitespace).reverse.dropWhile Char.isWhitespace).reverse)
+  String.ofList (((s.toList.dropWhile Char.isWhitespace).reverse.dropWhile Char.isWhitespace).reverse)
+
+private def splitOnEq (cs : List Char) : List (List Char) :=
+  go cs [] []
+where
+  go : List Char → List Char → List (List Char) → List (List Char)
+    | [], acc, parts => (acc.reverse :: parts).reverse
+    | '=' :: cs, acc, parts => go cs [] (acc.reverse :: parts)
+    | c :: cs, acc, parts => go cs (c :: acc) parts
 
 private def assignment (s : String) : Option (String × String) :=
-  match s.splitOn "=" with
+  let cs := s.toList
+  let startsClean := match cs with
+    | [] => false
+    | c :: _ => !c.isWhitespace
+  match splitOnEq cs with
   | [] | [_] => none
   | lhs :: rhsParts =>
-    let name := trimWS lhs
-    let rhs := trimWS (String.intercalate "=" rhsParts)
-    let startsClean := match lhs.toList with
-      | [] => false
-      | c :: _ => !c.isWhitespace
-    if startsClean && !s.toList.any (fun c => c == '\n' || c == '\r') &&
+    let name := trimWS (String.ofList lhs)
+    let rhs := trimWS (String.intercalate "=" (rhsParts.map String.ofList))
+    if startsClean && !cs.any (fun c => c == '\n' || c == '\r') &&
         name != "" && rhs != "" then some (name,rhs) else none
 
 def lowerEffect (raw : RawWorld) (s : String) : Except BridgeError (Effect raw.states.length raw.context.length raw.fields.length) := do

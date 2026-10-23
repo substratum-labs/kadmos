@@ -1,4 +1,4 @@
-import HarmoniaTests.AuditPolicy
+import HarmoniaTests.KadmosAuditPolicy
 import HarmoniaTests.KadmosBridgeRejection.Unused
 import HarmoniaTests.KadmosBridgeRejection.Unsafe
 namespace KadmosBridgeRejection

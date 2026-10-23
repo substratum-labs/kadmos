@@ -64,7 +64,7 @@ theorem balance_negative_bounds (d : Int) (hd : d < 0) :
     have hz := (h 0).2.1
     change 0 ≤ d at hz
     omega
-  rw [checkBounds,if_neg hf]
+  rw [checkBounds, ite_eq_right hf]
   change some (if inBounds balanceWorld (balanceState d) 0 then 0 else 0) = some 0
   simp
 

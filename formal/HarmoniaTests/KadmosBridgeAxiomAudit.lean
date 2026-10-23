@@ -4,5 +4,5 @@ import KadmosFormal.Bridge.Fixtures
 import HarmoniaTests.KadmosBridgeSyntax
 import HarmoniaTests.KadmosBridgeCertificate
 import HarmoniaTests.KadmosBridgeFixtures
-import HarmoniaTests.AuditPolicy
+import HarmoniaTests.KadmosAuditPolicy
 #audit_kadmos_bridge

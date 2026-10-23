@@ -5,7 +5,7 @@ package "kadmos-formal" where
   version := v!"0.1.0"
 
 require harmonia from git
-  "https://github.com/substratum-labs/harmonia" @ "v0.1.0"
+  "https://github.com/substratum-labs/harmonia" @ "v0.2.0"
 
 @[default_target]
 lean_lib «KadmosFormal» where
@@ -16,7 +16,7 @@ lean_lib kadmosWorldTest where
   roots := #[`HarmoniaTests.KadmosWorldIR, `HarmoniaTests.KadmosWorldInterpreter, `HarmoniaTests.KadmosWorldBalance]
 
 lean_lib kadmosWorldAudit where
-  roots := #[`HarmoniaTests.AuditPolicy, `HarmoniaTests.KadmosWorldAxiomAudit]
+  roots := #[`HarmoniaTests.KadmosAuditPolicy, `HarmoniaTests.KadmosWorldAxiomAudit]
 
 lean_lib kadmosWorldAuditRejection where
   roots := #[`HarmoniaTests.KadmosWorldRejection.Unused,
@@ -32,7 +32,7 @@ lean_lib kadmosBridgeFixturesTest where
   roots := #[`HarmoniaTests.KadmosBridgeFixtures]
 
 lean_lib kadmosBridgeAudit where
-  roots := #[`HarmoniaTests.AuditPolicy, `HarmoniaTests.KadmosBridgeAxiomAudit]
+  roots := #[`HarmoniaTests.KadmosAuditPolicy, `HarmoniaTests.KadmosBridgeAxiomAudit]
 
 lean_lib kadmosBridgeAuditRejection where
   roots := #[`HarmoniaTests.KadmosBridgeRejection.Unused,

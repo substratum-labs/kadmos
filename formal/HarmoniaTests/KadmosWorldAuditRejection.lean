@@ -1,4 +1,4 @@
-import HarmoniaTests.AuditPolicy
+import HarmoniaTests.KadmosAuditPolicy
 import HarmoniaTests.KadmosWorldRejection.Unused
 import HarmoniaTests.KadmosWorldRejection.Unsafe
 namespace KadmosAuditFixtures
@@ -7,7 +7,7 @@ theorem indirect : True := protocol
 /-- error: axiom audit rejected KadmosAuditFixtures.indirect: KadmosAuditFixtures.protocol -/
 #guard_msgs in
 #audit_declaration KadmosAuditFixtures.indirect
-/-- warning: declaration uses 'sorry' -/
+/-- warning: declaration uses `sorry` -/
 #guard_msgs in
 theorem contaminated : True := sorryAx True false
 /-- error: axiom audit rejected KadmosAuditFixtures.contaminated: sorryAx -/

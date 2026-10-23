@@ -5,5 +5,5 @@ import KadmosFormal
 import HarmoniaTests.KadmosWorldIR
 import HarmoniaTests.KadmosWorldInterpreter
 import HarmoniaTests.KadmosWorldBalance
-import HarmoniaTests.AuditPolicy
+import HarmoniaTests.KadmosAuditPolicy
 #audit_kadmos_world
