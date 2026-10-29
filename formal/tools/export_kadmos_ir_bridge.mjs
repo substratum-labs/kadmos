@@ -35,7 +35,7 @@ function render(id,w,fields){const names=Object.keys(w.context);const ls=a=>`[${
  const ef=t=>{const m=/^([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.+)$/.exec(t);if(!m)fail('effect assignment');return `⟨${idxName(names,m[1])},${expression(m[2],w,fields)}⟩`};const idxName=(xs,x)=>{const n=xs.indexOf(x);if(n<0)fail(`unbound ${x}`);return n};
  const wl=(xs,code)=>`(fun j => (${ls(xs.map(code))})[j])`;
  const candidate=`def ${id}Candidate : World ${w.states.length} ${names.length} ${fields.length} ${w.transitions.length} :=\n  ⟨${wl(w.states,x=>string(x.id))},${wl(w.states,x=>String(x.initial??false))},${wl(w.states,x=>String(x.terminal??false))},${wl(names,string)},${wl(names,n=>{const v=w.context[n];return `⟨${v.min},${v.max},${optInt(v.default)}⟩`})},${wl(fields,string)},${wl(w.transitions,x=>string(x.id))},${wl(w.transitions,t=>`⟨${idxName(w.states.map(x=>x.id),t.from)},${idxName(w.states.map(x=>x.id),t.to)},${typeof t.guard==='boolean'?`.bool ${t.guard}`:expression(t.guard,w,fields)},${ls(t.effects.map(ef))},${t.directive===null?'none':`some ${string(t.directive)}`}⟩`)},${ls(w.invariants.map(x=>`(${string(x.id)},${expression(x.predicate,w,[],true)})`))}⟩`;
- return raw+'\n'+candidate+`\ntheorem ${id}_certificate : checkBridge ${id}Raw ${id}Candidate = .ok ${id}Candidate := by decide +kernel\n`}
+ return raw+'\n'+candidate+`\ntheorem ${id}_certificate : checkBridge ${id}Raw ${id}Candidate = .ok ${id}Candidate := by decide_cbv\n`}
 const vectorInputs=[
   ['balance_guard_30','event.amount > 0',{balance:100,state:'Ready',event:{amount:30},request:{amount:30}}],
   ['balance_guard_130','event.amount > 0',{balance:100,state:'Ready',event:{amount:130},request:{amount:130}}],

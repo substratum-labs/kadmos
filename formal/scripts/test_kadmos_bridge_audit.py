@@ -14,10 +14,12 @@ class BridgePolicyTests(unittest.TestCase):
         self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        for dirname in ('Harmonia','HarmoniaTests','conformance','tools'):
+        for dirname in ('KadmosFormal','HarmoniaTests','conformance','tools'):
             copytree(SOURCE/dirname,self.root/dirname)
         copy2(SOURCE/'lakefile.lean',self.root/'lakefile.lean')
+        copy2(SOURCE/'KadmosFormal.lean',self.root/'KadmosFormal.lean')
         copytree(SOURCE/'scripts',self.root/'scripts')
+        copytree(SOURCE/'.lake/packages/harmonia/Harmonia/Core', self.root/'.lake/packages/harmonia/Harmonia/Core')
     def test_clean(self):
         check_artifacts(self.root)
         check(self.root)

@@ -2,45 +2,40 @@
 import sys
 sys.dont_write_bytecode = True
 import unittest
-import test_distributed_audit as legacy
+import tempfile
+from pathlib import Path
 from check_kadmos_world_audit import (check, AuditInventoryError, MANDATORY,
     CERTIFIED_TARGETS, REJECTION_TARGETS, application_manifest, target_roots)
 
 class KadmosInventoryTests(unittest.TestCase):
-    write = legacy.InventoryTests.write
-    manifest = legacy.InventoryTests.manifest
+    def write(self, name, source):
+        path = self.root / (name.replace('.', '/') + '.lean')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+
+    def manifest(self, names):
+        return 'def sourceModules : Array Name := #[' + ','.join('`'+n for n in names) + ']\n'
 
     def setUp(self):
-        legacy.InventoryTests.setUp(self)
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
         self.modules = sorted(MANDATORY)
         for name in self.modules:
             self.write(name, 'namespace Escaped\ntheorem marker : True := True.intro\nend Escaped\n')
         self.write('HarmoniaTests.KadmosWorldAxiomAudit', 'import ' + ' '.join(n for n in self.modules if not n.endswith('AxiomAudit')) + '\nimport HarmoniaTests.KadmosAuditPolicy\n')
         self.policy()
-        for name in ('Foundations', 'InvariantProbes', 'RefinementProbes'):
-            self.write('HarmoniaTests.' + name, 'namespace Clean\nend Clean\n')
-        self.write('HarmoniaTests.AxiomAudit', 'import HarmoniaTests.KadmosAuditPolicy HarmoniaTests.Foundations HarmoniaTests.InvariantProbes HarmoniaTests.RefinementProbes\n')
         self.roots = {
-            'foundationsTest': ['HarmoniaTests.Foundations','HarmoniaTests.InvariantProbes','HarmoniaTests.RefinementProbes'],
-            'foundationsAudit': ['HarmoniaTests.KadmosAuditPolicy','HarmoniaTests.AxiomAudit'],
-            'distributedTest': ['HarmoniaTests.DistributedMembership','HarmoniaTests.DistributedNetwork','HarmoniaTests.DistributedSteps','HarmoniaTests.DistributedTraces'],
-            'distributedAudit': ['HarmoniaTests.KadmosAuditPolicy','HarmoniaTests.DistributedAxiomAudit'],
             'kadmosWorldTest': ['HarmoniaTests.KadmosWorldIR','HarmoniaTests.KadmosWorldInterpreter','HarmoniaTests.KadmosWorldBalance'],
             'kadmosWorldAudit': ['HarmoniaTests.KadmosAuditPolicy','HarmoniaTests.KadmosWorldAxiomAudit'],
-            'foundationsAuditRejection': ['HarmoniaTests.AuditRejection'],
-            'distributedAuditRejection': ['HarmoniaTests.DistributedAuditRejection'],
             'kadmosWorldAuditRejection': ['HarmoniaTests.KadmosWorldAuditRejection'],
         }
-        for name in ('HarmoniaTests.AuditRejection','HarmoniaTests.DistributedAuditRejection','HarmoniaTests.KadmosWorldAuditRejection'):
-            self.write(name, 'import HarmoniaTests.KadmosAuditPolicy\n')
-        for family in ('DistributedRejection', 'KadmosWorldRejection'):
-            self.write('HarmoniaTests.'+family+'.Unused', 'namespace Escape\naxiom unused : Nat\nend Escape\n')
-        self.write('HarmoniaTests.DistributedAuditRejection', 'import HarmoniaTests.KadmosAuditPolicy HarmoniaTests.DistributedRejection.Unused\n')
+        self.write('HarmoniaTests.KadmosWorldRejection.Unused', 'axiom unused : Nat\n')
         self.write('HarmoniaTests.KadmosWorldAuditRejection', 'import HarmoniaTests.KadmosAuditPolicy HarmoniaTests.KadmosWorldRejection.Unused\n')
         self.lake()
 
     def policy(self, modules=None):
-        src = self.manifest(legacy.MODULES)
+        src = ''
         src += 'def kadmosWorldSourceModules : Array Name := #[' + ','.join('`'+n for n in (modules or self.modules)) + ']\n'
         self.write('HarmoniaTests.KadmosAuditPolicy', src)
 
@@ -50,23 +45,23 @@ class KadmosInventoryTests(unittest.TestCase):
 
     def test_clean_and_isolated_roots(self):
         result = check(self.root)
-        self.assertEqual(result['certified_application_modules'], 9)
-        self.assertEqual(result['certified_targets'], 6)
-        self.assertEqual(result['isolated_targets'], 3)
+        self.assertEqual(result['certified_application_modules'], 12)
+        self.assertEqual(result['certified_targets'], 2)
+        self.assertEqual(result['isolated_targets'], 1)
 
     def test_new_application_is_not_silently_excluded(self):
         self.write('KadmosFormal.Hidden', 'namespace Escape\naxiom unused : Nat\nend Escape\n')
         with self.assertRaisesRegex(AuditInventoryError, 'manifest'):
             check(self.root)
 
-    def test_unknown_nested_probe(self):
-        self.write('HarmoniaTests.KadmosWorldExtra.Hidden', 'namespace Escape\nend Escape\n')
+    def test_nested_protocols_directory_remains_world_inventory(self):
+        self.write('KadmosFormal.Hidden.Protocols.Escape', 'axiom hidden : Nat\n')
         with self.assertRaisesRegex(AuditInventoryError, 'manifest'):
             check(self.root)
 
-    def test_unknown_domain_module(self):
-        self.write('Harmonia.Applications.Other', 'namespace Escape\nend Escape\n')
-        with self.assertRaisesRegex(AuditInventoryError, 'unknown application'):
+    def test_unknown_nested_probe(self):
+        self.write('HarmoniaTests.KadmosWorldExtra.Hidden', 'namespace Escape\nend Escape\n')
+        with self.assertRaisesRegex(AuditInventoryError, 'manifest'):
             check(self.root)
 
     def test_unimported_namespace_escape(self):
@@ -122,7 +117,7 @@ class KadmosInventoryTests(unittest.TestCase):
             check(self.root)
 
     def test_multiline_manifest_and_imports(self):
-        source = self.manifest(self.modules).replace('distributedSourceModules','kadmosWorldSourceModules')
+        source = self.manifest(self.modules).replace('sourceModules','kadmosWorldSourceModules')
         source = source.replace('`KadmosFormal,','`KadmosFormal, -- trailing\n/- nested /- comment -/ -/\n')
         self.assertEqual(application_manifest(source), set(self.modules))
         self.write('HarmoniaTests.KadmosWorldAxiomAudit', 'import\n'+'\n'.join(n+' -- after' for n in self.modules if not n.endswith('AxiomAudit'))+'\nimport HarmoniaTests.KadmosAuditPolicy\n')
@@ -152,7 +147,8 @@ class KadmosInventoryTests(unittest.TestCase):
 
     def test_rejection_roots_allow_shared_tooling_but_not_foreign_traps(self):
         check(self.root)
-        self.roots['kadmosWorldAuditRejection'].append('HarmoniaTests.DistributedRejection.Unused')
+        self.write('HarmoniaTests.KadmosProtocolsRejection.Unused', 'axiom unused : Nat\n')
+        self.roots['kadmosWorldAuditRejection'].append('HarmoniaTests.KadmosProtocolsRejection.Unused')
         self.lake()
         with self.assertRaisesRegex(AuditInventoryError, 'foreign adversarial'):
             check(self.root)
@@ -200,8 +196,12 @@ class KadmosInventoryTests(unittest.TestCase):
     def test_product_dependency_boundary(self):
         for dependency in ('HarmoniaTests.KadmosAuditPolicy','Harmonia.Distributed.Protocol','Harmonia.Core.Network','Lean'):
             with self.subTest(dependency=dependency):
-                if dependency == 'Harmonia.Core.Network':
+                if dependency in ('Harmonia.Core.Network', 'Harmonia.Distributed.Protocol'):
                     self.write(dependency, 'namespace Old\nend Old\n')
+                if dependency == 'Harmonia.Distributed.Protocol':
+                    target = self.root/'.lake/packages/harmonia/Harmonia/Distributed/Protocol.lean'
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text('import Init\n')
                 self.write('KadmosFormal.World', 'import '+dependency+'\n')
                 with self.assertRaisesRegex(AuditInventoryError, 'forbidden product|unknown certified application import'):
                     check(self.root)

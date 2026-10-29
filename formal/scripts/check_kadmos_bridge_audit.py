@@ -8,7 +8,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 from check_kadmos_world_audit import (check as check_old, AuditInventoryError,
     target_roots, root_closure, application_manifest, trap as old_trap, FOUNDATION)
-from check_distributed_audit import scrub, module_name, module_path, import_closure
+from check_kadmos_world_audit import scrub, module_name, module_path, import_closure
 
 NEW_CERTIFIED=('kadmosBridgeSyntaxTest','kadmosBridgeCertificateTest',
                'kadmosBridgeFixturesTest','kadmosBridgeAudit')
@@ -62,7 +62,7 @@ def check(root):
         if modules-closure: raise AuditInventoryError(f'{target} unaudited certified root: {sorted(modules-closure)}')
     rejected=root_closure(root,target_roots(lake,NEW_REJECTION))
     for name in rejected:
-        if old_trap(name): raise AuditInventoryError(f'{NEW_REJECTION} foreign adversarial root: {name}')
+        if old_trap(name) and not bridge_trap(name): raise AuditInventoryError(f'{NEW_REJECTION} foreign adversarial root: {name}')
         if bridge_trap(name) and name not in {'HarmoniaTests.KadmosBridgeAuditRejection',
               'HarmoniaTests.KadmosBridgeRejection.Unused','HarmoniaTests.KadmosBridgeRejection.Unsafe'}:
             raise AuditInventoryError(f'{NEW_REJECTION} foreign bridge trap: {name}')

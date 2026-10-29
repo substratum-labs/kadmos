@@ -2,15 +2,16 @@ import Lake
 open Lake DSL
 
 package "kadmos-formal" where
-  version := v!"0.1.0"
+  version := v!"0.2.0"
 
 require harmonia from git
-  "https://github.com/substratum-labs/harmonia" @ "v0.2.0"
+  "https://github.com/substratum-labs/harmonia" @ "v0.3.0"
 
 @[default_target]
 lean_lib «KadmosFormal» where
   roots := #[`KadmosFormal, `KadmosFormal.Bridge.Syntax,
-    `KadmosFormal.Bridge.Certificate, `KadmosFormal.Bridge.Fixtures]
+    `KadmosFormal.Bridge.Certificate, `KadmosFormal.Bridge.Fixtures,
+    `KadmosFormal.Protocols.ProtocolBridge]
 
 lean_lib kadmosWorldTest where
   roots := #[`HarmoniaTests.KadmosWorldIR, `HarmoniaTests.KadmosWorldInterpreter, `HarmoniaTests.KadmosWorldBalance]
@@ -37,3 +38,13 @@ lean_lib kadmosBridgeAudit where
 lean_lib kadmosBridgeAuditRejection where
   roots := #[`HarmoniaTests.KadmosBridgeRejection.Unused,
     `HarmoniaTests.KadmosBridgeRejection.Unsafe, `HarmoniaTests.KadmosBridgeAuditRejection]
+
+lean_lib kadmosProtocolsTest where
+  roots := #[`HarmoniaTests.KadmosProtocolsTest]
+
+lean_lib kadmosProtocolsAudit where
+  roots := #[`HarmoniaTests.KadmosAuditPolicy, `HarmoniaTests.KadmosProtocolsAxiomAudit]
+
+lean_lib kadmosProtocolsAuditRejection where
+  roots := #[`HarmoniaTests.KadmosProtocolsRejection.Unused,
+    `HarmoniaTests.KadmosProtocolsRejection.Unsafe, `HarmoniaTests.KadmosProtocolsAuditRejection]

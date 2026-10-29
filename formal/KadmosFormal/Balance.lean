@@ -25,14 +25,14 @@ theorem finOne_context_eq (c : Fin 1 → Int) (n : Int) (h0 : c 0 = n) : c = fun
 
 theorem balance_bounds (b : Int) (hb : 0 ≤ b) (hB : b ≤ S) :
     checkBounds balanceWorld (balanceState b) = none := by
-  have safe : safeInt b := by unfold safeInt S at *; omega
-  simp [checkBounds,inBounds,balanceWorld,balanceState,safe,hb,hB]
+  have safe : safeInt b := by constructor <;> (unfold S at *; omega)
+  exact ite_eq_left (fun _ => ⟨safe, hb, hB⟩)
 
 theorem balance_invariants (b : Int) (hb : 0 ≤ b) (hB : b ≤ S) :
     checkInvariants balanceWorld (balanceState b) = none := by
-  have safe : safeInt b := by unfold safeInt S at *; omega
-  simp [checkInvariants,checkInvariantList,balanceWorld,balanceState,eval,requireInt,
-    checkedInt,safe,invariantPass,Bind.bind,Functor.map,Pure.pure,Except.bind,Except.map,Except.pure,show safeInt 0 by decide,hb]
+  have safe : safeInt b := by constructor <;> (unfold S at *; omega)
+  simp only [checkInvariants,checkInvariantList,balanceWorld,balanceState,eval,requireInt,
+    checkedInt,safe,invariantPass,Bind.bind,Pure.pure,Except.bind,Except.pure,show safeInt 0 by decide,hb,ite_true,decide_true]
 
 /-- A computation lemma about the actual interpreter action, not a second Step. -/
 theorem runAction_debit (b n : Int) (sb : safeInt b) (sn : safeInt n) (sd : safeInt (b-n)) (hn : 0 < n) :
@@ -42,14 +42,14 @@ theorem runAction_debit (b n : Int) (sb : safeInt b) (sn : safeInt n) (sd : safe
     finOne_context_eq _ _ (by simp)
   simp [runAction,debit,balanceWorld,balanceState,decode,inputValid,rawInt,sn,sb,sd,
     eval,requireInt,requireBool,checkedInt,show safeInt 0 by decide,hn,
-    runTransitionEffects,runEffects,runEffect,Bind.bind,Functor.map,Pure.pure,
-    Except.bind,Except.mapError,Except.map,Except.pure,hc]
+    runTransitionEffects,runEffects,runEffect,Bind.bind,Pure.pure,
+    Except.bind,Except.mapError,Except.pure,hc]
 
 theorem debit_accept (b n : Int) (hb : 0 ≤ b) (hB : b ≤ S) (hn : 0 < n) (hnb : n ≤ b) :
     interpret balanceWorld (balanceState b) (debit n) = ⟨balanceState (b-n),⟨.accepted,none⟩⟩ := by
-  have sb : safeInt b := by unfold safeInt S at *; omega
-  have sn : safeInt n := by unfold safeInt S at *; omega
-  have sd : safeInt (b-n) := by unfold safeInt S at *; omega
+  have sb : safeInt b := by constructor <;> (unfold S at *; omega)
+  have sn : safeInt n := by constructor <;> (unfold S at *; omega)
+  have sd : safeInt (b-n) := by constructor <;> (unfold S at *; omega)
   have hd : 0 ≤ b-n := by omega
   have hD : b-n ≤ S := by omega
   simp only [interpret,attempt,balance_initialized,lookup_debit]
@@ -70,9 +70,9 @@ theorem balance_negative_bounds (d : Int) (hd : d < 0) :
 
 theorem debit_insufficient (b n : Int) (hb : 0 ≤ b) (hB : b ≤ S) (hbn : b < n) (hN : n ≤ S) :
     interpret balanceWorld (balanceState b) (debit n) = ⟨balanceState b,⟨.rejected (.bounds 0),none⟩⟩ := by
-  have sb : safeInt b := by unfold safeInt S at *; omega
-  have sn : safeInt n := by unfold safeInt S at *; omega
-  have sd : safeInt (b-n) := by unfold safeInt S at *; omega
+  have sb : safeInt b := by constructor <;> (unfold S at *; omega)
+  have sn : safeInt n := by constructor <;> (unfold S at *; omega)
+  have sd : safeInt (b-n) := by constructor <;> (unfold S at *; omega)
   have hn : 0 < n := by omega
   have hd : b-n < 0 := by omega
   have hpub : publishCandidate balanceWorld (balanceState (b-n)) = .error (.bounds 0) := by

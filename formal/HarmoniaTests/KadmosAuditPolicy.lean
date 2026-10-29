@@ -39,9 +39,11 @@ def kadmosWorldSourceModules : Array Name := #[
   `HarmoniaTests.KadmosWorldAxiomAudit]
 
 def kadmosWorldDeclaration (env : Environment) (n : Name) : Bool :=
-  (`Harmonia.Applications.Kadmos).isPrefixOf n ||
-  (`KadmosFormal).isPrefixOf (sourceModule env n) ||
-  kadmosWorldSourceModules.contains (sourceModule env n)
+  !(n.toString.startsWith "Harmonia.Applications.Kadmos.Protocols.") &&
+  !((`KadmosFormal.Protocols).isPrefixOf (sourceModule env n)) &&
+  ((`Harmonia.Applications.Kadmos).isPrefixOf n ||
+   (`KadmosFormal).isPrefixOf (sourceModule env n) ||
+   kadmosWorldSourceModules.contains (sourceModule env n))
 
 def kadmosBridgeSourceModules : Array Name := #[
   `KadmosFormal.Bridge.Syntax,
@@ -56,6 +58,14 @@ def kadmosBridgeDeclaration (env : Environment) (n : Name) : Bool :=
   (`Harmonia.Applications.Kadmos.Bridge).isPrefixOf n ||
   (`KadmosFormal.Bridge).isPrefixOf (sourceModule env n) ||
   kadmosBridgeSourceModules.contains (sourceModule env n)
+
+def kadmosProtocolsSourceModules : Array Name := #[
+  `KadmosFormal.Protocols.ProtocolBridge,
+  `HarmoniaTests.KadmosProtocolsTest,
+  `HarmoniaTests.KadmosProtocolsAxiomAudit]
+
+def kadmosProtocolsDeclaration (env : Environment) (n : Name) : Bool :=
+  kadmosProtocolsSourceModules.contains (sourceModule env n)
 
 def auditSelected (select : Name → Bool) (label : String) (allObserved : Bool := false)
     (summaryPrefix : String := "KADMOS AUDIT PASS")
@@ -119,3 +129,8 @@ elab "#audit_kadmos_bridge" : command => do
   let env ← getEnv
   HarmoniaAudit.auditSelected (HarmoniaAudit.kadmosBridgeDeclaration env) "kadmos bridge" true
     "KADMOS BRIDGE AUDIT PASS"
+
+elab "#audit_kadmos_protocols" : command => do
+  let env ← getEnv
+  HarmoniaAudit.auditSelected (HarmoniaAudit.kadmosProtocolsDeclaration env) "kadmos protocols" true
+    "KADMOS PROTOCOLS AUDIT PASS" false

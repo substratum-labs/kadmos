@@ -7,26 +7,128 @@ import sys
 import unittest
 from pathlib import Path
 sys.dont_write_bytecode = True
-from check_distributed_audit import (AuditInventoryError, scrub, parse_imports, parse_manifest,
-    module_name, module_path, import_closure, adversarial, check as check_distributed)
-
-CERTIFIED_TARGETS = ('foundationsTest', 'foundationsAudit', 'distributedTest',
-                     'distributedAudit', 'kadmosWorldTest', 'kadmosWorldAudit')
-REJECTION_TARGETS = ('foundationsAuditRejection', 'distributedAuditRejection', 'kadmosWorldAuditRejection')
+import functools
+CERTIFIED_TARGETS = ('kadmosWorldTest', 'kadmosWorldAudit')
+REJECTION_TARGETS = ('kadmosWorldAuditRejection',)
 MANDATORY = {'KadmosFormal', 'KadmosFormal.World',
     'KadmosFormal.Interpreter', 'KadmosFormal.System',
-    'KadmosFormal.Balance', 'HarmoniaTests.KadmosWorldIR',
+    'KadmosFormal.Balance', 'KadmosFormal.Bridge.Syntax',
+    'KadmosFormal.Bridge.Certificate', 'KadmosFormal.Bridge.Fixtures', 'HarmoniaTests.KadmosWorldIR',
     'HarmoniaTests.KadmosWorldInterpreter', 'HarmoniaTests.KadmosWorldBalance',
     'HarmoniaTests.KadmosWorldAxiomAudit'}
 FOUNDATION = {'Harmonia.Core.TransitionSystem', 'Harmonia.Core.Execution',
               'Harmonia.Core.Invariant', 'Harmonia.Core.Refinement'}
+
+class AuditInventoryError(ValueError):
+    pass
+
+MODULE = re.compile(r'[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*\Z')
+BOUNDARIES = {'import', 'prelude', 'namespace', 'end', 'open', 'def', 'abbrev',
+              'theorem', 'lemma', 'axiom', 'structure', 'inductive', 'universe',
+              'variable', 'section', 'set_option', 'instance', 'example', 'private',
+              'protected', 'noncomputable', 'unsafe', 'elab', 'syntax', 'macro'}
+ADVERSARIAL = set()
+
+def scrub(source):
+    """Blank nested Lean comments and string literals while preserving newlines."""
+    out, i, depth = [], 0, 0
+    while i < len(source):
+        if depth:
+            if source.startswith('/-', i):
+                depth += 1; out.extend('  '); i += 2
+            elif source.startswith('-/', i):
+                depth -= 1; out.extend('  '); i += 2
+            else:
+                out.append('\n' if source[i] == '\n' else ' '); i += 1
+        elif source.startswith('/-', i):
+            depth = 1; out.extend('  '); i += 2
+        elif source.startswith('--', i):
+            stop = source.find('\n', i)
+            if stop == -1: stop = len(source)
+            out.extend(' ' * (stop - i)); i = stop
+        elif source.startswith("'\"'", i):
+            # Lean's quote character literal is not the start of a string.
+            out.extend('   '); i += 3
+        elif source[i] == '"':
+            out.append(' '); i += 1
+            closed = False
+            while i < len(source):
+                ch = source[i]; out.append('\n' if ch == '\n' else ' '); i += 1
+                if ch == '\\' and i < len(source):
+                    out.append(' '); i += 1
+                elif ch == '"':
+                    closed = True; break
+            if not closed: raise AuditInventoryError('unterminated Lean string')
+        else:
+            out.append(source[i]); i += 1
+    if depth: raise AuditInventoryError('unterminated Lean comment')
+    return ''.join(out)
+
+def parse_imports(source):
+    tokens = re.findall(r'[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*|[^\s]', scrub(source))
+    result, i = [], 0
+    if tokens[:1] == ['prelude']: i = 1
+    while i < len(tokens) and tokens[i] == 'import':
+        i += 1
+        begin = i
+        while i < len(tokens) and MODULE.fullmatch(tokens[i]) and tokens[i] not in BOUNDARIES:
+            result.append(tokens[i]); i += 1
+        if begin == i: raise AuditInventoryError('empty import declaration')
+    return result
+
+def parse_manifest(source):
+    clean = scrub(source)
+    match = re.search(r'\bdef\s+sourceModules\s*:\s*Array\s+Name\s*:=\s*#\[(.*?)\]', clean, re.S)
+    if not match: raise AuditInventoryError('missing or malformed source manifest')
+    body = match.group(1)
+    names = re.findall(r'`([A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*)', body)
+    residue = re.sub(r'`[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*', '', body)
+    if re.sub(r'[\s,]', '', residue): raise AuditInventoryError('malformed manifest entry')
+    if len(names) != len(set(names)): raise AuditInventoryError('duplicate manifest entry')
+    return set(names)
+
+def module_path(root, name):
+    return root / (name.replace('.', '/') + '.lean')
+
+def module_name(root, path):
+    return '.'.join(path.relative_to(root).with_suffix('').parts)
+
+def adversarial(name):
+    return 'Rejection' in name
+
+@functools.lru_cache(maxsize=1)
+def lean_prefix():
+    proc = subprocess.run(['lean', '--print-prefix'], capture_output=True, text=True, check=True)
+    return Path(proc.stdout.strip())
+
+def import_closure(root, initial):
+    seen, work = set(), [initial]
+    while work:
+        name = work.pop()
+        if name in seen: continue
+        if name in FOUNDATION or name.startswith(('Harmonia.VerifiedProtocols', 'Harmonia.Distributed.')) or name in {'Harmonia.Distributed', 'Harmonia.Theorems.Quorum'}:
+            path = module_path(root / '.lake/packages/harmonia', name)
+            if not path.is_file(): raise AuditInventoryError(f'missing project import {name}')
+            seen.add(name)
+            # Harmonia is a separately pinned and audited dependency.
+            continue
+        path = module_path(root, name)
+        if not path.is_file():
+            if name.startswith(('KadmosFormal', 'HarmoniaTests', 'Harmonia')):
+                raise AuditInventoryError(f'missing project import {name}')
+            external = lean_prefix() / 'lib/lean' / (name.replace('.', '/') + '.olean')
+            if not external.is_file(): raise AuditInventoryError(f'missing external import {name}')
+            continue
+        seen.add(name)
+        work.extend(parse_imports(path.read_text()))
+    return seen
 
 def trap(name):
     return adversarial(name) or name == 'HarmoniaTests.KadmosWorldAuditRejection' or name.startswith('HarmoniaTests.KadmosWorldRejection.')
 
 def name_array(body):
     # Reuse the existing strict lexical array parser without altering its policy.
-    return parse_manifest('def distributedSourceModules : Array Name := #[' + body + ']')
+    return parse_manifest('def sourceModules : Array Name := #[' + body + ']')
 
 def literal_end(clean, end, label):
     # A literal array must be the entire declaration RHS, not a prefix of ++/push.
@@ -62,8 +164,8 @@ def root_closure(root, names):
 
 def check(root):
     root = Path(root).resolve()
-    original = check_distributed(root)
-    product = set((root / 'Harmonia' / 'Applications').rglob('*.lean'))
+    product = {root / 'KadmosFormal.lean'} | {p for p in (root / 'KadmosFormal').rglob('*.lean')
+        if p.relative_to(root / 'KadmosFormal').parts[0] != 'Protocols'}
     probes = {p for p in (root / 'HarmoniaTests').rglob('*.lean')
               if p.relative_to(root / 'HarmoniaTests').parts[0].startswith('KadmosWorld')}
     for p in product:
@@ -82,19 +184,13 @@ def check(root):
     unexpected = closure - inventory - FOUNDATION - {'HarmoniaTests.KadmosAuditPolicy'}
     if unexpected:
         raise AuditInventoryError(f'unknown certified application import: {sorted(unexpected)}')
-    audit_closures = {
-        'foundation': import_closure(root, 'HarmoniaTests.AxiomAudit'),
-        'distributed': import_closure(root, 'HarmoniaTests.DistributedAxiomAudit'),
-        'kadmos': closure,
-    }
     lake = (root / 'lakefile.lean').read_text()
     for target in CERTIFIED_TARGETS:
         modules = root_closure(root, target_roots(lake, target))
         traps = sorted(n for n in modules if trap(n))
         if traps:
             raise AuditInventoryError(f'{target} adversarial closure: {traps}')
-        family = 'foundation' if target.startswith('foundations') else 'distributed' if target.startswith('distributed') else 'kadmos'
-        unaudited = modules - audit_closures[family]
+        unaudited = modules - closure
         if unaudited:
             raise AuditInventoryError(f'unaudited certified root in {target}: {sorted(unaudited)}')
     for target in REJECTION_TARGETS:
@@ -103,9 +199,7 @@ def check(root):
         modules = root_closure(root, target_roots(lake, target))
         for name in modules:
             if trap(name):
-                own = (target == 'foundationsAuditRejection' and name == 'HarmoniaTests.AuditRejection') or (
-                    target == 'distributedAuditRejection' and (name == 'HarmoniaTests.DistributedAuditRejection' or name.startswith('HarmoniaTests.DistributedRejection.'))) or (
-                    target == 'kadmosWorldAuditRejection' and (name == 'HarmoniaTests.KadmosWorldAuditRejection' or name.startswith('HarmoniaTests.KadmosWorldRejection.')))
+                own = name == 'HarmoniaTests.KadmosWorldAuditRejection' or name.startswith('HarmoniaTests.KadmosWorldRejection.')
                 if not own:
                     raise AuditInventoryError(f'{target} foreign adversarial root: {name}')
     for name in inventory:
@@ -123,8 +217,7 @@ def check(root):
             if name != 'Init' and not name.startswith('Init.') and name not in FOUNDATION and not name.startswith('KadmosFormal'):
                 raise AuditInventoryError(f'forbidden product dependency: {name}')
     return {'certified_application_modules': len(inventory), 'application_closure': len(closure),
-            'certified_targets': len(CERTIFIED_TARGETS), 'isolated_targets': len(REJECTION_TARGETS),
-            'distributed_inventory': original}
+            'certified_targets': len(CERTIFIED_TARGETS), 'isolated_targets': len(REJECTION_TARGETS)}
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
